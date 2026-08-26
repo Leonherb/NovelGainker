@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-state-save-ui"
+description = "Enables the app_state_save_ui command without any pre-configured scope."
+commands.allow = ["app_state_save_ui"]
+
+[[permission]]
+identifier = "deny-app-state-save-ui"
+description = "Denies the app_state_save_ui command without any pre-configured scope."
+commands.deny = ["app_state_save_ui"]

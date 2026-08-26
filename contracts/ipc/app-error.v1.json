@@ -1,0 +1,5 @@
+{
+  "code": "runtime.unavailable",
+  "messageKey": "errors.runtimeUnavailable",
+  "diagnostic": "tauri-runtime-unavailable"
+}

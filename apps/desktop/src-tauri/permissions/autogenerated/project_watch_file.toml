@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-watch-file"
+description = "Enables the project_watch_file command without any pre-configured scope."
+commands.allow = ["project_watch_file"]
+
+[[permission]]
+identifier = "deny-project-watch-file"
+description = "Denies the project_watch_file command without any pre-configured scope."
+commands.deny = ["project_watch_file"]

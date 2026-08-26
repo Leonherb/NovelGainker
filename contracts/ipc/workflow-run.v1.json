@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "available": true,
+  "hasActiveRun": true,
+  "run": {
+    "runId": "10000000-0000-4000-8000-000000000001",
+    "projectId": "20000000-0000-4000-8000-000000000002",
+    "workflowId": "novelgainker.character-create",
+    "workflowVersion": 1,
+    "state": "recovery_required",
+    "sequence": 5,
+    "providerId": "deepseek",
+    "model": "deepseek-v4-pro",
+    "updatedAt": 1787443200,
+    "canCancel": false,
+    "canAbandon": true,
+    "recoveryRequired": true
+  }
+}

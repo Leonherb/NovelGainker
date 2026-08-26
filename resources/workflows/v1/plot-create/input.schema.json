@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/plot-brief.v1.json",
+  "title": "PlotBriefV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["coreQuestion", "desiredEnding", "forbiddenDirections", "genre", "mustInclude", "schemaVersion", "title"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "genre": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "coreQuestion": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "desiredEnding": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "mustInclude": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "forbiddenDirections": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "command": "创建项目",
+      "workflowId": "novelgainker.project-create",
+      "entryMode": "default"
+    },
+    {
+      "command": "创建人物",
+      "workflowId": "novelgainker.character-create",
+      "entryMode": "character-create"
+    },
+    {
+      "command": "完善人物",
+      "workflowId": "novelgainker.character-create",
+      "entryMode": "character-enhance"
+    },
+    {
+      "command": "创建设定",
+      "workflowId": "novelgainker.setting-create",
+      "entryMode": "default"
+    },
+    {
+      "command": "创建素材",
+      "workflowId": "novelgainker.material-create",
+      "entryMode": "default"
+    },
+    {
+      "command": "创建主剧情",
+      "workflowId": "novelgainker.plot-create",
+      "entryMode": "default"
+    }
+  ],
+  "blockedTerms": [
+    "删除项目",
+    "发布小说",
+    "导出 EPUB",
+    "写章节",
+    "续写章节",
+    "修改章节",
+    "审查小说",
+    "分析评审",
+    "上传",
+    "云同步",
+    "图片生成",
+    "Git 管理"
+  ]
+}

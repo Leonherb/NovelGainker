@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/story-context-build.v2.json",
+  "title": "StoryContextBuildInputV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "chapterNumber",
+    "chapterTitle",
+    "schemaVersion",
+    "selectedSourcePaths"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["create", "revise"]
+    },
+    "chapterNumber": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 999999
+    },
+    "chapterTitle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "selectedSourcePaths": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    }
+  }
+}

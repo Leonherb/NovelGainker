@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-list-files"
+description = "Enables the project_list_files command without any pre-configured scope."
+commands.allow = ["project_list_files"]
+
+[[permission]]
+identifier = "deny-project-list-files"
+description = "Denies the project_list_files command without any pre-configured scope."
+commands.deny = ["project_list_files"]

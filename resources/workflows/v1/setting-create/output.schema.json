@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/setting-proposal.v1.json",
+  "title": "SettingProposalV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workflowId", "setting"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "workflowId": {
+      "type": "string",
+      "const": "novelgainker.setting-create"
+    },
+    "setting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "displayName",
+        "settingType",
+        "summary",
+        "atmosphere",
+        "rules",
+        "constraints",
+        "plotHooks"
+      ],
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "settingType": {
+          "type": "string",
+          "enum": ["world", "location", "rule"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "atmosphere": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "plotHooks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    }
+  }
+}

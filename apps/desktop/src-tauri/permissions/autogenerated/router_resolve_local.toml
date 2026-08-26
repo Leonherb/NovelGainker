@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-router-resolve-local"
+description = "Enables the router_resolve_local command without any pre-configured scope."
+commands.allow = ["router_resolve_local"]
+
+[[permission]]
+identifier = "deny-router-resolve-local"
+description = "Denies the router_resolve_local command without any pre-configured scope."
+commands.deny = ["router_resolve_local"]

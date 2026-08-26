@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "id": "novelgainker.character-create",
+      "version": 2,
+      "displayName": "创建/完善人物",
+      "description": "审查显式选择的 Canon 来源，创建或完善单个人物 Markdown，并保留稳定实体引用。",
+      "mode": "interactive-write",
+      "executionAvailable": true,
+      "routable": true
+    },
+    {
+      "id": "novelgainker.project-create",
+      "version": 1,
+      "displayName": "创建项目",
+      "description": "离线填写项目元数据，安全审查完整脚手架后创建本地 Markdown 小说项目。",
+      "mode": "deterministic-write",
+      "executionAvailable": true,
+      "routable": true
+    },
+    {
+      "id": "novelgainker.setting-create",
+      "version": 1,
+      "displayName": "创建设定",
+      "description": "审查显式选择的世界资料，生成结构化设定提案，经确认后写入一个 world Markdown。",
+      "mode": "interactive-write",
+      "executionAvailable": true,
+      "routable": true
+    },
+    {
+      "id": "novelgainker.material-create",
+      "version": 1,
+      "displayName": "创建素材",
+      "description": "审查显式选择的 Canon 来源，生成结构化素材提案，经确认后写入一个普通 materials Markdown。",
+      "mode": "interactive-write",
+      "executionAvailable": true,
+      "routable": true
+    },
+    {
+      "id": "novelgainker.plot-create",
+      "version": 1,
+      "displayName": "创建主剧情",
+      "description": "审查显式选择的人物、设定和普通素材，生成结构化主剧情提案，经确认后写入固定 plot/main.md。",
+      "mode": "interactive-write",
+      "executionAvailable": true,
+      "routable": true
+    },
+    {
+      "id": "novelgainker.storytelling",
+      "version": 1,
+      "displayName": "小说续写与章节创作",
+      "description": "在本地审查章节上下文来源、预算、截断与哈希；当前只开放 Context Manifest 构建。",
+      "mode": "interactive-write",
+      "executionAvailable": false,
+      "routable": false
+    }
+  ]
+}

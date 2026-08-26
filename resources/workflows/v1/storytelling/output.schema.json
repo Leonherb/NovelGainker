@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/story-context-manifest.v2.json",
+  "title": "StoryContextManifestV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "aggregateHash",
+    "budget",
+    "createdAt",
+    "excludedSources",
+    "manifestVersion",
+    "projectRootIdentity",
+    "selectedSources",
+    "sourceOrder",
+    "targetChapter",
+    "workflowId",
+    "workflowVersion"
+  ],
+  "properties": {
+    "action": { "type": "string", "enum": ["create", "revise"] },
+    "aggregateHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "budget": { "type": "object" },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "excludedSources": { "type": "array" },
+    "manifestVersion": { "type": "integer", "const": 2 },
+    "projectRootIdentity": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "selectedSources": { "type": "array" },
+    "sourceOrder": { "type": "array", "items": { "type": "string" } },
+    "targetChapter": { "type": "object" },
+    "workflowId": {
+      "type": "string",
+      "const": "novelgainker.storytelling"
+    },
+    "workflowVersion": { "type": "integer", "const": 1 }
+  }
+}

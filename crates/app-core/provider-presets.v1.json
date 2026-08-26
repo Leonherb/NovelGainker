@@ -1,0 +1,21 @@
+{
+  "presetVersion": 1,
+  "providers": [
+    {
+      "id": "deepseek",
+      "baseUrl": "https://api.deepseek.com",
+      "endpoint": "/chat/completions",
+      "protocol": "deepseek-chat",
+      "model": "deepseek-v4-pro",
+      "timeoutSeconds": 120
+    },
+    {
+      "id": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "endpoint": "/responses",
+      "protocol": "openai-responses",
+      "model": "gpt-5.6-terra",
+      "timeoutSeconds": 120
+    }
+  ]
+}

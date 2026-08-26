@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+coverage/
+*.tsbuildinfo
+apps/desktop/src-tauri/gen/
+.env
+.env.*
+!.env.example
+*.log
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

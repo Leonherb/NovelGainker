@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/router-decision.v1.json",
+  "title": "RouterDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workflowId", "confidence"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "workflowId": {
+      "type": "string",
+      "enum": [
+        "novelgainker.character-create",
+        "novelgainker.project-create",
+        "novelgainker.setting-create",
+        "novelgainker.material-create",
+        "novelgainker.plot-create"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    }
+  }
+}
