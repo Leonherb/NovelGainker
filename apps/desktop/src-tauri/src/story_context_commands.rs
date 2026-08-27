@@ -1,14 +1,20 @@
 use super::*;
+use crate::commands::story_continuity_commands::record_story_target_preview;
+use novelgainker_workflows::chapter::{
+    build_chapter_prompt, StoryChapterPromptV1, StoryChapterSourceV1,
+};
 use novelgainker_workflows::story_context::{
-    build_story_context_manifest, sha256_hex, BuildStoryContextInputV2, StoryActionV2,
-    StoryContextBuildError, StoryContextManifestV2, StoryContextSelectionReasonV2,
-    StoryContextSourceInputV2, StoryContextSourceKindV2,
+    build_story_context_manifest, build_story_context_request_snapshot, sha256_hex,
+    BuildStoryContextInputV2, StoryActionV2, StoryContextBuildError, StoryContextManifestV2,
+    StoryContextRequestSnapshotV1, StoryContextSelectionReasonV2, StoryContextSourceInputV2,
+    StoryContextSourceKindV2, StoryReaderMentalModelV1,
 };
 use novelgainker_workflows::STORYTELLING_WORKFLOW_ID;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STORY_CONTEXT_CATALOG_SCHEMA_VERSION: u16 = 2;
 pub const STORY_CONTEXT_BUILD_SCHEMA_VERSION: u16 = 2;
+pub const STORY_CONTEXT_REQUEST_PREVIEW_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,11 +46,26 @@ pub struct StoryContextCatalogSnapshotV2 {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StoryContextBuildRequestV2 {
-    schema_version: u16,
-    action: StoryActionV2,
-    chapter_number: u32,
-    chapter_title: String,
-    selected_source_paths: Vec<String>,
+    pub(super) schema_version: u16,
+    pub(super) action: StoryActionV2,
+    pub(super) chapter_number: u32,
+    pub(super) chapter_title: String,
+    pub(super) selected_source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoryContextRequestPreviewRequestV1 {
+    pub(super) schema_version: u16,
+    pub(super) context: StoryContextBuildRequestV2,
+    pub(super) reviewed_manifest_hash: String,
+    pub(super) reader_mental_model: StoryReaderMentalModelV1,
+}
+
+pub(super) struct RegisteredStoryGenerationMaterialV1 {
+    pub snapshot: StoryContextRequestSnapshotV1,
+    pub prompt: StoryChapterPromptV1,
+    pub sources: Vec<StoryChapterSourceV1>,
 }
 
 #[derive(Clone)]
@@ -69,6 +90,22 @@ pub fn story_context_build(
     input: StoryContextBuildRequestV2,
 ) -> Result<StoryContextManifestV2, AppError> {
     build_registered_story_context(&state, &session_id, input)
+}
+
+#[tauri::command]
+pub fn story_context_request_preview(
+    state: tauri::State<'_, ProjectRegistry>,
+    session_id: String,
+    input: StoryContextRequestPreviewRequestV1,
+) -> Result<StoryContextRequestSnapshotV1, AppError> {
+    let snapshot = build_registered_story_request(&state, &session_id, input)?;
+    record_story_target_preview(
+        &state,
+        &session_id,
+        snapshot.request_hash.clone(),
+        &snapshot.manifest.target_chapter.relative_path,
+    )?;
+    Ok(snapshot)
 }
 
 fn load_story_context_catalog(
@@ -161,13 +198,81 @@ fn build_registered_story_context(
     .map_err(story_context_error)
 }
 
+pub(super) fn rebuild_registered_story_context(
+    state: &ProjectRegistry,
+    session_id: &str,
+    input: StoryContextBuildRequestV2,
+) -> Result<StoryContextManifestV2, AppError> {
+    build_registered_story_context(state, session_id, input)
+}
+
+fn build_registered_story_request(
+    state: &ProjectRegistry,
+    session_id: &str,
+    input: StoryContextRequestPreviewRequestV1,
+) -> Result<StoryContextRequestSnapshotV1, AppError> {
+    if input.schema_version != STORY_CONTEXT_REQUEST_PREVIEW_SCHEMA_VERSION {
+        return Err(AppError::workflow_input_invalid());
+    }
+    let manifest = build_registered_story_context(state, session_id, input.context)?;
+    build_story_context_request_snapshot(
+        manifest,
+        input.reviewed_manifest_hash,
+        input.reader_mental_model,
+    )
+    .map_err(story_context_error)
+}
+
+pub(super) fn build_registered_story_generation_material(
+    state: &ProjectRegistry,
+    session_id: &str,
+    input: StoryContextRequestPreviewRequestV1,
+) -> Result<RegisteredStoryGenerationMaterialV1, AppError> {
+    let snapshot = build_registered_story_request(state, session_id, input)?;
+    let handle = session_handle(state, session_id)?;
+    let materials = load_story_catalog_materials(&handle)?;
+    let material_map = materials
+        .into_iter()
+        .map(|material| (material.entry.source_id.clone(), material))
+        .collect::<BTreeMap<_, _>>();
+    let mut sources = Vec::with_capacity(snapshot.manifest.selected_sources.len());
+    for manifest_source in &snapshot.manifest.selected_sources {
+        let material = material_map
+            .get(&manifest_source.source_id)
+            .ok_or_else(AppError::workflow_context_changed)?;
+        let retained = material
+            .content
+            .get(..manifest_source.included_byte_length as usize)
+            .ok_or_else(AppError::workflow_context_changed)?;
+        sources.push(StoryChapterSourceV1 {
+            source_id: manifest_source.source_id.clone(),
+            display_name: manifest_source.display_name.clone(),
+            location: manifest_source
+                .relative_path
+                .clone()
+                .or_else(|| manifest_source.builtin_resource_id.clone())
+                .ok_or_else(AppError::workflow_context_changed)?,
+            content: retained.to_owned(),
+        });
+    }
+    let prompt = build_chapter_prompt(&snapshot, sources.clone())
+        .map_err(|_| AppError::workflow_context_changed())?;
+    Ok(RegisteredStoryGenerationMaterialV1 {
+        snapshot,
+        prompt,
+        sources,
+    })
+}
+
 fn story_context_error(error: StoryContextBuildError) -> AppError {
     match error {
         StoryContextBuildError::InvalidInput => AppError::workflow_input_invalid(),
         StoryContextBuildError::DuplicateSource
         | StoryContextBuildError::InvalidSource
         | StoryContextBuildError::RequiredSourceExcluded => AppError::workflow_source_not_allowed(),
-        StoryContextBuildError::BudgetExceeded => AppError::workflow_source_limit_exceeded(),
+        StoryContextBuildError::ReaderModelTooLarge | StoryContextBuildError::BudgetExceeded => {
+            AppError::workflow_source_limit_exceeded()
+        }
         StoryContextBuildError::Serialization => AppError::workflow_unavailable(),
     }
 }
@@ -553,7 +658,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn ng_501_catalog_and_manifest_are_stable_bounded_and_zero_write() {
+    fn ng_502_request_snapshot_preserves_reader_model_and_stays_zero_write() {
         let root = std::env::temp_dir().join(format!("novelgainker-ng501-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let inspection = inspect_project_root(&root, ProjectScanMode::Create).unwrap();
@@ -635,8 +740,55 @@ mod tests {
 
         fs::write(root.join("plot/main.md"), "# 主线\n\n变化后的潮线\n").unwrap();
         let changed =
-            build_registered_story_context(&registry, &session.session_id, request).unwrap();
+            build_registered_story_context(&registry, &session.session_id, request.clone())
+                .unwrap();
         assert_ne!(first.aggregate_hash, changed.aggregate_hash);
+
+        let reader_model = StoryReaderMentalModelV1 {
+            reader_knows: "读者知道潮门已经关闭。".to_owned(),
+            reader_infers: "林遥可能隐瞒了退潮原因。".to_owned(),
+            reader_misreads: String::new(),
+            reader_questions: "潮声来自哪里？".to_owned(),
+            chapter_promises: "推进潮门异响。".to_owned(),
+            forbidden_reveals: "暂不揭示守门人的身份。".to_owned(),
+        };
+        let stale_preview = build_registered_story_request(
+            &registry,
+            &session.session_id,
+            StoryContextRequestPreviewRequestV1 {
+                schema_version: 1,
+                context: request.clone(),
+                reviewed_manifest_hash: first.aggregate_hash,
+                reader_mental_model: reader_model.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            stale_preview.source_review.status,
+            novelgainker_workflows::story_context::StorySourceReviewStatusV1::NeedsReview
+        );
+        assert_eq!(stale_preview.reader_mental_model, reader_model);
+        let reviewed_preview = build_registered_story_request(
+            &registry,
+            &session.session_id,
+            StoryContextRequestPreviewRequestV1 {
+                schema_version: 1,
+                context: request,
+                reviewed_manifest_hash: changed.aggregate_hash,
+                reader_mental_model: stale_preview.reader_mental_model,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            reviewed_preview.source_review.status,
+            novelgainker_workflows::story_context::StorySourceReviewStatusV1::Current
+        );
+        assert_ne!(reviewed_preview.reader_model_hash, sha256_hex(&[]));
+        assert_eq!(fs::read(&ledger_path).unwrap(), ledger_before);
+        assert_eq!(
+            fs::read(root.join("chapters/001.md")).unwrap(),
+            chapter_before
+        );
 
         let attack = build_registered_story_context(
             &registry,

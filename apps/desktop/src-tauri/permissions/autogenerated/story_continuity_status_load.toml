@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-story-continuity-status-load"
+description = "Enables the story_continuity_status_load command without any pre-configured scope."
+commands.allow = ["story_continuity_status_load"]
+
+[[permission]]
+identifier = "deny-story-continuity-status-load"
+description = "Denies the story_continuity_status_load command without any pre-configured scope."
+commands.deny = ["story_continuity_status_load"]

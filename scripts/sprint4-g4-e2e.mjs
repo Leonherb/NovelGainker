@@ -65,19 +65,25 @@ const expectedResourcePaths = [
   "setting-create/output.schema.json",
   "setting-create/setting.template.md",
   "setting-create/workflow.md",
+  "storytelling/chapter-proposal.output.schema.json",
   "storytelling/chapter.template.md",
   "storytelling/input.schema.json",
   "storytelling/output.schema.json",
+  "storytelling/request-preview.input.schema.json",
+  "storytelling/request-snapshot.output.schema.json",
   "storytelling/workflow.md",
 ];
-const expectedPackHash = "24616ecda847c1df3f3e9b4550e70ef987b8b2c62e7cfe0b3985680721ce84f9";
+// G4's historical hash remains recorded in the Sprint 4 evidence and BMAD docs. The
+// regression gate follows the latest product-authorized, build-validated Pack so
+// later stories can extend the same frozen resource set without disabling G4.
+const expectedPackHash = "1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5";
 const expectedWorkflows = [
   ["novelgainker.character-create", 2, true, true],
   ["novelgainker.project-create", 1, true, true],
   ["novelgainker.setting-create", 1, true, true],
   ["novelgainker.material-create", 1, true, true],
   ["novelgainker.plot-create", 1, true, true],
-  ["novelgainker.storytelling", 1, false, false],
+  ["novelgainker.storytelling", 1, true, false],
 ];
 const reportSources = [
   ["G2", "target/g2-evidence/security-report.json"],
@@ -369,12 +375,12 @@ try {
   const actualResourcePaths = relativeFiles(resourceRoot);
   assert(
     JSON.stringify(actualResourcePaths) === JSON.stringify(expectedResourcePaths),
-    "G4 regression Pack resource paths do not match the current twenty-eight-resource contract.",
+    "G4 regression Pack resource paths do not match the current NG-506 thirty-one-resource contract.",
   );
   const packHash = calculatePackHash(resourceRoot, actualResourcePaths);
   assert(
     packHash === expectedPackHash,
-    "G4 Workflow Pack Hash changed without a new approved Pack.",
+    "G4 Workflow Pack Hash changed without a product-authorized Pack update.",
   );
   const manifest = JSON.parse(readFileSync(join(resourceRoot, "pack.json"), "utf8"));
   assert(manifest.schemaVersion === 1, "G4 Pack Manifest schema is not v1.");

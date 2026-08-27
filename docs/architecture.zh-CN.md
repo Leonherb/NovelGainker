@@ -820,7 +820,7 @@ Q-001 至 Q-017 已全部闭环。产品负责人已批准权威数据边界、W
 
 架构已进入执行阶段。执行规划已批准：[sprint-plan.zh-CN.md](./sprint-plan.zh-CN.md)；Sprint 0 已通过 G0，Sprint 1 的 NG-101～NG-107 和 G1 技术验收也已全部完成。
 
-G1 已由产品负责人批准，[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) Review Gate 也已通过，S2-Q001～Q004 全部按建议接受。NG-201～NG-207 已按依赖顺序完成技术实现、通过统一质量门并获得产品验收；产品负责人已按 S2-Q004 明确记录 G2 Live Waiver，未执行真实 Provider 请求。产品负责人已批准 G2 并关闭 Sprint 2；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306、通过 G3 并关闭 Sprint 3；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭。当前 [Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) Review Gate 已通过；NG-501 Context Builder v2 已完成技术实现并通过全量质量门，等待产品验收；NG-502 尚未授权。
+G1 已由产品负责人批准，[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) Review Gate 也已通过，S2-Q001～Q004 全部按建议接受。NG-201～NG-207 已按依赖顺序完成技术实现、通过统一质量门并获得产品验收；产品负责人已按 S2-Q004 明确记录 G2 Live Waiver，未执行真实 Provider 请求。产品负责人已批准 G2 并关闭 Sprint 2；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306、通过 G3 并关闭 Sprint 3；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭；[Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) 已完成 NG-501～NG-507、通过 G5 并关闭。当前 [Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 已创建，等待 S6-Q001～Q007 与 Story Packet Review Gate；NG-601 尚未授权。
 
 NG-403 将实体工作流扩展到 `novelgainker.material-create` v1：Provider 只返回严格 `MaterialProposalV1` 领域数据，Rust 独占 ID、路径、Frontmatter、Markdown 与写入决定；Context 只接受用户显式选择的 `world/`、`characters/`、`plot/` Canon 来源。未接受素材仅存在于进程内，App State v5 继续只保存有界元数据；`materials/000.story-ledger.md` 和全部 `000.*` 目标在 Core、Tauri、前端三层不可写。create/replace 共用 G3 Hash、确认和可恢复 Apply，且禁止跨 Provider Fallback。
 
@@ -832,7 +832,21 @@ NG-406 新增独立于普通对话的确定性 Router：六个精确中文命令
 
 NG-407 在不引入新运行时能力的前提下增加 G4 聚合证据层：固定重算 5 个 Workflow、24 个编译期资源与 Pack Hash，汇总 project-create 事务矩阵、四实体双 Loopback Schema/Serializer Golden、Router 零请求和 Proposal/Apply/Recovery 负面矩阵。隔离临时项目中的高熵 Canary 会扫描 SQLite、日志、错误、DOM、PNG 元数据和脱敏报告；Story Ledger 与 Sprint 5 目录保持原字节。默认质量门仍不读取真实项目、真实 Key 或调用真实 Provider。
 
-NG-501 新增只读、不可路由、不可执行的 `novelgainker.storytelling` Workflow 和原生 Context Builder v2。Rust 从当前已打开项目的受控会话读取固定必需来源、可取消默认候选与用户显式加入的额外 Canon，按稳定顺序实施 48 KiB 上下文预算、8 KiB 单源 UTF-8 截断、来源 Hash、aggregateHash 和明确排除原因；WebView 只接收严格 Manifest DTO 并提供可展开审查。该 Story 不调用 Provider、不写项目文件、不持久化正文，也不开放章节生成；规范化 Pack 现为 6 个 Workflow、28 个编译期资源，Pack Hash 为 `24616ecda847c1df3f3e9b4550e70ef987b8b2c62e7cfe0b3985680721ce84f9`。
+NG-501 新增只读、不可路由、不可执行的 `novelgainker.storytelling` Workflow 和原生 Context Builder v2。Rust 从当前已打开项目的受控会话读取固定必需来源、可取消默认候选与用户显式加入的额外 Canon，按稳定顺序实施 48 KiB 上下文预算、8 KiB 单源 UTF-8 截断、来源 Hash、aggregateHash 和明确排除原因；WebView 只接收严格 Manifest DTO 并提供可展开审查。该 Story 不调用 Provider、不写项目文件、不持久化正文，也不开放章节生成。
+
+NG-502 在同一只读边界内加入固定 24/48/24 KiB 请求预算、六字段 Reader Mental Model、`readerModelHash` 与 `requestHash`。来源变化保留用户编辑但使审查状态变为 `needsReview`；只有当前 Manifest 与用户复核后的请求快照可供后续生成使用，仍不调用 Provider 或写入项目。
+
+NG-503 增加专用、不可写的 Chapter Proposal 运行面：Context Manifest 与 Reader Mental Model 编译为固定中文协议，经当前选中的 DeepSeek `deepseek-v4-pro` 或 OpenAI `gpt-5.6-terra` 流式发送；两者共用严格 `ChapterProposalPayloadV1` Validator，解析失败最多向同一 Provider 修复一次，禁止自动跨 Provider Fallback。Run 与无效响应预览只保存在进程内，完成后重新构建 Manifest 标记 `current` / `stale`；所有 Proposal 固定 `continuityCheckVersion=null`、`writeEnabled=false`，没有章节或 Ledger Apply 能力。当前 Pack 为 6 个 Workflow、31 个构建期资源，Pack Hash 为 `bb6b615e05bff316ba440481fd669224da492226d24362ff89d1f2d67352c4eb`。
+
+NG-504 在 Chapter Proposal 之后增加纯本地、确定性的连续性检查 v1。17 条稳定排序规则输出 blocking、warning、unknown、passed 四类结果；每条结果包含固定 ruleId、解释、证据、Source ID 与建议动作。来源或目标文件 Hash 变化、响应不完整和结构契约失败均为 blocking；启发式语义无法可靠判断时明确标记 unknown，不伪装为通过。NG-507 完整路径回归补齐作者决策语义：warning 与 unknown 都只在当前进程会话内按精确规则 ID 显式确认，unknown 的分类与数量保持不变；blocking 仍不可确认绕过。检查不调用 Provider、不写项目文件，且 `writeEnabled` 继续固定为 false。当前 Pack 仍为 6 个 Workflow、31 个构建期资源，新增只读 `story.check_continuity` 与本地 review 操作，规范化 Pack Hash 为 `deecbcdb9505c63934626e9a9e236457a614eee2abd763975bf26bd3e2de1b14`。
+
+NG-505 在连续性报告通过后增加确定性章节目标构建、逐行 Diff 与单文件事务性 Apply。create 只写用户指定的 `chapters/NNN.md` 并拒绝碰撞；revise 保持路径、ID、章节号、未知 Frontmatter 和非 Draft 区块，accepted/final 必须显式解锁且写回 draft。确认前项目零写入；确认时重新构建 Manifest、请求、Proposal、连续性结果和目标 Hash，并校验最终编码字节 Hash。App Core 使用同目录临时文件、flush/sync、严格校验、备份、原子替换、回读校验和恢复 Journal，故障或崩溃优先恢复原文件。Apply 不调用 Provider，不更新 Story Ledger，不实现章节状态迁移。当前 Pack 仍为 6 个 Workflow、31 个构建期资源，Workflow 注册表规范化 Hash 为 `e47d451c39880c284c307ce30edb3a33d7bd939bc2e8aa112e23a9c17dc9fe8f`；46 条精确 Command 已登记，但 Storytelling 继续保持 `executionAvailable=false`、`routable=false`，等待 NG-505 产品验收。
+
+NG-506 将章节 Patch、状态迁移和 Ledger 更新冻结为三个互不合并的确认/事务面。状态机只允许 `draft → accepted → final`，AI、章节 Apply 或 Ledger Apply 都不能自动改变状态；accepted/final 修订仍沿用 NG-505 的显式解锁并回到 draft。首次接受会把严格、可见且可恢复的 `Ledger Pending` 记录写入当前章节 Markdown，该记录绑定章节 ID、编号、标题、路径和 Proposal/Manifest/Request Hash；Ledger 只从当前章节与固定 `materials/000.story-ledger.md` 重建差异，并由第二次确认单独写入。Ledger 失败不回滚章节，“稍后处理”不创建后台任务或自动重试。Storytelling 已按 NG-505 产品验收开放为 `executionAvailable=true`、`routable=false`，Router 范围不变；当前 Pack Hash 为 `1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5`，登记 51 条精确 Command。产品负责人已单独授权同步 G4 当前回归基线，完整 `pnpm quality` 已通过；NG-506 已获产品验收。
+
+NG-507 不增加运行时能力，只建立跨 Provider Storytelling 完整证据层并修复演示链上的 Continuity 决策死锁。DeepSeek/OpenAI Loopback 共享 Context、Proposal、Continuity、章节 create/revise、accepted 与 Ledger Apply 状态机；取消、截断、解析失败、Provider 错误和 source-stale 都证明零项目写入，手动 Markdown 编辑使旧 Proposal 的源 Hash 失效并拒绝覆盖。G5 证据使用高熵 Canary、固定文件名与 SHA-256 Manifest，包含双 Provider、章节/Ledger 事务、取消/恢复、Review Report 和真实桌面 PNG；Live Smoke 未获本次授权，记录为非阻断且请求数为 0。NG-507 已获产品验收，G5 已获产品批准，Sprint 5 已关闭。
+
+Sprint 6 当前只有已创建、待 Review Gate 的执行 Packet。它建议依次交付只读 analytical-review、文字视觉 Prompt 与受控本地图片导入、确定性 EPUB 预检/构建/验证，并继续限定 DeepSeek/OpenAI 文本 Provider、显式工作流入口、项目相对路径和用户确认写入。该建议在 S6-Q001～Q007 获确认前不是运行时授权，NG-601 尚未启动。
 
 执行规划必须保持本架构范围，不得顺带加入 Android、macOS/Linux、第三家 Provider、任意 Model ID、图片生成 API、Multi-agent、云同步或产品内 Git 管理。
 

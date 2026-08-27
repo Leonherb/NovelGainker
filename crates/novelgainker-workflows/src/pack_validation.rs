@@ -33,9 +33,26 @@ pub const PLOT_CONFIRMATIONS: [&str; 2] = ["send_context", "create_or_replace_ma
 pub const STORYTELLING_WORKFLOW_ID: &str = "novelgainker.storytelling";
 pub const STORYTELLING_WORKFLOW_VERSION: u16 = 1;
 pub const STORYTELLING_MODE: &str = "interactive-write";
-pub const STORYTELLING_TOOL: &str = "story.build_context";
-pub const STORYTELLING_CONFIRMATIONS: [&str; 1] = ["select_context"];
-pub const EXPECTED_RESOURCE_PATHS: [&str; 28] = [
+pub const STORYTELLING_TOOLS: [&str; 8] = [
+    "story.build_context",
+    "story.preview_request",
+    "story.generate_proposal",
+    "story.check_continuity",
+    "story.preview_chapter_patch",
+    "story.apply_chapter_patch",
+    "story.transition_chapter_status",
+    "story.update_ledger",
+];
+pub const STORYTELLING_CONFIRMATIONS: [&str; 7] = [
+    "select_context",
+    "review_reader_model",
+    "send_context",
+    "review_continuity_warnings",
+    "apply_chapter_patch",
+    "transition_chapter_status",
+    "apply_ledger_update",
+];
+pub const EXPECTED_RESOURCE_PATHS: [&str; 31] = [
     "character-create/character.template.md",
     "character-create/input.schema.json",
     "character-create/output.schema.json",
@@ -60,9 +77,12 @@ pub const EXPECTED_RESOURCE_PATHS: [&str; 28] = [
     "setting-create/output.schema.json",
     "setting-create/setting.template.md",
     "setting-create/workflow.md",
+    "storytelling/chapter-proposal.output.schema.json",
     "storytelling/chapter.template.md",
     "storytelling/input.schema.json",
     "storytelling/output.schema.json",
+    "storytelling/request-preview.input.schema.json",
+    "storytelling/request-snapshot.output.schema.json",
     "storytelling/workflow.md",
 ];
 
@@ -1674,6 +1694,464 @@ fn validate_storytelling_output_schema(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_storytelling_request_preview_input_schema(text: &str) -> Result<(), String> {
+    let fields = [
+        "context",
+        "readerMentalModel",
+        "reviewedManifestHash",
+        "schemaVersion",
+    ];
+    let properties = validate_schema_root_version(
+        text,
+        "https://schemas.novelgainker.local/workflows/story-context-request-preview.v1.json",
+        &fields,
+        &fields,
+        1,
+    )?;
+    let reviewed_hash = object(
+        properties
+            .get("reviewedManifestHash")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-reviewed-hash-missing"))?,
+        "workflow-pack.storytelling-reviewed-hash-invalid",
+    )?;
+    exact_object_keys(
+        reviewed_hash,
+        &["pattern", "type"],
+        "workflow-pack.storytelling-reviewed-hash-invalid",
+    )?;
+    if reviewed_hash.get("type").and_then(Value::as_str) != Some("string")
+        || reviewed_hash.get("pattern").and_then(Value::as_str) != Some("^[0-9a-f]{64}$")
+    {
+        return Err(invalid("workflow-pack.storytelling-reviewed-hash-invalid"));
+    }
+
+    let context = object(
+        properties
+            .get("context")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-preview-context-missing"))?,
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    exact_object_keys(
+        context,
+        &["additionalProperties", "properties", "required", "type"],
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    let context_fields = [
+        "action",
+        "chapterNumber",
+        "chapterTitle",
+        "schemaVersion",
+        "selectedSourcePaths",
+    ];
+    if context.get("type").and_then(Value::as_str) != Some("object")
+        || context.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(invalid(
+            "workflow-pack.storytelling-preview-context-invalid",
+        ));
+    }
+    exact_string_set(
+        context
+            .get("required")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-preview-context-invalid"))?,
+        &context_fields,
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    let context_properties = object(
+        context
+            .get("properties")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-preview-context-invalid"))?,
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    exact_object_keys(
+        context_properties,
+        &context_fields,
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    let context_version = object(
+        context_properties
+            .get("schemaVersion")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-preview-context-invalid"))?,
+        "workflow-pack.storytelling-preview-context-invalid",
+    )?;
+    if context_version.get("type").and_then(Value::as_str) != Some("integer")
+        || context_version.get("const").and_then(Value::as_u64) != Some(2)
+    {
+        return Err(invalid(
+            "workflow-pack.storytelling-preview-context-invalid",
+        ));
+    }
+
+    let reader_model = object(
+        properties
+            .get("readerMentalModel")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-reader-model-missing"))?,
+        "workflow-pack.storytelling-reader-model-invalid",
+    )?;
+    exact_object_keys(
+        reader_model,
+        &["additionalProperties", "properties", "required", "type"],
+        "workflow-pack.storytelling-reader-model-invalid",
+    )?;
+    let reader_fields = [
+        "chapterPromises",
+        "forbiddenReveals",
+        "readerInfers",
+        "readerKnows",
+        "readerMisreads",
+        "readerQuestions",
+    ];
+    if reader_model.get("type").and_then(Value::as_str) != Some("object")
+        || reader_model
+            .get("additionalProperties")
+            .and_then(Value::as_bool)
+            != Some(false)
+    {
+        return Err(invalid("workflow-pack.storytelling-reader-model-invalid"));
+    }
+    exact_string_set(
+        reader_model
+            .get("required")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-reader-model-invalid"))?,
+        &reader_fields,
+        "workflow-pack.storytelling-reader-model-invalid",
+    )?;
+    let reader_properties = object(
+        reader_model
+            .get("properties")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-reader-model-invalid"))?,
+        "workflow-pack.storytelling-reader-model-invalid",
+    )?;
+    exact_object_keys(
+        reader_properties,
+        &reader_fields,
+        "workflow-pack.storytelling-reader-model-invalid",
+    )?;
+    for field in reader_fields {
+        let property = object(
+            reader_properties
+                .get(field)
+                .ok_or_else(|| invalid("workflow-pack.storytelling-reader-model-invalid"))?,
+            "workflow-pack.storytelling-reader-model-invalid",
+        )?;
+        exact_object_keys(
+            property,
+            &["maxLength", "type"],
+            "workflow-pack.storytelling-reader-model-invalid",
+        )?;
+        if property.get("type").and_then(Value::as_str) != Some("string")
+            || property.get("maxLength").and_then(Value::as_u64) != Some(4_096)
+        {
+            return Err(invalid("workflow-pack.storytelling-reader-model-invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_storytelling_request_snapshot_output_schema(text: &str) -> Result<(), String> {
+    let fields = [
+        "budget",
+        "createdAt",
+        "manifest",
+        "readerMentalModel",
+        "readerModelHash",
+        "requestHash",
+        "snapshotVersion",
+        "sourceReview",
+    ];
+    let value: Value =
+        serde_json::from_str(text).map_err(|_| invalid("workflow-pack.schema-json-invalid"))?;
+    let root = object(&value, "workflow-pack.schema-root-invalid")?;
+    exact_object_keys(
+        root,
+        &[
+            "$id",
+            "$schema",
+            "additionalProperties",
+            "properties",
+            "required",
+            "title",
+            "type",
+        ],
+        "workflow-pack.schema-root-fields-invalid",
+    )?;
+    if root.get("$schema").and_then(Value::as_str)
+        != Some("https://json-schema.org/draft/2020-12/schema")
+        || root.get("$id").and_then(Value::as_str)
+            != Some(
+                "https://schemas.novelgainker.local/workflows/story-context-request-snapshot.v1.json",
+            )
+        || root.get("type").and_then(Value::as_str) != Some("object")
+        || root.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(invalid(
+            "workflow-pack.storytelling-request-snapshot-invalid",
+        ));
+    }
+    exact_string_set(
+        root.get("required")
+            .ok_or_else(|| invalid("workflow-pack.schema-required-missing"))?,
+        &fields,
+        "workflow-pack.schema-required-invalid",
+    )?;
+    let properties = object(
+        root.get("properties")
+            .ok_or_else(|| invalid("workflow-pack.schema-properties-missing"))?,
+        "workflow-pack.schema-properties-invalid",
+    )?;
+    exact_object_keys(
+        properties,
+        &fields,
+        "workflow-pack.schema-property-set-invalid",
+    )?;
+    let snapshot_version = object(
+        properties
+            .get("snapshotVersion")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-request-snapshot-invalid"))?,
+        "workflow-pack.storytelling-request-snapshot-invalid",
+    )?;
+    if snapshot_version.get("type").and_then(Value::as_str) != Some("integer")
+        || snapshot_version.get("const").and_then(Value::as_u64) != Some(1)
+    {
+        return Err(invalid(
+            "workflow-pack.storytelling-request-snapshot-invalid",
+        ));
+    }
+    for field in ["readerModelHash", "requestHash"] {
+        let property = object(
+            properties
+                .get(field)
+                .ok_or_else(|| invalid("workflow-pack.storytelling-request-snapshot-invalid"))?,
+            "workflow-pack.storytelling-request-snapshot-invalid",
+        )?;
+        exact_object_keys(
+            property,
+            &["pattern", "type"],
+            "workflow-pack.storytelling-request-snapshot-invalid",
+        )?;
+        if property.get("type").and_then(Value::as_str) != Some("string")
+            || property.get("pattern").and_then(Value::as_str) != Some("^[0-9a-f]{64}$")
+        {
+            return Err(invalid(
+                "workflow-pack.storytelling-request-snapshot-invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_storytelling_chapter_proposal_output_schema(text: &str) -> Result<(), String> {
+    let fields = [
+        "continuityClaims",
+        "draftMarkdown",
+        "intentSummary",
+        "ledgerCandidates",
+        "readerModelDelta",
+        "schemaVersion",
+        "title",
+    ];
+    let value: Value =
+        serde_json::from_str(text).map_err(|_| invalid("workflow-pack.schema-json-invalid"))?;
+    let root = object(&value, "workflow-pack.schema-root-invalid")?;
+    exact_object_keys(
+        root,
+        &[
+            "$id",
+            "$schema",
+            "additionalProperties",
+            "properties",
+            "required",
+            "title",
+            "type",
+        ],
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    if root.get("$id").and_then(Value::as_str)
+        != Some("https://schemas.novelgainker.local/workflows/chapter-proposal-payload.v1.json")
+        || root.get("title").and_then(Value::as_str) != Some("ChapterProposalPayloadV1")
+        || root.get("type").and_then(Value::as_str) != Some("object")
+        || root.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+    }
+    exact_string_set(
+        root.get("required")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        &fields,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    let properties = object(
+        root.get("properties")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    exact_object_keys(
+        properties,
+        &fields,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    let version = object(
+        properties
+            .get("schemaVersion")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    if version.get("type").and_then(Value::as_str) != Some("integer")
+        || version.get("const").and_then(Value::as_u64) != Some(1)
+    {
+        return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+    }
+    validate_string_property(
+        properties
+            .get("title")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        1,
+        120,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    validate_string_property(
+        properties
+            .get("draftMarkdown")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        1,
+        65_536,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    validate_string_property(
+        properties
+            .get("intentSummary")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        1,
+        4_096,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    let reader = object(
+        properties
+            .get("readerModelDelta")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    let reader_fields = [
+        "chapterPromises",
+        "forbiddenReveals",
+        "readerInfers",
+        "readerKnows",
+        "readerMisreads",
+        "readerQuestions",
+    ];
+    if reader.get("type").and_then(Value::as_str) != Some("object")
+        || reader.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+    }
+    exact_string_set(
+        reader
+            .get("required")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        &reader_fields,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    let reader_properties = object(
+        reader
+            .get("properties")
+            .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    exact_object_keys(
+        reader_properties,
+        &reader_fields,
+        "workflow-pack.storytelling-chapter-schema-invalid",
+    )?;
+    for field in reader_fields {
+        let property = object(
+            reader_properties
+                .get(field)
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        exact_object_keys(
+            property,
+            &["maxLength", "type"],
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        if property.get("type").and_then(Value::as_str) != Some("string")
+            || property.get("maxLength").and_then(Value::as_u64) != Some(4_096)
+        {
+            return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+        }
+    }
+    for (field, text_field) in [
+        ("continuityClaims", "claim"),
+        ("ledgerCandidates", "summary"),
+    ] {
+        let list = object(
+            properties
+                .get(field)
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        if list.get("type").and_then(Value::as_str) != Some("array")
+            || list.get("maxItems").and_then(Value::as_u64) != Some(64)
+        {
+            return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+        }
+        let item = object(
+            list.get("items")
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        if item.get("type").and_then(Value::as_str) != Some("object")
+            || item.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+        {
+            return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+        }
+        exact_string_set(
+            item.get("required")
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            &[text_field, "sourceIds"],
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        let item_properties = object(
+            item.get("properties")
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        exact_object_keys(
+            item_properties,
+            &[text_field, "sourceIds"],
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        validate_string_property(
+            item_properties
+                .get(text_field)
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            1,
+            1_000,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        let source_ids = object(
+            item_properties
+                .get("sourceIds")
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+        if source_ids.get("type").and_then(Value::as_str) != Some("array")
+            || source_ids.get("maxItems").and_then(Value::as_u64) != Some(16)
+        {
+            return Err(invalid("workflow-pack.storytelling-chapter-schema-invalid"));
+        }
+        validate_string_property(
+            source_ids
+                .get("items")
+                .ok_or_else(|| invalid("workflow-pack.storytelling-chapter-schema-invalid"))?,
+            1,
+            512,
+            "workflow-pack.storytelling-chapter-schema-invalid",
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_storytelling_template(text: &str) -> Result<(), String> {
     for marker in ["{{chapterId}}", "{{chapterNumber}}", "{{draft}}"] {
         if text.match_indices(marker).count() != 1 {
@@ -1707,9 +2185,26 @@ fn validate_storytelling_workflow_instructions(text: &str) -> Result<(), String>
     for required in [
         "# 小说续写与章节创作",
         "StoryContextManifestV2",
+        "StoryContextRequestSnapshotV1",
         "story.build_context",
-        "不调用 Provider",
-        "不修改文件",
+        "story.preview_request",
+        "story.generate_proposal",
+        "story.check_continuity",
+        "story.preview_chapter_patch",
+        "story.apply_chapter_patch",
+        "story.transition_chapter_status",
+        "story.update_ledger",
+        "Reader Mental Model",
+        "ChapterProposalV1",
+        "needsReview",
+        "4096 tokens",
+        "固定 Provider",
+        "Continuity Check",
+        "不调用第二个 AI",
+        "不写入 App State",
+        "materials/000.story-ledger.md",
+        "独立确认",
+        "Ledger Pending",
         "简体中文",
     ] {
         if !text.contains(required) {
@@ -1928,7 +2423,7 @@ pub fn validate_pack(resources: &BTreeMap<String, Vec<u8>>) -> Result<ValidatedP
             return Err(invalid("workflow-pack.workflow-id-duplicate"));
         }
         let storytelling = workflow.id == STORYTELLING_WORKFLOW_ID;
-        if (storytelling && (workflow.execution_available || workflow.routable))
+        if (storytelling && (!workflow.execution_available || workflow.routable))
             || (!storytelling && (!workflow.execution_available || !workflow.routable))
             || workflow.description.trim().is_empty()
             || workflow.description.chars().count() > 160
@@ -2153,7 +2648,7 @@ pub fn validate_pack(resources: &BTreeMap<String, Vec<u8>>) -> Result<ValidatedP
                 if workflow.version != STORYTELLING_WORKFLOW_VERSION
                     || workflow.mode != STORYTELLING_MODE
                     || workflow.display_name != "小说续写与章节创作"
-                    || workflow.allowed_tools.as_slice() != [STORYTELLING_TOOL]
+                    || workflow.allowed_tools.as_slice() != STORYTELLING_TOOLS
                     || workflow.required_confirmations.as_slice() != STORYTELLING_CONFIRMATIONS
                 {
                     return Err(invalid("workflow-pack.storytelling-contract-invalid"));
@@ -2193,6 +2688,18 @@ pub fn validate_pack(resources: &BTreeMap<String, Vec<u8>>) -> Result<ValidatedP
                 validate_storytelling_output_schema(resource_text(
                     resources,
                     &workflow.output_schema,
+                )?)?;
+                validate_storytelling_request_preview_input_schema(resource_text(
+                    resources,
+                    "storytelling/request-preview.input.schema.json",
+                )?)?;
+                validate_storytelling_request_snapshot_output_schema(resource_text(
+                    resources,
+                    "storytelling/request-snapshot.output.schema.json",
+                )?)?;
+                validate_storytelling_chapter_proposal_output_schema(resource_text(
+                    resources,
+                    "storytelling/chapter-proposal.output.schema.json",
                 )?)?;
                 validate_storytelling_template(resource_text(
                     resources,

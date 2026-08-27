@@ -32,5 +32,5 @@ NovelGainker is a Windows-first, local-first Tauri 2 desktop application for Chi
 
 - Current architecture: `docs/architecture.zh-CN.md`
 - Delivery sequence and gates: `docs/sprint-plan.zh-CN.md`
-- Current execution packet: `docs/stories/sprint-5-story-packet.zh-CN.md` (Review Gate passed; NG-501 technically complete and awaiting product acceptance; NG-502 not authorized)
+- Current execution packet: `docs/stories/sprint-6-story-packet.zh-CN.md` (created; S6-Q001 through S6-Q007 and the Story Packet Review Gate are pending; NG-601 is not authorized)
 - Build, test, and command-registration guide: `docs/development.md`

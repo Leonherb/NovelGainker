@@ -1,8 +1,12 @@
 //! Build-validated, runtime-read-only NovelGainker workflow definitions.
 
+pub mod chapter;
+pub mod chapter_lifecycle;
+pub mod chapter_patch;
 pub mod character;
 pub mod character_v2;
 pub mod context;
+pub mod continuity;
 pub mod manager;
 pub mod material;
 pub mod plot;
@@ -176,6 +180,18 @@ static STORYTELLING_RESOURCES: WorkflowResources = WorkflowResources {
         "/../../resources/workflows/v1/storytelling/chapter.template.md"
     )),
 };
+static STORYTELLING_REQUEST_PREVIEW_INPUT_SCHEMA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/workflows/v1/storytelling/request-preview.input.schema.json"
+));
+static STORYTELLING_REQUEST_SNAPSHOT_OUTPUT_SCHEMA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/workflows/v1/storytelling/request-snapshot.output.schema.json"
+));
+static STORYTELLING_CHAPTER_PROPOSAL_OUTPUT_SCHEMA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/workflows/v1/storytelling/chapter-proposal.output.schema.json"
+));
 static PACK_MANIFEST_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/workflows/v1/pack.json"
@@ -191,8 +207,25 @@ const MATERIAL_TOOLS: &[&str] = &["source.create_material"];
 const MATERIAL_CONFIRMATIONS: &[&str] = &["send_context", "promote_material_to_canon"];
 const PLOT_TOOLS: &[&str] = &["source.create_plot"];
 const PLOT_CONFIRMATIONS: &[&str] = &["send_context", "create_or_replace_main_plot"];
-const STORYTELLING_TOOLS: &[&str] = &["story.build_context"];
-const STORYTELLING_CONFIRMATIONS: &[&str] = &["select_context"];
+const STORYTELLING_TOOLS: &[&str] = &[
+    "story.build_context",
+    "story.preview_request",
+    "story.generate_proposal",
+    "story.check_continuity",
+    "story.preview_chapter_patch",
+    "story.apply_chapter_patch",
+    "story.transition_chapter_status",
+    "story.update_ledger",
+];
+const STORYTELLING_CONFIRMATIONS: &[&str] = &[
+    "select_context",
+    "review_reader_model",
+    "send_context",
+    "review_continuity_warnings",
+    "apply_chapter_patch",
+    "transition_chapter_status",
+    "apply_ledger_update",
+];
 const WORKFLOWS: &[WorkflowDefinition] = &[
     WorkflowDefinition {
         id: CHARACTER_CREATE_WORKFLOW_ID,
@@ -276,9 +309,9 @@ const WORKFLOWS: &[WorkflowDefinition] = &[
         id: STORYTELLING_WORKFLOW_ID,
         version: 1,
         display_name: "小说续写与章节创作",
-        description: "审查确定性 Context Manifest；本阶段只构建上下文，不调用 Provider 或写入章节。",
+        description: "审查确定性上下文、章节提案与连续性；经独立差异确认可恢复地写入章节、迁移 accepted/final 状态，并单独更新固定 Story Ledger。",
         mode: "interactive-write",
-        execution_available: false,
+        execution_available: true,
         routable: false,
         content_hash: env!("NOVELGAINKER_STORYTELLING_WORKFLOW_SHA256"),
         allowed_tools: STORYTELLING_TOOLS,
@@ -308,6 +341,18 @@ pub fn workflow_resources(workflow_id: &str) -> Option<&'static WorkflowResource
         .iter()
         .find(|workflow| workflow.id == workflow_id)
         .map(|workflow| workflow.resources())
+}
+
+pub fn storytelling_request_preview_input_schema() -> &'static str {
+    STORYTELLING_REQUEST_PREVIEW_INPUT_SCHEMA
+}
+
+pub fn storytelling_request_snapshot_output_schema() -> &'static str {
+    STORYTELLING_REQUEST_SNAPSHOT_OUTPUT_SCHEMA
+}
+
+pub fn storytelling_chapter_proposal_output_schema() -> &'static str {
+    STORYTELLING_CHAPTER_PROPOSAL_OUTPUT_SCHEMA
 }
 
 #[cfg(test)]
@@ -486,6 +531,24 @@ mod tests {
                     .to_vec(),
             ),
             (
+                "storytelling/request-preview.input.schema.json".to_owned(),
+                super::STORYTELLING_REQUEST_PREVIEW_INPUT_SCHEMA
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            (
+                "storytelling/request-snapshot.output.schema.json".to_owned(),
+                super::STORYTELLING_REQUEST_SNAPSHOT_OUTPUT_SCHEMA
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            (
+                "storytelling/chapter-proposal.output.schema.json".to_owned(),
+                super::STORYTELLING_CHAPTER_PROPOSAL_OUTPUT_SCHEMA
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            (
                 "storytelling/chapter.template.md".to_owned(),
                 super::STORYTELLING_RESOURCES
                     .template_resource
@@ -577,10 +640,33 @@ mod tests {
         assert_eq!(storytelling.id, super::STORYTELLING_WORKFLOW_ID);
         assert_eq!(storytelling.version, 1);
         assert_eq!(storytelling.mode, "interactive-write");
-        assert!(!storytelling.execution_available);
+        assert!(storytelling.execution_available);
         assert!(!storytelling.routable);
-        assert_eq!(storytelling.allowed_tools, ["story.build_context"]);
-        assert_eq!(storytelling.required_confirmations, ["select_context"]);
+        assert_eq!(
+            storytelling.allowed_tools,
+            [
+                "story.build_context",
+                "story.preview_request",
+                "story.generate_proposal",
+                "story.check_continuity",
+                "story.preview_chapter_patch",
+                "story.apply_chapter_patch",
+                "story.transition_chapter_status",
+                "story.update_ledger"
+            ]
+        );
+        assert_eq!(
+            storytelling.required_confirmations,
+            [
+                "select_context",
+                "review_reader_model",
+                "send_context",
+                "review_continuity_warnings",
+                "apply_chapter_patch",
+                "transition_chapter_status",
+                "apply_ledger_update"
+            ]
+        );
         assert_eq!(
             storytelling.content_hash,
             validated.workflows[5].content_hash

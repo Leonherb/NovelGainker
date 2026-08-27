@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/story-context-request-preview.v1.json",
+  "title": "StoryContextRequestPreviewRequestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "context",
+    "readerMentalModel",
+    "reviewedManifestHash",
+    "schemaVersion"
+  ],
+  "properties": {
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "chapterNumber",
+        "chapterTitle",
+        "schemaVersion",
+        "selectedSourcePaths"
+      ],
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "revise"] },
+        "chapterNumber": { "type": "integer", "minimum": 1, "maximum": 999999 },
+        "chapterTitle": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "schemaVersion": { "type": "integer", "const": 2 },
+        "selectedSourcePaths": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        }
+      }
+    },
+    "readerMentalModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chapterPromises",
+        "forbiddenReveals",
+        "readerInfers",
+        "readerKnows",
+        "readerMisreads",
+        "readerQuestions"
+      ],
+      "properties": {
+        "chapterPromises": { "type": "string", "maxLength": 4096 },
+        "forbiddenReveals": { "type": "string", "maxLength": 4096 },
+        "readerInfers": { "type": "string", "maxLength": 4096 },
+        "readerKnows": { "type": "string", "maxLength": 4096 },
+        "readerMisreads": { "type": "string", "maxLength": 4096 },
+        "readerQuestions": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "reviewedManifestHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    }
+  }
+}

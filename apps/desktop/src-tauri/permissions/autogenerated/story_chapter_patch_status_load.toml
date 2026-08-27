@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-story-chapter-patch-status-load"
+description = "Enables the story_chapter_patch_status_load command without any pre-configured scope."
+commands.allow = ["story_chapter_patch_status_load"]
+
+[[permission]]
+identifier = "deny-story-chapter-patch-status-load"
+description = "Denies the story_chapter_patch_status_load command without any pre-configured scope."
+commands.deny = ["story_chapter_patch_status_load"]

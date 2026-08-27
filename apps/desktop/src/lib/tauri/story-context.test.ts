@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseStoryContextCatalog,
   parseStoryContextManifest,
+  parseStoryContextRequestSnapshot,
   requestStoryContextBuild,
+  requestStoryContextRequestPreview,
 } from "./story-context";
 
 const hash = "a".repeat(64);
@@ -86,6 +88,53 @@ function manifestValue() {
       totalIncludedBytes: 120,
     },
     aggregateHash: "c".repeat(64),
+    createdAt: 42,
+  };
+}
+
+const readerMentalModel = {
+  readerKnows: "读者知道潮门已经关闭。",
+  readerInfers: "林遥可能隐瞒了退潮原因。",
+  readerMisreads: "",
+  readerQuestions: "潮声来自哪里？",
+  chapterPromises: "推进潮门异响。",
+  forbiddenReveals: "暂不揭示守门人的身份。",
+};
+
+function requestSnapshotValue() {
+  const manifest = manifestValue();
+  const readerModelBytes = new TextEncoder().encode(JSON.stringify(readerMentalModel)).length;
+  const protocolAndBriefBytesUsed = readerModelBytes + 512;
+  const requestBytesUsed = protocolAndBriefBytesUsed + 120;
+  return {
+    snapshotVersion: 1,
+    manifest,
+    readerMentalModel,
+    readerModelHash: "d".repeat(64),
+    requestHash: "e".repeat(64),
+    sourceReview: {
+      status: "current",
+      reviewedManifestHash: manifest.aggregateHash,
+      currentManifestHash: manifest.aggregateHash,
+    },
+    budget: {
+      requestLimitBytes: 96 * 1024,
+      protocolBudgetBytes: 24 * 1024,
+      projectContextBudgetBytes: 48 * 1024,
+      safetyReserveBytes: 24 * 1024,
+      singleSourceLimitBytes: 8 * 1024,
+      queryResultLimitCount: 5,
+      queryResultLimitBytes: 2 * 1024,
+      recentChapterLimitCount: 2,
+      maximumOutputTokens: 4_096,
+      manifestProtocolBytes: 0,
+      readerModelBytes,
+      requestEnvelopeReserveBytes: 512,
+      protocolAndBriefBytesUsed,
+      projectContextBytesUsed: 120,
+      requestBytesUsed,
+      requestBytesWithSafetyReserve: requestBytesUsed + 24 * 1024,
+    },
     createdAt: 42,
   };
 }
@@ -210,5 +259,64 @@ describe("Story Context Tauri contract", () => {
         selectedSourcePaths: ["plot/main.md", "world/潮汐.md"],
       },
     });
+  });
+
+  it("accepts only exact Reader Model request snapshots with consistent budget arithmetic", () => {
+    expect(parseStoryContextRequestSnapshot(requestSnapshotValue()).sourceReview.status).toBe(
+      "current",
+    );
+    expect(() =>
+      parseStoryContextRequestSnapshot({
+        ...requestSnapshotValue(),
+        readerMentalModel: { ...readerMentalModel, hiddenDraft: "PRIVATE_CANARY" },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseStoryContextRequestSnapshot({
+        ...requestSnapshotValue(),
+        budget: { ...requestSnapshotValue().budget, requestBytesUsed: 1 },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseStoryContextRequestSnapshot({
+        ...requestSnapshotValue(),
+        sourceReview: {
+          ...requestSnapshotValue().sourceReview,
+          status: "needsReview",
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("sends the six editable fields and reviewed Manifest hash only to the read-only preview command", async () => {
+    const invokeCommand = vi.fn().mockResolvedValue(requestSnapshotValue());
+    await requestStoryContextRequestPreview(
+      "session_fixture",
+      {
+        action: "create",
+        chapterNumber: 2,
+        chapterTitle: " 潮痕 ",
+        selectedSourcePaths: ["world/潮汐.md", "plot/main.md"],
+        reviewedManifestHash: "c".repeat(64),
+        readerMentalModel,
+      },
+      invokeCommand,
+    );
+    expect(invokeCommand).toHaveBeenCalledWith("story_context_request_preview", {
+      sessionId: "session_fixture",
+      input: {
+        schemaVersion: 1,
+        context: {
+          schemaVersion: 2,
+          action: "create",
+          chapterNumber: 2,
+          chapterTitle: "潮痕",
+          selectedSourcePaths: ["plot/main.md", "world/潮汐.md"],
+        },
+        reviewedManifestHash: "c".repeat(64),
+        readerMentalModel,
+      },
+    });
+    expect(JSON.stringify(invokeCommand.mock.calls)).not.toMatch(/apiKey|PRIVATE_CANARY/u);
   });
 });

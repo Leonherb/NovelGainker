@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-story-chapter-patch-preview"
+description = "Enables the story_chapter_patch_preview command without any pre-configured scope."
+commands.allow = ["story_chapter_patch_preview"]
+
+[[permission]]
+identifier = "deny-story-chapter-patch-preview"
+description = "Denies the story_chapter_patch_preview command without any pre-configured scope."
+commands.deny = ["story_chapter_patch_preview"]

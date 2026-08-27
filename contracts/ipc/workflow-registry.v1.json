@@ -50,9 +50,9 @@
       "id": "novelgainker.storytelling",
       "version": 1,
       "displayName": "小说续写与章节创作",
-      "description": "在本地审查章节上下文来源、预算、截断与哈希；当前只开放 Context Manifest 构建。",
+      "description": "审查确定性上下文、章节提案与连续性；经独立差异确认可恢复地写入章节、迁移 accepted/final 状态，并单独更新固定 Story Ledger。",
       "mode": "interactive-write",
-      "executionAvailable": false,
+      "executionAvailable": true,
       "routable": false
     }
   ]

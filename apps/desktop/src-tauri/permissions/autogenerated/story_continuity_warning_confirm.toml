@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-story-continuity-warning-confirm"
+description = "Enables the story_continuity_warning_confirm command without any pre-configured scope."
+commands.allow = ["story_continuity_warning_confirm"]
+
+[[permission]]
+identifier = "deny-story-continuity-warning-confirm"
+description = "Denies the story_continuity_warning_confirm command without any pre-configured scope."
+commands.deny = ["story_continuity_warning_confirm"]

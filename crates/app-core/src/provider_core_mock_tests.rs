@@ -1,17 +1,37 @@
 use super::*;
-use crate::canon_apply::apply_canon_file_recoverable;
+use crate::canon_apply::{
+    apply_canon_file_recoverable, apply_chapter_file_recoverable, encode_chapter_target_bytes,
+};
 use crate::project::{create_project, inspect_project_root, ProjectScanMode};
 use crate::recovery::RecoveryStore;
+use crate::workspace::{LineEnding, Utf8Bom};
+use novelgainker_workflows::chapter::{build_chapter_proposal, parse_chapter_payload};
+use novelgainker_workflows::chapter_lifecycle::{
+    build_chapter_status_transition, build_ledger_update, BuildChapterStatusInputV1,
+    BuildLedgerUpdateInputV1, ChapterLifecycleStatusV1, STORY_LEDGER_RELATIVE_PATH,
+};
+use novelgainker_workflows::chapter_patch::{
+    build_chapter_patch, BuildChapterPatchInputV1, ChapterPatchOperationV1,
+};
 use novelgainker_workflows::character_v2::parse_and_serialize_character_v2_create;
+use novelgainker_workflows::continuity::{
+    check_story_continuity, confirm_story_continuity_warnings, ContinuityCheckInputV1,
+    ContinuitySeverityV1, ContinuitySourceV1, ContinuityTargetStateV1,
+};
 use novelgainker_workflows::material::parse_and_serialize_material;
 use novelgainker_workflows::plot::parse_and_serialize_plot;
 use novelgainker_workflows::proposal::{
     build_canon_proposal, BuildCanonProposalInput, CanonFileOperationKind,
 };
 use novelgainker_workflows::setting::parse_and_serialize_setting;
+use novelgainker_workflows::story_context::{
+    build_story_context_manifest, build_story_context_request_snapshot, sha256_hex,
+    BuildStoryContextInputV2, StoryActionV2, StoryContextSelectionReasonV2,
+    StoryContextSourceInputV2, StoryContextSourceKindV2, StoryReaderMentalModelV1,
+};
 use novelgainker_workflows::{
     registry, workflow_resources, CHARACTER_CREATE_WORKFLOW_ID, MATERIAL_CREATE_WORKFLOW_ID,
-    PLOT_CREATE_WORKFLOW_ID, SETTING_CREATE_WORKFLOW_ID,
+    PLOT_CREATE_WORKFLOW_ID, SETTING_CREATE_WORKFLOW_ID, STORYTELLING_WORKFLOW_ID,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -455,6 +475,80 @@ fn ng_402_setting_generation_is_strict_and_identical_across_both_loopback_provid
             }
         }
     }
+}
+
+#[test]
+fn ng_503_chapter_proposal_is_provider_neutral_across_both_loopback_providers() {
+    let schema = novelgainker_workflows::storytelling_chapter_proposal_output_schema();
+    let source_id = "project:plot/main.md".to_owned();
+    let payload = json!({
+        "schemaVersion": 1,
+        "title": "潮痕",
+        "draftMarkdown": "潮水退去，石阶上留下发光的纹路。",
+        "intentSummary": "推进潮门异响线索。",
+        "readerModelDelta": {
+            "readerKnows": "读者看见了发光纹路。",
+            "readerInfers": "纹路可能与潮门有关。",
+            "readerMisreads": "",
+            "readerQuestions": "谁留下了纹路？",
+            "chapterPromises": "下一章继续追查纹路。",
+            "forbiddenReveals": ""
+        },
+        "continuityClaims": [{"claim": "潮门已关闭", "sourceIds": [source_id]}],
+        "ledgerCandidates": [{"summary": "石阶出现发光纹路", "sourceIds": [source_id]}]
+    })
+    .to_string();
+    let mut parsed_payloads = Vec::new();
+    for provider in ProviderId::ALL {
+        let server = MockServer::spawn(vec![ResponsePlan::json(
+            "200 OK",
+            success_body_with_text(provider, &payload, false),
+        )]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let request = NormalizedRequest::chapter_proposal_json(
+            vec![
+                "固定章节任务与 Reader Model".to_owned(),
+                format!("sourceId: {source_id}\n潮门已经关闭。"),
+            ],
+            4_096,
+            schema,
+        )
+        .unwrap();
+        let response = client
+            .complete(
+                provider,
+                b"ng503-chapter-key-canary",
+                &request,
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        parsed_payloads.push(
+            serde_json::to_vec(
+                &parse_chapter_payload(&response.text, true, std::slice::from_ref(&source_id))
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+        let recorded = server.finish();
+        assert_eq!(recorded.len(), 1);
+        let body: Value = serde_json::from_slice(&recorded[0].body).unwrap();
+        let serialized = serde_json::to_vec(&body).unwrap();
+        assert!(!serialized
+            .windows(b"ng503-chapter-key-canary".len())
+            .any(|window| window == b"ng503-chapter-key-canary"));
+        match provider {
+            ProviderId::Deepseek => {
+                assert_eq!(body["response_format"], json!({ "type": "json_object" }));
+            }
+            ProviderId::Openai => {
+                assert_eq!(body["text"]["format"]["name"], "chapter_proposal_v1");
+                assert_eq!(body["text"]["format"]["strict"], true);
+                assert_eq!(body["store"], false);
+            }
+        }
+    }
+    assert_eq!(parsed_payloads.len(), 2);
+    assert_eq!(parsed_payloads[0], parsed_payloads[1]);
 }
 
 #[test]
@@ -1085,5 +1179,617 @@ fn redirects_never_forward_authorization_and_cross_provider_calls_never_broadcas
             ProviderError::invalid_request()
         );
         assert!(!spy.finish());
+    }
+}
+
+fn ng507_source(
+    source_id: &str,
+    kind: StoryContextSourceKindV2,
+    priority: u16,
+    content: &str,
+    modified_time_ms: u64,
+) -> StoryContextSourceInputV2 {
+    let builtin = source_id.starts_with("builtin:");
+    StoryContextSourceInputV2 {
+        source_id: source_id.to_owned(),
+        kind,
+        relative_path: (!builtin).then(|| "plot/main.md".to_owned()),
+        builtin_resource_id: builtin.then(|| "storytelling/workflow.md".to_owned()),
+        display_name: source_id.to_owned(),
+        selection_reason: if builtin {
+            StoryContextSelectionReasonV2::Required
+        } else {
+            StoryContextSelectionReasonV2::Explicit
+        },
+        required: builtin,
+        user_deselectable: !builtin,
+        priority,
+        content: content.to_owned(),
+        content_hash: sha256_hex(content.as_bytes()),
+        source_byte_count: content.len() as u64,
+        modified_time_ms,
+        included: true,
+    }
+}
+
+fn ng507_context(
+    action: StoryActionV2,
+    modified_time_ms: u64,
+) -> (
+    novelgainker_workflows::story_context::StoryContextRequestSnapshotV1,
+    Vec<ContinuitySourceV1>,
+    Vec<String>,
+) {
+    let protocol = "固定 Storytelling 协议：只生成提案，不直接写文件。";
+    let outline = "第一章《潮痕》：林遥在退潮石阶发现发光纹路，并决定继续追查潮门。";
+    let manifest = build_story_context_manifest(BuildStoryContextInputV2 {
+        workflow_id: STORYTELLING_WORKFLOW_ID.to_owned(),
+        project_root_identity: "ng507-project-fixture".to_owned(),
+        action,
+        chapter_number: 1,
+        chapter_title: "潮痕".to_owned(),
+        sources: vec![
+            ng507_source(
+                "builtin:storytelling-workflow",
+                StoryContextSourceKindV2::BuiltinProtocol,
+                1,
+                protocol,
+                modified_time_ms,
+            ),
+            ng507_source(
+                "project:plot/main.md",
+                StoryContextSourceKindV2::Outline,
+                20,
+                outline,
+                modified_time_ms,
+            ),
+        ],
+    })
+    .unwrap();
+    let reviewed_manifest_hash = manifest.aggregate_hash.clone();
+    let snapshot = build_story_context_request_snapshot(
+        manifest,
+        reviewed_manifest_hash,
+        StoryReaderMentalModelV1 {
+            reader_knows: "林遥知道潮门已经关闭。".to_owned(),
+            reader_infers: "潮门仍在影响旧城。".to_owned(),
+            reader_misreads: String::new(),
+            reader_questions: "发光纹路是谁留下的？".to_owned(),
+            chapter_promises: String::new(),
+            forbidden_reveals: String::new(),
+        },
+    )
+    .unwrap();
+    let continuity_sources = vec![ContinuitySourceV1 {
+        source_id: "project:plot/main.md".to_owned(),
+        kind: StoryContextSourceKindV2::Outline,
+        content: outline.to_owned(),
+    }];
+    let allowed_source_ids = snapshot.manifest.source_order.clone();
+    (snapshot, continuity_sources, allowed_source_ids)
+}
+
+fn ng507_payload(draft_markdown: &str) -> String {
+    json!({
+        "schemaVersion": 1,
+        "title": "潮痕",
+        "draftMarkdown": draft_markdown,
+        "intentSummary": "推进潮门异响与发光纹路线索。",
+        "readerModelDelta": {
+            "readerKnows": "读者看见林遥发现了发光纹路。",
+            "readerInfers": "纹路可能与潮门有关。",
+            "readerMisreads": "",
+            "readerQuestions": "谁留下了纹路？",
+            "chapterPromises": "下一章继续追查纹路。",
+            "forbiddenReveals": ""
+        },
+        "continuityClaims": [{
+            "claim": "潮门已经关闭",
+            "sourceIds": ["project:plot/main.md"]
+        }],
+        "ledgerCandidates": [{
+            "summary": "石阶出现发光纹路",
+            "sourceIds": ["project:plot/main.md"]
+        }]
+    })
+    .to_string()
+}
+
+fn ng507_request(
+    snapshot: &novelgainker_workflows::story_context::StoryContextRequestSnapshotV1,
+) -> NormalizedRequest {
+    NormalizedRequest::chapter_proposal_json(
+        vec![
+            format!(
+                "固定动作={:?}; manifestHash={}; requestHash={}",
+                snapshot.manifest.action, snapshot.manifest.aggregate_hash, snapshot.request_hash
+            ),
+            "sourceId: project:plot/main.md\n潮门已经关闭。".to_owned(),
+        ],
+        4_096,
+        novelgainker_workflows::storytelling_chapter_proposal_output_schema(),
+    )
+    .unwrap()
+}
+
+fn ng507_confirmed_report(
+    proposal: &novelgainker_workflows::chapter::ChapterProposalV1,
+    snapshot: &novelgainker_workflows::story_context::StoryContextRequestSnapshotV1,
+    sources: &[ContinuitySourceV1],
+    target: &ContinuityTargetStateV1,
+    checked_at: u64,
+) -> novelgainker_workflows::continuity::StoryContinuityReportV1 {
+    let mut report = check_story_continuity(ContinuityCheckInputV1 {
+        proposal,
+        expected_action: snapshot.manifest.action,
+        expected_target: &snapshot.manifest.target_chapter,
+        reader_model: &snapshot.reader_mental_model,
+        current_snapshot: Some(snapshot),
+        sources,
+        generation_target: target,
+        current_target: target,
+        checked_at,
+    });
+    let warning_ids = report
+        .results
+        .iter()
+        .filter(|item| item.severity == ContinuitySeverityV1::Warning)
+        .map(|item| item.rule_id.clone())
+        .collect::<Vec<_>>();
+    let unknown_ids = report
+        .results
+        .iter()
+        .filter(|item| item.severity == ContinuitySeverityV1::Unknown)
+        .map(|item| item.rule_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(unknown_ids.len(), 2);
+    assert!(confirm_story_continuity_warnings(
+        &mut report,
+        &warning_ids,
+        &unknown_ids,
+    ));
+    assert!(report.review_ready);
+    assert_eq!(report.summary.unknown, 2);
+    assert!(!report.write_enabled);
+    report
+}
+
+fn ng507_target(content: &str) -> ContinuityTargetStateV1 {
+    ContinuityTargetStateV1 {
+        available: true,
+        exists: true,
+        content_hash: Some(sha256_hex(content.as_bytes())),
+        content: Some(content.to_owned()),
+    }
+}
+
+fn ng507_chapter_from_provider(
+    client: &ProviderHttpClient,
+    provider: ProviderId,
+    key: &[u8],
+    snapshot: &novelgainker_workflows::story_context::StoryContextRequestSnapshotV1,
+    allowed_source_ids: &[String],
+    started_at: u64,
+    generated_at: u64,
+) -> (
+    novelgainker_workflows::chapter::ChapterProposalPayloadV1,
+    novelgainker_workflows::chapter::ChapterProposalV1,
+) {
+    let response = client
+        .complete(
+            provider,
+            key,
+            &ng507_request(snapshot),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert_eq!(response.finish_reason, FinishReason::Stop);
+    let payload = parse_chapter_payload(&response.text, true, allowed_source_ids).unwrap();
+    let proposal = build_chapter_proposal(
+        snapshot,
+        payload.clone(),
+        snapshot.manifest.aggregate_hash.clone(),
+        provider.as_str().to_owned(),
+        preset(provider).model.to_owned(),
+        started_at,
+        generated_at,
+        "stop".to_owned(),
+    )
+    .unwrap();
+    (payload, proposal)
+}
+
+#[test]
+fn ng_507_both_loopback_providers_complete_the_storytelling_transaction_state_machine() {
+    let key = format!(
+        "NG507{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let create_payload = ng507_payload("潮水退去，石阶上留下发光的纹路。林遥俯身记录纹路走向。");
+    let revise_payload =
+        ng507_payload("潮水退去，石阶上留下发光的纹路。林遥沿着纹路走到封闭潮门前，听见门后回声。");
+
+    for provider in ProviderId::ALL {
+        let server = MockServer::spawn(vec![
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, &create_payload, true),
+            ),
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, &revise_payload, true),
+            ),
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, &revise_payload, true),
+            ),
+        ]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let fixture = VerifiedTemporaryRoot::new();
+        let project_root = fixture.root.join("project");
+        fs::create_dir(&project_root).unwrap();
+        let inspection = inspect_project_root(&project_root, ProjectScanMode::Create).unwrap();
+        let handle = create_project(&inspection).unwrap();
+        let recovery = RecoveryStore::new(fixture.root.join("app-state")).unwrap();
+
+        let (create_snapshot, create_sources, create_allowed_ids) =
+            ng507_context(StoryActionV2::Create, 1_000);
+        let (create_output, create_proposal) = ng507_chapter_from_provider(
+            &client,
+            provider,
+            key.as_bytes(),
+            &create_snapshot,
+            &create_allowed_ids,
+            10,
+            11,
+        );
+        let missing = ContinuityTargetStateV1::missing();
+        let create_report = ng507_confirmed_report(
+            &create_proposal,
+            &create_snapshot,
+            &create_sources,
+            &missing,
+            12,
+        );
+        let create_patch = build_chapter_patch(BuildChapterPatchInputV1 {
+            proposal: &create_proposal,
+            continuity_report: &create_report,
+            current_content: None,
+            current_content_hash: None,
+            accepted_or_final_unlock_confirmed: false,
+            create_chapter_id: Some(
+                Uuid::parse_str("51000000-0000-4000-8000-000000000001").unwrap(),
+            ),
+        })
+        .unwrap();
+        let create_bytes = encode_chapter_target_bytes(
+            &create_patch.target_content,
+            Utf8Bom::None,
+            LineEnding::Lf,
+        )
+        .unwrap();
+        let create_applied = apply_chapter_file_recoverable(
+            &handle,
+            ChapterPatchOperationV1::Create,
+            &create_patch.preview.target_relative_path,
+            None,
+            &create_bytes,
+            &recovery,
+        )
+        .unwrap();
+        let chapter_path = project_root.join(&create_patch.preview.target_relative_path);
+        let created_content = fs::read_to_string(&chapter_path).unwrap();
+        assert_eq!(create_applied.file.content_hash, sha256_hex(&create_bytes));
+
+        let (revise_snapshot, revise_sources, revise_allowed_ids) =
+            ng507_context(StoryActionV2::Revise, 2_000);
+        let (_, stale_revise_proposal) = ng507_chapter_from_provider(
+            &client,
+            provider,
+            key.as_bytes(),
+            &revise_snapshot,
+            &revise_allowed_ids,
+            20,
+            21,
+        );
+        let created_target = ng507_target(&created_content);
+        let stale_revise_report = ng507_confirmed_report(
+            &stale_revise_proposal,
+            &revise_snapshot,
+            &revise_sources,
+            &created_target,
+            22,
+        );
+        let stale_revise_patch = build_chapter_patch(BuildChapterPatchInputV1 {
+            proposal: &stale_revise_proposal,
+            continuity_report: &stale_revise_report,
+            current_content: Some(&created_content),
+            current_content_hash: created_target.content_hash.as_deref(),
+            accepted_or_final_unlock_confirmed: false,
+            create_chapter_id: None,
+        })
+        .unwrap();
+        let stale_revise_bytes = encode_chapter_target_bytes(
+            &stale_revise_patch.target_content,
+            Utf8Bom::None,
+            LineEnding::Lf,
+        )
+        .unwrap();
+
+        let mut manual_content = created_content.clone();
+        manual_content.push_str("\n作者手动补记：潮声比先前更近。\n");
+        fs::write(&chapter_path, manual_content.as_bytes()).unwrap();
+        let stale_error = apply_chapter_file_recoverable(
+            &handle,
+            ChapterPatchOperationV1::Replace,
+            &stale_revise_patch.preview.target_relative_path,
+            stale_revise_patch.preview.expected_source_hash.as_deref(),
+            &stale_revise_bytes,
+            &recovery,
+        )
+        .unwrap_err();
+        assert_eq!(stale_error.code, "file.source_changed");
+        assert_eq!(fs::read_to_string(&chapter_path).unwrap(), manual_content);
+
+        let (_, fresh_revise_proposal) = ng507_chapter_from_provider(
+            &client,
+            provider,
+            key.as_bytes(),
+            &revise_snapshot,
+            &revise_allowed_ids,
+            30,
+            31,
+        );
+        let manual_target = ng507_target(&manual_content);
+        let fresh_revise_report = ng507_confirmed_report(
+            &fresh_revise_proposal,
+            &revise_snapshot,
+            &revise_sources,
+            &manual_target,
+            32,
+        );
+        let revise_patch = build_chapter_patch(BuildChapterPatchInputV1 {
+            proposal: &fresh_revise_proposal,
+            continuity_report: &fresh_revise_report,
+            current_content: Some(&manual_content),
+            current_content_hash: manual_target.content_hash.as_deref(),
+            accepted_or_final_unlock_confirmed: false,
+            create_chapter_id: None,
+        })
+        .unwrap();
+        let revise_bytes = encode_chapter_target_bytes(
+            &revise_patch.target_content,
+            Utf8Bom::None,
+            LineEnding::Lf,
+        )
+        .unwrap();
+        let revise_applied = apply_chapter_file_recoverable(
+            &handle,
+            ChapterPatchOperationV1::Replace,
+            &revise_patch.preview.target_relative_path,
+            revise_patch.preview.expected_source_hash.as_deref(),
+            &revise_bytes,
+            &recovery,
+        )
+        .unwrap();
+        let revised_content = fs::read_to_string(&chapter_path).unwrap();
+
+        let revised_hash = sha256_hex(revised_content.as_bytes());
+        let status_document = build_chapter_status_transition(BuildChapterStatusInputV1 {
+            target_relative_path: &revise_patch.preview.target_relative_path,
+            current_content: &revised_content,
+            current_content_hash: &revised_hash,
+            current_content_has_utf8_bom: false,
+            next_status: ChapterLifecycleStatusV1::Accepted,
+            proposal: Some(&fresh_revise_proposal),
+            pending_id: Some(Uuid::parse_str("52000000-0000-4000-8000-000000000002").unwrap()),
+        })
+        .unwrap();
+        let status_bytes = encode_chapter_target_bytes(
+            &status_document.target_content,
+            Utf8Bom::None,
+            LineEnding::Lf,
+        )
+        .unwrap();
+        let status_applied = apply_chapter_file_recoverable(
+            &handle,
+            ChapterPatchOperationV1::Replace,
+            &status_document.preview.target_relative_path,
+            Some(&status_document.preview.expected_source_hash),
+            &status_bytes,
+            &recovery,
+        )
+        .unwrap();
+        let accepted_content = fs::read_to_string(&chapter_path).unwrap();
+        assert!(accepted_content.contains("status: accepted"));
+        assert!(accepted_content.contains("ledger_pending_"));
+
+        let ledger_path = project_root.join(STORY_LEDGER_RELATIVE_PATH);
+        let ledger_before = fs::read_to_string(&ledger_path).unwrap();
+        let ledger_before_hash = sha256_hex(ledger_before.as_bytes());
+        let accepted_hash = sha256_hex(accepted_content.as_bytes());
+        let ledger_document = build_ledger_update(BuildLedgerUpdateInputV1 {
+            chapter_relative_path: &revise_patch.preview.target_relative_path,
+            chapter_content: &accepted_content,
+            chapter_content_hash: &accepted_hash,
+            chapter_content_has_utf8_bom: false,
+            ledger_content: &ledger_before,
+            ledger_content_hash: &ledger_before_hash,
+            ledger_content_has_utf8_bom: false,
+        })
+        .unwrap();
+        let ledger_bytes = encode_chapter_target_bytes(
+            &ledger_document.target_content,
+            Utf8Bom::None,
+            LineEnding::Lf,
+        )
+        .unwrap();
+        let ledger_applied = apply_chapter_file_recoverable(
+            &handle,
+            ChapterPatchOperationV1::Replace,
+            STORY_LEDGER_RELATIVE_PATH,
+            Some(&ledger_document.preview.expected_source_hash),
+            &ledger_bytes,
+            &recovery,
+        )
+        .unwrap();
+        let ledger_after = fs::read(&ledger_path).unwrap();
+
+        let recorded = server.finish();
+        assert_eq!(recorded.len(), 3);
+        for request in recorded {
+            assert!(!String::from_utf8_lossy(&request.body).contains(&key));
+        }
+        println!(
+            "NG507_EVIDENCE:{}",
+            json!({
+                "schemaVersion": 1,
+                "providerId": provider.as_str(),
+                "modelId": preset(provider).model,
+                "stateMachineVersion": 1,
+                "stateSequence": [
+                    "context", "proposal", "continuity", "patch-preview", "chapter-create",
+                    "manual-edit", "stale-reject", "proposal-refresh", "chapter-revise",
+                    "status-accepted", "ledger-preview", "ledger-apply"
+                ],
+                "manifestHash": create_snapshot.manifest.aggregate_hash,
+                "requestHash": create_snapshot.request_hash,
+                "outputHash": sha256_hex(&serde_json::to_vec(&create_output).unwrap()),
+                "createProposalHash": create_proposal.proposal_hash,
+                "reviseProposalHash": fresh_revise_proposal.proposal_hash,
+                "createdChapterHash": create_applied.file.content_hash,
+                "manualChapterHash": sha256_hex(manual_content.as_bytes()),
+                "revisedChapterHash": revise_applied.file.content_hash,
+                "acceptedChapterHash": status_applied.file.content_hash,
+                "ledgerHash": ledger_applied.file.content_hash,
+                "ledgerBytesHash": sha256_hex(&ledger_after),
+                "continuityUnknownCount": fresh_revise_report.summary.unknown,
+                "unknownsConfirmed": fresh_revise_report.unknowns_confirmed,
+                "providerRequestCount": 3,
+                "automaticProjectWriteCount": 0,
+                "statusConfirmationCount": 1,
+                "ledgerConfirmationCount": 1,
+                "staleOverwriteCount": 0
+            })
+        );
+    }
+}
+
+#[test]
+fn ng_507_both_loopback_providers_cancel_truncate_error_and_stale_sources_without_writes() {
+    let key = format!(
+        "NG507{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    for provider in ProviderId::ALL {
+        let fixture = VerifiedTemporaryRoot::new();
+        let project_root = fixture.root.join("project");
+        fs::create_dir(&project_root).unwrap();
+        let inspection = inspect_project_root(&project_root, ProjectScanMode::Create).unwrap();
+        let _handle = create_project(&inspection).unwrap();
+        let chapter_path = project_root.join("chapters/001.md");
+        let ledger_path = project_root.join(STORY_LEDGER_RELATIVE_PATH);
+        let ledger_before = fs::read(&ledger_path).unwrap();
+        let (snapshot, sources, allowed_source_ids) = ng507_context(StoryActionV2::Create, 3_000);
+
+        let stream = stream_payload(provider, true);
+        let split = stream.find("\n\n").unwrap() + 2;
+        let cancel_server = MockServer::spawn(vec![ResponsePlan::sse(
+            vec![
+                stream.as_bytes()[..split].to_vec(),
+                stream.as_bytes()[split..].to_vec(),
+            ],
+            Duration::from_millis(80),
+        )]);
+        let client =
+            ProviderHttpClient::for_test(provider, cancel_server.endpoint.clone()).unwrap();
+        let cancellation = CancellationToken::default();
+        let sink_token = cancellation.clone();
+        let mut delta_count = 0usize;
+        let cancelled = client.stream(
+            provider,
+            key.as_bytes(),
+            &ng507_request(&snapshot),
+            &cancellation,
+            &mut |event| {
+                if matches!(event, NormalizedEvent::TextDelta { .. }) {
+                    delta_count += 1;
+                    sink_token.cancel();
+                }
+                Ok(())
+            },
+        );
+        let cancel_requests = cancel_server.finish();
+        assert!(matches!(
+            cancelled,
+            Err(error) if error == ProviderError::cancelled()
+        ));
+        assert_eq!(delta_count, 1);
+        assert_eq!(cancel_requests.len(), 1);
+
+        let complete_payload = ng507_payload("潮水退去，纹路短暂发光。");
+        assert!(parse_chapter_payload(&complete_payload, false, &allowed_source_ids).is_err());
+        assert!(parse_chapter_payload("{\"schemaVersion\":1", true, &allowed_source_ids).is_err());
+
+        let error_server = MockServer::spawn(vec![ResponsePlan::empty("429 Too Many Requests")]);
+        let error_client =
+            ProviderHttpClient::for_test(provider, error_server.endpoint.clone()).unwrap();
+        assert!(matches!(
+            error_client.complete_once(
+                provider,
+                key.as_bytes(),
+                &ng507_request(&snapshot),
+                &CancellationToken::default(),
+            ),
+            Err(error) if error == ProviderError::rate_limited()
+        ));
+        assert_eq!(error_server.finish().len(), 1);
+
+        let payload = parse_chapter_payload(&complete_payload, true, &allowed_source_ids).unwrap();
+        let stale_proposal = build_chapter_proposal(
+            &snapshot,
+            payload,
+            "f".repeat(64),
+            provider.as_str().to_owned(),
+            preset(provider).model.to_owned(),
+            40,
+            41,
+            "stop".to_owned(),
+        )
+        .unwrap();
+        let missing = ContinuityTargetStateV1::missing();
+        let stale_report = check_story_continuity(ContinuityCheckInputV1 {
+            proposal: &stale_proposal,
+            expected_action: StoryActionV2::Create,
+            expected_target: &snapshot.manifest.target_chapter,
+            reader_model: &snapshot.reader_mental_model,
+            current_snapshot: Some(&snapshot),
+            sources: &sources,
+            generation_target: &missing,
+            current_target: &missing,
+            checked_at: 42,
+        });
+        assert!(stale_report.summary.blocking > 0);
+        assert!(!stale_report.review_ready);
+
+        assert!(!chapter_path.exists());
+        assert_eq!(fs::read(&ledger_path).unwrap(), ledger_before);
+        println!(
+            "NG507_NEGATIVE:{}",
+            json!({
+                "schemaVersion": 1,
+                "providerId": provider.as_str(),
+                "cancelledAfterDeltaCount": 1,
+                "cancelledProjectWriteCount": 0,
+                "truncatedOutputWriteCount": 0,
+                "invalidJsonWriteCount": 0,
+                "providerErrorWriteCount": 0,
+                "sourceStaleWriteCount": 0,
+                "chapterExists": false,
+                "ledgerUnchanged": true
+            })
+        );
     }
 }

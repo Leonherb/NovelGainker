@@ -52,8 +52,16 @@ use uuid::Uuid;
 
 #[path = "router_commands.rs"]
 pub(crate) mod router_commands;
+#[path = "story_chapter_commands.rs"]
+pub(crate) mod story_chapter_commands;
+#[path = "story_chapter_patch_commands.rs"]
+pub(crate) mod story_chapter_patch_commands;
 #[path = "story_context_commands.rs"]
 pub(crate) mod story_context_commands;
+#[path = "story_continuity_commands.rs"]
+pub(crate) mod story_continuity_commands;
+#[path = "story_lifecycle_commands.rs"]
+pub(crate) mod story_lifecycle_commands;
 #[path = "workflow_commands.rs"]
 pub(crate) mod workflow_commands;
 #[path = "workflow_proposal_commands.rs"]
@@ -67,6 +75,14 @@ pub struct ProjectRegistry {
     provider_run: Mutex<Option<ActiveProviderRun>>,
     workflow_manager: Mutex<Option<WorkflowManager>>,
     workflow_sessions: Mutex<HashMap<String, String>>,
+    story_chapter_runs: Mutex<HashMap<String, story_chapter_commands::StoryChapterRunSnapshotV1>>,
+    story_continuity_reports:
+        Mutex<HashMap<String, novelgainker_workflows::continuity::StoryContinuityReportV1>>,
+    story_target_previews: Mutex<HashMap<String, story_continuity_commands::StoryTargetPreviewV1>>,
+    story_chapter_patches:
+        Mutex<HashMap<String, story_chapter_patch_commands::StoredStoryChapterPatchV1>>,
+    story_lifecycle:
+        Mutex<HashMap<String, story_lifecycle_commands::StoredStoryChapterLifecycleV1>>,
 }
 
 #[derive(Default)]
@@ -105,6 +121,11 @@ impl ProjectRegistry {
             provider_run: Mutex::new(None),
             workflow_manager: Mutex::new(workflow_manager),
             workflow_sessions: Mutex::new(HashMap::new()),
+            story_chapter_runs: Mutex::new(HashMap::new()),
+            story_continuity_reports: Mutex::new(HashMap::new()),
+            story_target_previews: Mutex::new(HashMap::new()),
+            story_chapter_patches: Mutex::new(HashMap::new()),
+            story_lifecycle: Mutex::new(HashMap::new()),
         })
     }
 
@@ -1058,6 +1079,31 @@ pub fn project_close(
         return Err(AppError::workflow_run_active());
     }
     state.cancel_active_provider_run();
+    state
+        .story_chapter_runs
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?
+        .remove(&session_id);
+    state
+        .story_continuity_reports
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?
+        .remove(&session_id);
+    state
+        .story_target_previews
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?
+        .remove(&session_id);
+    state
+        .story_chapter_patches
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?
+        .remove(&session_id);
+    state
+        .story_lifecycle
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?
+        .remove(&session_id);
     let closed = lock_registry(&state)?
         .sessions
         .remove(&session_id)
@@ -1515,7 +1561,8 @@ mod tests {
         }
     }
     #[test]
-    fn ng_501_exposes_five_routable_workflows_and_one_read_only_storytelling_workflow() {
+    fn ng_506_exposes_five_routable_workflows_and_one_executable_non_routable_storytelling_workflow(
+    ) {
         let snapshot = workflow_registry_load();
         let serialized = serde_json::to_value(snapshot).expect("registry must serialize");
         assert_eq!(
@@ -1566,10 +1613,10 @@ mod tests {
                     "id": "novelgainker.storytelling",
                     "version": 1,
                     "displayName": "小说续写与章节创作",
-                    "description": "审查确定性 Context Manifest；本阶段只构建上下文，不调用 Provider 或写入章节。",
+                    "description": "审查确定性上下文、章节提案与连续性；经独立差异确认可恢复地写入章节、迁移 accepted/final 状态，并单独更新固定 Story Ledger。",
                     "mode": "interactive-write",
                     "routable": false,
-                    "executionAvailable": false
+                    "executionAvailable": true
                 }]
             })
         );
@@ -1781,6 +1828,21 @@ mod tests {
                 "workflow_run_abandon",
                 "story_context_catalog",
                 "story_context_build",
+                "story_context_request_preview",
+                "story_chapter_generate_start",
+                "story_chapter_status_load",
+                "story_chapter_generate_cancel",
+                "story_continuity_check",
+                "story_continuity_status_load",
+                "story_continuity_warning_confirm",
+                "story_chapter_patch_preview",
+                "story_chapter_patch_status_load",
+                "story_chapter_patch_apply",
+                "story_chapter_state_preview",
+                "story_chapter_lifecycle_status_load",
+                "story_chapter_state_apply",
+                "story_ledger_update_preview",
+                "story_ledger_update_apply",
                 "provider_status_load",
                 "provider_key_save",
                 "provider_key_delete",
@@ -1832,5 +1894,20 @@ mod tests {
         assert!(APP_COMMANDS.contains(&"workflow_run_abandon"));
         assert!(APP_COMMANDS.contains(&"story_context_catalog"));
         assert!(APP_COMMANDS.contains(&"story_context_build"));
+        assert!(APP_COMMANDS.contains(&"story_context_request_preview"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_generate_start"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_status_load"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_generate_cancel"));
+        assert!(APP_COMMANDS.contains(&"story_continuity_check"));
+        assert!(APP_COMMANDS.contains(&"story_continuity_status_load"));
+        assert!(APP_COMMANDS.contains(&"story_continuity_warning_confirm"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_patch_preview"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_patch_status_load"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_patch_apply"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_state_preview"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_lifecycle_status_load"));
+        assert!(APP_COMMANDS.contains(&"story_chapter_state_apply"));
+        assert!(APP_COMMANDS.contains(&"story_ledger_update_preview"));
+        assert!(APP_COMMANDS.contains(&"story_ledger_update_apply"));
     }
 }

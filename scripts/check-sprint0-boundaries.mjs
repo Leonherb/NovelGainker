@@ -38,6 +38,21 @@ const approvedCommands = [
   "workflow_run_abandon",
   "story_context_catalog",
   "story_context_build",
+  "story_context_request_preview",
+  "story_chapter_generate_start",
+  "story_chapter_status_load",
+  "story_chapter_generate_cancel",
+  "story_continuity_check",
+  "story_continuity_status_load",
+  "story_continuity_warning_confirm",
+  "story_chapter_patch_preview",
+  "story_chapter_patch_status_load",
+  "story_chapter_patch_apply",
+  "story_chapter_state_preview",
+  "story_chapter_lifecycle_status_load",
+  "story_chapter_state_apply",
+  "story_ledger_update_preview",
+  "story_ledger_update_apply",
   "provider_status_load",
   "provider_key_save",
   "provider_key_delete",
@@ -68,14 +83,14 @@ const approvedPermissions = [
 const capability = JSON.parse(read("apps/desktop/src-tauri/capabilities/default.json"));
 assert(
   JSON.stringify(capability.permissions) === JSON.stringify(approvedPermissions),
-  "NG-501 capability must contain only thirty-six app commands plus close-event listen/unlisten and window close",
+  "NG-507 capability must contain only fifty-one app commands plus close-event listen/unlisten and window close",
 );
 
 const commandManifest = read("apps/desktop/src-tauri/src/command_manifest.rs");
 const manifestCommands = [...commandManifest.matchAll(/"([a-z_]+)"/gu)].map((match) => match[1]);
 assert(
   JSON.stringify(manifestCommands) === JSON.stringify(approvedCommands),
-  "NG-501 command manifest must contain only the thirty-six approved commands",
+  "NG-507 command manifest must contain only the fifty-one approved commands",
 );
 assert(
   commandManifest.includes("project_save_file"),
@@ -118,6 +133,8 @@ const runtimePaths = [
   "apps/desktop/src/lib/tauri/provider-chat.ts",
   "apps/desktop/src/lib/tauri/workflow.ts",
   "apps/desktop/src/lib/tauri/story-context.ts",
+  "apps/desktop/src/lib/tauri/story-chapter.ts",
+  "apps/desktop/src/lib/tauri/story-continuity.ts",
   "apps/desktop/src/lib/tauri/router.ts",
   "apps/desktop/src/lib/tauri/workflow-run.ts",
   "apps/desktop/src/lib/tauri/workflow-proposal.ts",
@@ -128,10 +145,14 @@ const runtimePaths = [
   "crates/novelgainker-workflows/src/proposal.rs",
   "crates/novelgainker-workflows/src/router.rs",
   "crates/novelgainker-workflows/src/story_context.rs",
+  "crates/novelgainker-workflows/src/chapter.rs",
+  "crates/novelgainker-workflows/src/continuity.rs",
   "crates/novelgainker-workflows/src/setting.rs",
   "crates/novelgainker-workflows/src/material.rs",
   "apps/desktop/src-tauri/src/router_commands.rs",
   "apps/desktop/src-tauri/src/story_context_commands.rs",
+  "apps/desktop/src-tauri/src/story_chapter_commands.rs",
+  "apps/desktop/src-tauri/src/story_continuity_commands.rs",
   "apps/desktop/src-tauri/src/workflow_commands.rs",
   "apps/desktop/src-tauri/src/workflow_proposal_commands.rs",
   "apps/desktop/src/lib/tauri/window-close.ts",
@@ -224,12 +245,15 @@ assert(
       "resources/workflows/v1/setting-create/output.schema.json",
       "resources/workflows/v1/setting-create/setting.template.md",
       "resources/workflows/v1/setting-create/workflow.md",
+      "resources/workflows/v1/storytelling/chapter-proposal.output.schema.json",
       "resources/workflows/v1/storytelling/chapter.template.md",
       "resources/workflows/v1/storytelling/input.schema.json",
       "resources/workflows/v1/storytelling/output.schema.json",
+      "resources/workflows/v1/storytelling/request-preview.input.schema.json",
+      "resources/workflows/v1/storytelling/request-snapshot.output.schema.json",
       "resources/workflows/v1/storytelling/workflow.md",
     ]),
-  "NG-501 Workflow Pack may contain only the twenty-eight approved build-validated resources",
+  "NG-504 Workflow Pack may contain only the thirty-one approved build-validated resources",
 );
 for (const path of workflowResourcePaths) {
   const source = read(path);
@@ -260,6 +284,20 @@ const storyContextCore = read("crates/novelgainker-workflows/src/story_context.r
 const storyContextCommands = read("apps/desktop/src-tauri/src/story_context_commands.rs");
 const storyContextFrontend = read("apps/desktop/src/lib/tauri/story-context.ts");
 const storyContextUi = read("apps/desktop/src/components/StoryContextBuilder.tsx");
+const storyChapterCore = read("crates/novelgainker-workflows/src/chapter.rs");
+const storyChapterCommands = read("apps/desktop/src-tauri/src/story_chapter_commands.rs");
+const storyChapterFrontend = read("apps/desktop/src/lib/tauri/story-chapter.ts");
+const storyContinuityCore = read("crates/novelgainker-workflows/src/continuity.rs");
+const storyContinuityCommands = read("apps/desktop/src-tauri/src/story_continuity_commands.rs");
+const storyContinuityFrontend = read("apps/desktop/src/lib/tauri/story-continuity.ts");
+const storyChapterPatchCore = read("crates/novelgainker-workflows/src/chapter_patch.rs");
+const storyChapterPatchCommands = read(
+  "apps/desktop/src-tauri/src/story_chapter_patch_commands.rs",
+);
+const storyChapterPatchFrontend = read("apps/desktop/src/lib/tauri/story-chapter-patch.ts");
+const storyLifecycleCore = read("crates/novelgainker-workflows/src/chapter_lifecycle.rs");
+const storyLifecycleCommands = read("apps/desktop/src-tauri/src/story_lifecycle_commands.rs");
+const storyLifecycleFrontend = read("apps/desktop/src/lib/tauri/story-lifecycle.ts");
 const workflowRunFrontendClient = read("apps/desktop/src/lib/tauri/workflow-run.ts");
 const workflowProposal = read("crates/novelgainker-workflows/src/proposal.rs");
 const canonApply = read("crates/app-core/src/canon_apply.rs");
@@ -324,27 +362,53 @@ assert(
     'STORYTELLING_WORKFLOW_ID: &str = "novelgainker.storytelling"',
   ) &&
     workflowRuntimeRegistry.includes("NOVELGAINKER_STORYTELLING_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes(
-      'const STORYTELLING_TOOLS: &[&str] = &["story.build_context"]',
-    ) &&
+    workflowRuntimeRegistry.includes('"story.build_context"') &&
+    workflowRuntimeRegistry.includes('"story.preview_request"') &&
+    workflowRuntimeRegistry.includes('"story.generate_proposal"') &&
+    workflowRuntimeRegistry.includes('"story.check_continuity"') &&
+    workflowRuntimeRegistry.includes('"story.preview_chapter_patch"') &&
+    workflowRuntimeRegistry.includes('"story.apply_chapter_patch"') &&
+    workflowRuntimeRegistry.includes('"story.transition_chapter_status"') &&
+    workflowRuntimeRegistry.includes('"story.update_ledger"') &&
+    workflowRuntimeRegistry.includes('"select_context"') &&
+    workflowRuntimeRegistry.includes('"review_reader_model"') &&
+    workflowRuntimeRegistry.includes('"send_context"') &&
+    workflowRuntimeRegistry.includes('"review_continuity_warnings"') &&
+    workflowRuntimeRegistry.includes('"apply_chapter_patch"') &&
+    workflowRuntimeRegistry.includes('"transition_chapter_status"') &&
+    workflowRuntimeRegistry.includes('"apply_ledger_update"') &&
     workflowRuntimeRegistry.includes("allowed_tools: STORYTELLING_TOOLS") &&
-    workflowRuntimeRegistry.includes("execution_available: false") &&
+    workflowRuntimeRegistry.includes("required_confirmations: STORYTELLING_CONFIRMATIONS") &&
+    workflowRuntimeRegistry.includes("execution_available: true") &&
     workflowRuntimeRegistry.includes("routable: false"),
-  "NG-501 Storytelling must remain a fixed read-only, non-routable Pack entry with only story.build_context",
+  "NG-506 Storytelling must be executable but remain non-routable with explicit Context, chapter, lifecycle and Ledger operations",
 );
 assert(
   storyContextCore.includes("STORY_REQUEST_LIMIT_BYTES: usize = 96 * 1024") &&
     storyContextCore.includes("STORY_PROTOCOL_BUDGET_BYTES: usize = 24 * 1024") &&
     storyContextCore.includes("STORY_PROJECT_CONTEXT_BUDGET_BYTES: usize = 48 * 1024") &&
     storyContextCore.includes("STORY_SINGLE_SOURCE_LIMIT_BYTES: usize = 8 * 1024") &&
+    storyContextCore.includes("STORY_QUERY_RESULT_LIMIT_COUNT: usize = 5") &&
+    storyContextCore.includes("STORY_QUERY_RESULT_LIMIT_BYTES: usize = 2 * 1024") &&
+    storyContextCore.includes("STORY_RECENT_CHAPTER_LIMIT_COUNT: usize = 2") &&
+    storyContextCore.includes("STORY_READER_MODEL_FIELD_LIMIT_BYTES: usize = 4 * 1024") &&
+    storyContextCore.includes("STORY_READER_MODEL_TOTAL_LIMIT_BYTES: usize = 12 * 1024") &&
+    storyContextCore.includes("STORY_MAX_OUTPUT_TOKENS: u32 = 4_096") &&
+    storyContextCore.includes("pub struct StoryReaderMentalModelV1") &&
+    storyContextCore.includes("pub struct StoryContextRequestSnapshotV1") &&
+    storyContextCore.includes("build_story_context_request_snapshot") &&
+    storyContextCore.includes("reader_model_hash") &&
+    storyContextCore.includes("request_hash") &&
     storyContextCore.includes("utf8_prefix") &&
     storyContextCore.includes("Sha256") &&
     storyContextCore.includes("source_order") &&
     !/std::fs|reqwest|OpenOptions|write_all/u.test(storyContextCore.split("#[cfg(test)]")[0]),
-  "NG-501 Context Builder core must be deterministic, UTF-8 bounded, hash-bound and side-effect free",
+  "NG-502 request snapshot core must be deterministic, UTF-8 bounded, hash-bound and side-effect free",
 );
 assert(
-  storyContextCommands.includes("session_handle(state, session_id)") &&
+  storyContextCommands.includes("pub fn story_context_request_preview") &&
+    storyContextCommands.includes("build_story_context_request_snapshot") &&
+    storyContextCommands.includes("session_handle(state, session_id)") &&
     storyContextCommands.includes("list_project_files(handle)") &&
     storyContextCommands.includes("read_project_file(handle") &&
     storyContextCommands.includes("BTreeSet") &&
@@ -352,19 +416,136 @@ assert(
     !/provider_|credential_|canon_apply|save_project_file|std::fs/u.test(
       storyContextCommands.split("#[cfg(test)]")[0],
     ),
-  "NG-501 Tauri Context Builder must stay inside the open project, metadata selection and read-only services",
+  "NG-502 Tauri request preview must stay inside the open project, metadata selection and read-only services",
 );
 assert(
   storyContextFrontend.includes('"story_context_catalog"') &&
     storyContextFrontend.includes('"story_context_build"') &&
+    storyContextFrontend.includes('"story_context_request_preview"') &&
+    storyContextFrontend.includes("StoryReaderMentalModel") &&
+    storyContextFrontend.includes("StoryContextRequestSnapshot") &&
+    storyContextFrontend.includes("readerModelHash") &&
+    storyContextFrontend.includes("requestHash") &&
     storyContextFrontend.includes("hasExactKeys") &&
     storyContextFrontend.includes("isSafeRelativeMarkdownPath") &&
     storyContextUi.includes("selectedSourcePaths") &&
     storyContextUi.includes("story-zero-write-note") &&
-    !/provider|api[_-]?key|project_save_file|workflow_run_generate/iu.test(
-      `${storyContextFrontend}\n${storyContextUi}`,
+    !/provider|api[_-]?key|project_save_file|workflow_run_generate/iu.test(storyContextFrontend) &&
+    !/api[_-]?key|project_save_file|workflow_run_generate/iu.test(storyContextUi),
+  "NG-502 frontend must expose an explicit six-field Reader Mental Model and reviewed request snapshot without Provider or project writes",
+);
+assert(
+  storyChapterCore.includes("pub struct ChapterProposalV1") &&
+    storyChapterCore.includes("deny_unknown_fields") &&
+    storyChapterCore.includes("build_chapter_repair_prompt") &&
+    storyChapterCore.includes("source_status") &&
+    storyChapterCore.includes("write_enabled: false") &&
+    storyChapterCommands.includes("ProviderHttpClient::production") &&
+    storyChapterCommands.includes("client.stream") &&
+    storyChapterCommands.includes("expected_provider_id") &&
+    storyChapterCommands.includes("rebuild_registered_story_context") &&
+    storyChapterCommands.includes("StoryChapterGenerationOutcome::Cancelled") &&
+    !/save_project_file|save_workflow_run|apply_canon|std::fs|fs::write/u.test(
+      storyChapterCommands.split("#[cfg(test)]")[0],
+    ) &&
+    storyChapterFrontend.includes("hasExactKeys") &&
+    storyChapterFrontend.includes("writeEnabled: false") &&
+    storyContextUi.includes("requestStoryChapterCancel") &&
+    storyContextUi.includes("expectedProviderId") &&
+    !/project_save_file|workflow_proposal_apply|apply_canon/iu.test(
+      `${storyChapterFrontend}\n${storyContextUi}`,
     ),
-  "NG-501 frontend must expose explicit metadata-only selection and Manifest review without Provider or project writes",
+  "NG-503 Chapter Proposal must be strict, fixed-Provider, cancellable, same-Provider retryable, source-aware, memory-only and write-disabled",
+);
+assert(
+  storyContinuityCore.includes("CONTINUITY_CHECK_VERSION: u16 = 1") &&
+    storyContinuityCore.includes("ContinuitySeverityV1") &&
+    storyContinuityCore.includes("Blocking") &&
+    storyContinuityCore.includes("Warning") &&
+    storyContinuityCore.includes("Unknown") &&
+    storyContinuityCore.includes("Passed") &&
+    storyContinuityCore.includes("check_story_continuity") &&
+    storyContinuityCore.includes("confirm_story_continuity_warnings") &&
+    storyContinuityCore.includes("acknowledged_unknown_rule_ids") &&
+    storyContinuityCore.includes("unknowns_confirmed") &&
+    storyContinuityCore.includes("validate_source") &&
+    storyContinuityCore.includes("write_enabled: false") &&
+    !/reqwest|ProviderHttpClient|std::fs|OpenOptions|write_all/u.test(
+      storyContinuityCore.split("#[cfg(test)]")[0],
+    ) &&
+    storyContinuityCommands.includes("pub fn story_continuity_check") &&
+    storyContinuityCommands.includes("pub fn story_continuity_status_load") &&
+    storyContinuityCommands.includes("pub fn story_continuity_warning_confirm") &&
+    storyContinuityCommands.includes("build_registered_story_generation_material") &&
+    storyContinuityCommands.includes("load_story_target_state") &&
+    !/ProviderHttpClient|client\.stream|save_project_file|app_state|std::fs|fs::write/u.test(
+      storyContinuityCommands.split("#[cfg(test)]")[0],
+    ) &&
+    storyContinuityFrontend.includes("hasExactKeys") === false &&
+    storyContinuityFrontend.includes("writeEnabled: false") &&
+    storyContinuityFrontend.includes("unknownsConfirmed") &&
+    storyContinuityFrontend.includes("results.length !== 17") &&
+    storyContextUi.includes("requestStoryContinuityCheck") &&
+    storyContextUi.includes("continuitySeverities") &&
+    !/project_save_file|workflow_proposal_apply|apply_canon/iu.test(
+      `${storyContinuityFrontend}\n${storyContextUi}`,
+    ),
+  "NG-507 continuity check must remain deterministic, four-state, source/target-bound, local-only and write-disabled while explicit author confirmation preserves unknown as unknown",
+);
+assert(
+  storyChapterPatchCore.includes("CHAPTER_PATCH_SCHEMA_VERSION: u16 = 1") &&
+    storyChapterPatchCore.includes("pub struct ChapterPatchPreviewV1") &&
+    storyChapterPatchCore.includes("accepted_or_final_unlock_confirmed") &&
+    storyChapterPatchCore.includes("bind_chapter_patch_encoded_hash") &&
+    !/reqwest|ProviderHttpClient|StoryLedger|story_ledger/u.test(
+      storyChapterPatchCore.split("#[cfg(test)]")[0],
+    ) &&
+    storyChapterPatchCommands.includes("pub fn story_chapter_patch_preview") &&
+    storyChapterPatchCommands.includes("pub fn story_chapter_patch_status_load") &&
+    storyChapterPatchCommands.includes("pub fn story_chapter_patch_apply") &&
+    storyChapterPatchCommands.includes("rebuild_registered_story_continuity") &&
+    storyChapterPatchCommands.includes("apply_chapter_file_recoverable") &&
+    storyChapterPatchCommands.includes("confirmed") &&
+    !/ProviderHttpClient|client\.stream|provider_key|story_ledger/u.test(
+      storyChapterPatchCommands.split("#[cfg(test)]")[0],
+    ) &&
+    storyChapterPatchFrontend.includes("parseChapterPatchPreview") &&
+    storyChapterPatchFrontend.includes("confirmed: true") &&
+    storyContextUi.includes("requestStoryChapterPatchPreview") &&
+    storyContextUi.includes("requestStoryChapterPatchApply"),
+  "NG-505 chapter patch must be local-diffed, explicitly confirmed, continuity/target-bound, recoverable and limited to one chapter",
+);
+assert(
+  storyLifecycleCore.includes("CHAPTER_LIFECYCLE_SCHEMA_VERSION: u16 = 1") &&
+    storyLifecycleCore.includes("pub enum ChapterLifecycleStatusV1") &&
+    storyLifecycleCore.includes("TransitionForbidden") &&
+    storyLifecycleCore.includes("LedgerPendingRecordV1") &&
+    storyLifecycleCore.includes(
+      'STORY_LEDGER_RELATIVE_PATH: &str = "materials/000.story-ledger.md"',
+    ) &&
+    storyLifecycleCore.includes("bind_chapter_status_encoded_hash") &&
+    storyLifecycleCore.includes("bind_ledger_update_encoded_hash") &&
+    !/reqwest|ProviderHttpClient|client\.stream|std::fs|OpenOptions|write_all/u.test(
+      storyLifecycleCore.split("#[cfg(test)]")[0],
+    ) &&
+    storyLifecycleCommands.includes("pub fn story_chapter_state_preview") &&
+    storyLifecycleCommands.includes("pub fn story_chapter_lifecycle_status_load") &&
+    storyLifecycleCommands.includes("pub fn story_chapter_state_apply") &&
+    storyLifecycleCommands.includes("pub fn story_ledger_update_preview") &&
+    storyLifecycleCommands.includes("pub fn story_ledger_update_apply") &&
+    storyLifecycleCommands.includes("apply_chapter_file_recoverable") &&
+    storyLifecycleCommands.includes("confirmed") &&
+    !/ProviderHttpClient|client\.stream|provider_key/u.test(
+      storyLifecycleCommands.split("#[cfg(test)]")[0],
+    ) &&
+    storyLifecycleFrontend.includes("parseChapterStatusPreview") &&
+    storyLifecycleFrontend.includes("parseLedgerUpdatePreview") &&
+    storyLifecycleFrontend.includes("confirmed: true") &&
+    storyContextUi.includes("requestStoryChapterStateApply") &&
+    storyContextUi.includes("requestStoryLedgerUpdateApply") &&
+    storyContextUi.includes("setLedgerDeferred") &&
+    !/setInterval|setTimeout/u.test(storyLifecycleFrontend),
+  "NG-506 must enforce separate status and fixed-Ledger confirmations, recover pending from Markdown, and contain no Provider or background retry path",
 );
 assert(
   workflowPlot.includes("pub struct PlotProposalV1") &&
@@ -940,8 +1121,9 @@ assert(
       "source_hash",
       "replacement_hash",
       "temporary_file_id",
+      "backup_file_id",
     ]),
-  "NG-304 recovery journal may contain only version, identifiers, relative path, create/replace operation, stage, and hashes",
+  "NG-505 recovery journal may contain only version, identifiers, relative path, operation, stage, hashes, temporary ID and optional backup ID",
 );
 assert(
   productionRecoveryService.includes("deny_unknown_fields") &&
@@ -1424,6 +1606,13 @@ const sprint4CharacterV2E2E = read("scripts/sprint4-character-v2-e2e.mjs");
 const sprint4RouterE2E = read("scripts/sprint4-router-e2e.mjs");
 const sprint4G4E2E = read("scripts/sprint4-g4-e2e.mjs");
 const sprint5ContextBuilderE2E = read("scripts/sprint5-context-builder-e2e.mjs");
+const sprint5ReaderModelE2E = read("scripts/sprint5-reader-model-e2e.mjs");
+const sprint5ChapterProposalE2E = read("scripts/sprint5-chapter-proposal-e2e.mjs");
+const sprint5ContinuityE2E = read("scripts/sprint5-continuity-e2e.mjs");
+const sprint5ChapterApplyE2E = read("scripts/sprint5-chapter-apply-e2e.mjs");
+const sprint5LifecycleLedgerE2E = read("scripts/sprint5-lifecycle-ledger-e2e.mjs");
+const sprint5G5StorytellingE2E = read("scripts/sprint5-g5-storytelling-e2e.mjs");
+const providerCoreMockTests = read("crates/app-core/src/provider_core_mock_tests.rs");
 const smokeDesktop = read("scripts/smoke-desktop.ps1");
 const qualitySource = read("scripts/quality.mjs");
 const rootPackage = read("package.json");
@@ -1711,9 +1900,10 @@ assert(
 );
 assert(
   sprint4G4E2E.includes(
-    'const expectedPackHash = "24616ecda847c1df3f3e9b4550e70ef987b8b2c62e7cfe0b3985680721ce84f9";',
+    'const expectedPackHash = "1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5";',
   ) &&
     sprint4G4E2E.includes("expectedResourcePaths") &&
+    sprint4G4E2E.includes('"storytelling/chapter-proposal.output.schema.json"') &&
     sprint4G4E2E.includes("calculatePackHash") &&
     sprint4G4E2E.includes("calculateWorkflowHash") &&
     sprint4G4E2E.includes("DatabaseSync") &&
@@ -1777,6 +1967,143 @@ assert(
     ),
   "NG-501 unified quality must run the offline Context Fixture after G4 and prove stable, scoped, zero-Provider and zero-write behavior",
 );
+assert(
+  sprint5ReaderModelE2E.includes('mode: "offline-local-first-zero-write"') &&
+    sprint5ReaderModelE2E.includes("StoryContextRequestSnapshotV1") &&
+    sprint5ReaderModelE2E.includes("readerModelFieldCount: 6") &&
+    sprint5ReaderModelE2E.includes("maximumOutputTokens: 4096") &&
+    sprint5ReaderModelE2E.includes("stableRequestHashMismatchCount: 0") &&
+    sprint5ReaderModelE2E.includes("sourceChangeReaderModelLossCount: 0") &&
+    sprint5ReaderModelE2E.includes("staleSourceReviewBypassCount: 0") &&
+    sprint5ReaderModelE2E.includes("providerRequestCount: 0") &&
+    sprint5ReaderModelE2E.includes("projectWriteCount: 0") &&
+    qualitySource.includes('["NG-502 Reader Mental Model E2E", ["e2e:ng502"]]') &&
+    qualitySource.indexOf('"NG-502 Reader Mental Model E2E"') >
+      qualitySource.indexOf('"NG-501 Context Builder E2E"') &&
+    rootPackage.includes('"e2e:ng502": "node scripts/sprint5-reader-model-e2e.mjs"') &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5ReaderModelE2E,
+    ),
+  "NG-502 unified quality must run the offline Reader Mental Model request-snapshot fixture after NG-501 and prove review freshness, stable hashes, zero Provider requests, and zero project writes",
+);
+assert(
+  sprint5ChapterProposalE2E.includes('mode: "provider-neutral-streaming-memory-only"') &&
+    sprint5ChapterProposalE2E.includes('supportedProviders: ["deepseek", "openai"]') &&
+    sprint5ChapterProposalE2E.includes("sameProviderRepairMaximumCount: 1") &&
+    sprint5ChapterProposalE2E.includes("staleSourceWriteUnlockCount: 0") &&
+    sprint5ChapterProposalE2E.includes("cancellationProjectWriteCount: 0") &&
+    sprint5ChapterProposalE2E.includes("rawResponsePersistenceCount: 0") &&
+    sprint5ChapterProposalE2E.includes("credentialLeakCount: 0") &&
+    qualitySource.includes('["NG-503 Chapter Proposal E2E", ["e2e:ng503"]]') &&
+    qualitySource.indexOf('"NG-503 Chapter Proposal E2E"') >
+      qualitySource.indexOf('"NG-502 Reader Mental Model E2E"') &&
+    rootPackage.includes('"e2e:ng503": "node scripts/sprint5-chapter-proposal-e2e.mjs"') &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5ChapterProposalE2E,
+    ),
+  "NG-503 unified quality must run the dual-Provider streaming Chapter Proposal fixture after NG-502 and prove strict parsing, same-Provider repair, source-stale lock, cancellation, zero writes and zero credential leakage",
+);
+assert(
+  sprint5ContinuityE2E.includes('mode: "offline-deterministic-read-only"') &&
+    sprint5ContinuityE2E.includes("orderedRuleCount: 17") &&
+    sprint5ContinuityE2E.includes('severities: ["blocking", "warning", "unknown", "passed"]') &&
+    sprint5ContinuityE2E.includes("stableRuleOrderMismatchCount: 0") &&
+    sprint5ContinuityE2E.includes("blockingWriteUnlockCount: 0") &&
+    sprint5ContinuityE2E.includes("warningConfirmationBypassCount: 0") &&
+    sprint5ContinuityE2E.includes("unknownCountedAsPassedCount: 0") &&
+    sprint5ContinuityE2E.includes("sourceStaleBypassCount: 0") &&
+    sprint5ContinuityE2E.includes("targetStaleBypassCount: 0") &&
+    sprint5ContinuityE2E.includes("providerRequestCount: 0") &&
+    sprint5ContinuityE2E.includes("projectWriteCount: 0") &&
+    qualitySource.includes("[" + '"NG-504 local continuity E2E", ["e2e:ng504"]]') &&
+    qualitySource.indexOf('"NG-504 local continuity E2E"') >
+      qualitySource.indexOf('"NG-503 Chapter Proposal E2E"') &&
+    rootPackage.includes('"e2e:ng504": "node scripts/sprint5-continuity-e2e.mjs"') &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5ContinuityE2E,
+    ),
+  "NG-504 unified quality must run the offline deterministic continuity matrix after NG-503 and prove stable four-state results, session warning confirmation, stale-source/target blocking, zero Provider requests and zero writes",
+);
+assert(
+  sprint5ChapterApplyE2E.includes('mode: "offline-deterministic-recoverable-write"') &&
+    sprint5ChapterApplyE2E.includes("preconfirmationWriteCount: 0") &&
+    sprint5ChapterApplyE2E.includes("createCollisionOverwriteCount: 0") &&
+    sprint5ChapterApplyE2E.includes("staleTargetWriteCount: 0") &&
+    sprint5ChapterApplyE2E.includes("lockedStatusBypassCount: 0") &&
+    sprint5ChapterApplyE2E.includes("precommitFailureLostOriginalCount: 0") &&
+    sprint5ChapterApplyE2E.includes("postwriteFailureLostOriginalCount: 0") &&
+    sprint5ChapterApplyE2E.includes("restartReplaceLostOriginalCount: 0") &&
+    sprint5ChapterApplyE2E.includes("storyLedgerWriteCount: 0") &&
+    sprint5ChapterApplyE2E.includes("providerRequestCount: 0") &&
+    qualitySource.includes('["NG-505 recoverable chapter apply E2E", ["e2e:ng505"]]') &&
+    qualitySource.indexOf('"NG-505 recoverable chapter apply E2E"') >
+      qualitySource.indexOf('"NG-504 local continuity E2E"') &&
+    rootPackage.includes('"e2e:ng505": "node scripts/sprint5-chapter-apply-e2e.mjs"') &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5ChapterApplyE2E,
+    ),
+  "NG-505 unified quality must run the offline recoverable chapter Apply matrix after NG-504 and prove explicit confirmation, target revalidation, original preservation, zero Provider requests and zero Story Ledger writes",
+);
+assert(
+  sprint5LifecycleLedgerE2E.includes('mode: "offline-two-transaction-lifecycle-ledger"') &&
+    sprint5LifecycleLedgerE2E.includes("statusConfirmationCount: 1") &&
+    sprint5LifecycleLedgerE2E.includes("ledgerConfirmationCount: 1") &&
+    sprint5LifecycleLedgerE2E.includes("draftToFinalAllowed: false") &&
+    sprint5LifecycleLedgerE2E.includes('ledgerTarget: "materials/000.story-ledger.md"') &&
+    sprint5LifecycleLedgerE2E.includes('pendingRecoverySource: "chapter-markdown"') &&
+    sprint5LifecycleLedgerE2E.includes("backgroundRetryAllowed: false") &&
+    sprint5LifecycleLedgerE2E.includes("unconfirmedStatusWriteCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("unconfirmedLedgerWriteCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("draftToFinalBypassCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("wrongLedgerTargetWriteCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("ledgerFailureChapterRollbackCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("automaticRetryCount: 0") &&
+    sprint5LifecycleLedgerE2E.includes("providerRequestCount: 0") &&
+    qualitySource.includes('["NG-506 lifecycle and Ledger E2E", ["e2e:ng506"]]') &&
+    qualitySource.indexOf('"NG-506 lifecycle and Ledger E2E"') >
+      qualitySource.indexOf('"NG-505 recoverable chapter apply E2E"') &&
+    rootPackage.includes('"e2e:ng506": "node scripts/sprint5-lifecycle-ledger-e2e.mjs"') &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5LifecycleLedgerE2E,
+    ),
+  "NG-506 unified quality must run after NG-505 and prove two confirmations, fixed Ledger scope, pending recovery, no chapter rollback, no background retry and zero Provider requests",
+);
+assert(
+  providerCoreMockTests.includes(
+    "ng_507_both_loopback_providers_complete_the_storytelling_transaction_state_machine",
+  ) &&
+    providerCoreMockTests.includes(
+      "ng_507_both_loopback_providers_cancel_truncate_error_and_stale_sources_without_writes",
+    ) &&
+    providerCoreMockTests.includes("ProviderId::ALL") &&
+    providerCoreMockTests.includes("staleOverwriteCount") &&
+    providerCoreMockTests.includes("unknownsConfirmed") &&
+    sprint5G5StorytellingE2E.includes("NG507_TEST_CANARY") &&
+    sprint5G5StorytellingE2E.includes("deepseek-storytelling-loopback-report.json") &&
+    sprint5G5StorytellingE2E.includes("openai-storytelling-loopback-report.json") &&
+    sprint5G5StorytellingE2E.includes("chapter-transaction-report.json") &&
+    sprint5G5StorytellingE2E.includes("ledger-transaction-report.json") &&
+    sprint5G5StorytellingE2E.includes("cancellation-and-recovery-report.json") &&
+    sprint5G5StorytellingE2E.includes("g5-review-report.md") &&
+    sprint5G5StorytellingE2E.includes("g5-manifest.json") &&
+    sprint5G5StorytellingE2E.includes('status: "review-complete-product-approval-pending"') &&
+    sprint5G5StorytellingE2E.includes("本报告不代替产品批准") &&
+    sprint5G5StorytellingE2E.includes('status: "not-authorized"') &&
+    sprint5G5StorytellingE2E.includes("liveRequestCount: 0") &&
+    !sprint5G5StorytellingE2E.includes("smoke:provider:live") &&
+    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
+      sprint5G5StorytellingE2E,
+    ) &&
+    qualitySource.includes(
+      '["NG-507 dual-Provider Storytelling G5 E2E", ["e2e:ng507", "--", "--quality-sequence"]]',
+    ) &&
+    qualitySource.indexOf('"NG-507 dual-Provider Storytelling G5 E2E"') >
+      qualitySource.indexOf('"NG-506 lifecycle and Ledger E2E"') &&
+    rootPackage.includes('"e2e:ng507": "node scripts/sprint5-g5-storytelling-e2e.mjs"') &&
+    rootPackage.includes('"smoke:g5"') &&
+    smokeDesktop.includes('"g5"'),
+  "NG-507 unified quality must run after NG-506, exercise one shared dual-Provider Storytelling transaction state machine, prove every negative path is zero-write, protect manual edits, generate the full redacted G5 evidence set, and keep Live Smoke uncalled without authorization",
+);
 console.log(
-  "[boundary] PASS thirty-six scoped commands through NG-501; twenty-eight fixed hash-bound resources, five routable workflows plus one read-only Storytelling Context Builder, App State v8 metadata-only Router terminals, deterministic Chinese commands, explicit same-Provider consent, dual-Loopback schema/serializer matrices, single-confirmed-file Apply, recovery, G4 Canary scanning, no project/router escape, and no plugin runtime, hidden draft/body persistence, raw Provider output retention, Key readback, browser network, fallback, Shell, or Process",
+  "[boundary] PASS fifty-one scoped commands through NG-507; thirty-one fixed hash-bound resources, five routable workflows plus executable non-routable Storytelling, shared DeepSeek/OpenAI transaction state machine, author-confirmed visible unknown results, three separate confirmed write surfaces, recoverable original-preserving writes, visible Markdown Ledger Pending, App State v8 metadata-only Router terminals, deterministic Chinese commands, G4/G5 Canary scanning, no project/router escape, and no plugin runtime, hidden body persistence, raw Provider output retention, Key readback, browser network, fallback, Shell, Process, automatic status changes, background retries, or unauthorized Live Smoke",
 );

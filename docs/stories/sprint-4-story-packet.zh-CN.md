@@ -1,6 +1,6 @@
 # NovelGainker Sprint 4 Story Packet
 
-> 状态：NG-401～NG-407 已获产品验收；G4 已通过并关闭 Sprint 4；Sprint 5 Story Packet 已创建，NG-501 尚未授权
+> 状态：NG-401～NG-407 已获产品验收；G4 已由产品负责人批准，Sprint 4 已关闭
 > 日期：2026-08-24
 > BMAD 数据包：execution-packet
 > Sprint：4——实体与剧情工作流

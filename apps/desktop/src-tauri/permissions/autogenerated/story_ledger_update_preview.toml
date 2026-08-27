@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-story-ledger-update-preview"
+description = "Enables the story_ledger_update_preview command without any pre-configured scope."
+commands.allow = ["story_ledger_update_preview"]
+
+[[permission]]
+identifier = "deny-story-ledger-update-preview"
+description = "Denies the story_ledger_update_preview command without any pre-configured scope."
+commands.deny = ["story_ledger_update_preview"]

@@ -230,7 +230,7 @@ fn apply_registered_workflow_proposal(
     Ok(workflow_status_snapshot(Some(manager), handle.project_id()))
 }
 
-fn mark_session_recovery_required(
+pub(super) fn mark_session_recovery_required(
     state: &ProjectRegistry,
     session_id: &str,
 ) -> Result<(), AppError> {
@@ -247,7 +247,7 @@ fn mark_session_recovery_required(
     Ok(())
 }
 
-fn map_workflow_apply_error(error: AppError) -> AppError {
+pub(super) fn map_workflow_apply_error(error: AppError) -> AppError {
     match error.code.as_str() {
         "project.writer_required" => AppError::workflow_writer_required(),
         "project.recovery_required" => AppError::workflow_recovery_required(),
@@ -257,7 +257,7 @@ fn map_workflow_apply_error(error: AppError) -> AppError {
     }
 }
 
-fn workflow_context_handle(
+pub(super) fn workflow_context_handle(
     state: &ProjectRegistry,
     session_id: &str,
 ) -> Result<ProjectHandle, AppError> {

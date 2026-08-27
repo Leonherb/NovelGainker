@@ -7,7 +7,7 @@ import {
 } from "./workflow";
 
 describe("Workflow Registry IPC contract", () => {
-  it("accepts the five routable workflows and read-only Storytelling entry in fixed order", () => {
+  it("accepts five routable workflows and an executable non-routable Storytelling entry", () => {
     expect(parseWorkflowRegistrySnapshot(workflowRegistryFixture)).toEqual(workflowRegistryFixture);
     expect(() =>
       parseWorkflowRegistrySnapshot({

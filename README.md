@@ -2,7 +2,7 @@
 
 桌面优先、Local-first、可切换 AI Provider 的简体中文小说创作工具。
 
-当前进度：Sprint 5 Story Packet Review Gate 已通过；NG-501 Context Builder v2 已完成技术实现并通过全量质量门，等待产品验收；NG-502 尚未授权。
+当前进度：G5 已获产品批准，Sprint 5 已关闭；Sprint 6 Story Packet 已创建，等待 S6-Q001～Q007 与 Review Gate，NG-601 尚未授权。
 
 ## 开发入口
 
@@ -14,6 +14,7 @@
 - [Sprint 3 Story Packet](./docs/stories/sprint-3-story-packet.zh-CN.md)
 - [Sprint 4 Story Packet](./docs/stories/sprint-4-story-packet.zh-CN.md)
 - [Sprint 5 Story Packet](./docs/stories/sprint-5-story-packet.zh-CN.md)
+- [Sprint 6 Story Packet](./docs/stories/sprint-6-story-packet.zh-CN.md)
 - [开发环境](./docs/development.md)
 
 ~~~powershell

@@ -43,6 +43,12 @@ const steps = [
   ["NG-406 workflow Router E2E", ["e2e:ng406"]],
   ["Sprint 4 G4 evidence E2E", ["e2e:ng407", "--", "--quality-sequence"]],
   ["NG-501 Context Builder E2E", ["e2e:ng501"]],
+  ["NG-502 Reader Mental Model E2E", ["e2e:ng502"]],
+  ["NG-503 Chapter Proposal E2E", ["e2e:ng503"]],
+  ["NG-504 local continuity E2E", ["e2e:ng504"]],
+  ["NG-505 recoverable chapter apply E2E", ["e2e:ng505"]],
+  ["NG-506 lifecycle and Ledger E2E", ["e2e:ng506"]],
+  ["NG-507 dual-Provider Storytelling G5 E2E", ["e2e:ng507", "--", "--quality-sequence"]],
 ];
 
 for (const [name, args] of steps) {

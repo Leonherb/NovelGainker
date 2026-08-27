@@ -1,6 +1,6 @@
 # NovelGainker Sprint 5 Story Packet
 
-> 状态：Sprint 5 Story Packet Review Gate 已通过；NG-501 已完成技术实现并通过全量质量门，等待产品验收；NG-502～NG-507 未授权
+> 状态：NG-501～NG-507 均已获产品验收；G5 已由产品负责人批准，Sprint 5 已关闭；Sprint 6 Story Packet 已创建
 >
 > 日期：2026-08-26
 >
@@ -513,7 +513,11 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - `pnpm quality` 已以退出码 0 全量通过：23 个前端测试文件/129 项测试、59 项 Workflow 测试、87 项 App Core 测试（4 项按设计忽略）、28 项 Tauri 测试，以及 Sprint 1～4、G4 和 NG-501 E2E。
 - NG-501 脱敏证据位于 `target/ng501-evidence/context-fixture-report.json`；报告确认 `providerRequestCount=0`、`projectWriteCount=0`、`pathEscapeReadCount=0`、`stableManifestMismatchCount=0`。
 
-当前结论：**NG-501 技术验收通过，等待产品负责人产品验收；NG-502 尚未授权。**
+当前结论：**NG-501 已获产品验收；NG-502 已获实施授权。**
+
+### 12.7 产品验收记录（2026-08-26）
+
+产品负责人明确回复“批准 NG-501 验收，开始 NG-502”。NG-501 的只读 Context Builder v2 正式通过产品验收；本次授权仅覆盖 NG-502，不授权 NG-503～NG-507，也不提前开放 Provider 调用或 Storytelling 项目写入。
 
 ## 13. NG-502——预算与 Reader Mental Model 编辑
 
@@ -533,15 +537,15 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 13.3 验收标准
 
-- [ ] 预算计算以 UTF-8 字节为准。
-- [ ] 96 KiB 上限在调用 Provider 前本地执行。
-- [ ] 截断顺序可重复、可解释。
-- [ ] Reader Mental Model 六个字段均可查看和编辑。
-- [ ] 用户编辑会改变请求哈希。
-- [ ] 来源变化不会丢弃用户编辑，而会提示重新确认。
-- [ ] 不调用隐藏 AI 生成摘要。
-- [ ] 不写项目文件。
-- [ ] NG-501 回归与质量检查通过。
+- [x] 预算计算以 UTF-8 字节为准。
+- [x] 96 KiB 上限在调用 Provider 前本地执行。
+- [x] 截断顺序可重复、可解释。
+- [x] Reader Mental Model 六个字段均可查看和编辑。
+- [x] 用户编辑会改变请求哈希。
+- [x] 来源变化不会丢弃用户编辑，而会提示重新确认。
+- [x] 不调用隐藏 AI 生成摘要。
+- [x] 不写项目文件。
+- [x] NG-501 回归与质量检查通过。
 
 ### 13.4 证据
 
@@ -549,6 +553,22 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - 中文、多字节字符预算 Fixture。
 - Mental Model 状态测试。
 - UI 截图和请求哈希证明。
+
+### 13.5 技术完成记录（2026-08-26）
+
+- 在 `StoryContextManifestV2` 之上新增严格 `StoryContextRequestSnapshotV1`：六字段 Reader Mental Model 经换行归一化、UTF-8 字节计数、逐字段 4 KiB 与总计 12 KiB 本地上限后进入 `readerModelHash` 和 `requestHash`；调试输出对六段正文保持脱敏。
+- 固定 24/48/24 KiB 分区与 96 KiB 请求硬上限，最多 5 个 2 KiB Query Result、2 个近期章节，最大输出 4096 tokens；全部预算、截断和哈希由 Rust 确定性计算，Provider 尚未接入。
+- 新增只读 `story_context_request_preview` Tauri Command 与严格 TypeScript IPC。命令只从当前不透明项目会话重新构建 Manifest，不接受绝对路径、任意工具或写入正文，不调用 Provider，也不写项目、App State、缓存或数据库。
+- 中栏已提供六字段简体中文编辑器、预算/Hash 展示与 `current` / `needsReview` 状态。来源变化时保留用户编辑并要求重新审查当前 Manifest，不能静默沿用过期确认。
+- Storytelling 仍为不可路由、不可执行、零项目写入的只读 Workflow；Pack 扩展为 30 个编译期资源，冻结 Pack Hash 为 `e4bbe1703fb4e1fb7c824d16970e3bf0896ba00e0b79e1929404e886f1b1bbf8`。
+- `pnpm quality` 已以退出码 0 全量通过：23 个前端测试文件/133 项测试、63 项 Workflow 测试、87 项 App Core 测试（4 项按设计忽略）、28 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501 与 NG-502 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+- NG-502 脱敏证据位于 `target/ng502-evidence/reader-model-request-snapshot-report.json`；报告确认 `stableRequestHashMismatchCount=0`、`sourceChangeReaderModelLossCount=0`、`staleSourceReviewBypassCount=0`、`providerRequestCount=0`、`projectWriteCount=0`。
+
+当前结论：**NG-502 技术实现完成，等待产品验收；NG-503 尚未授权。**
+
+### 13.6 产品验收记录（2026-08-26）
+
+产品负责人明确回复“批准 NG-502 验收，开始 NG-503”。NG-502 的预算、六字段 Reader Mental Model 与只读请求快照正式通过产品验收；本次授权仅覆盖 NG-503，不授权 NG-504～NG-507，也不提前开放连续性检查、章节写入或 Story Ledger 写入。
 
 ## 14. NG-503——Provider 中立的 Chapter Proposal
 
@@ -568,15 +588,15 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 14.3 验收标准
 
-- [ ] 两个 Provider 接收语义等价的统一请求。
-- [ ] 用户只填写 API Key，不出现自定义端点或模型控件。
-- [ ] 取消后无章节、Ledger、临时文件或隐藏状态写入。
-- [ ] 不完整或不可解析响应不能进入写入。
-- [ ] source-stale 提案不能进入写入。
-- [ ] Proposal 保存全部非敏感追溯字段。
-- [ ] API Key 不出现在日志、错误、Fixture 或快照中。
-- [ ] Loopback 能模拟流式、取消、长度截断和错误。
-- [ ] NG-501～NG-502 回归与质量检查通过。
+- [x] 两个 Provider 接收语义等价的统一请求。
+- [x] 用户只填写 API Key，不出现自定义端点或模型控件。
+- [x] 取消后无章节、Ledger、临时文件或隐藏状态写入。
+- [x] 不完整或不可解析响应不能进入写入。
+- [x] source-stale 提案不能进入写入。
+- [x] Proposal 保存全部非敏感追溯字段。
+- [x] API Key 不出现在日志、错误、Fixture 或快照中。
+- [x] Loopback 能模拟流式、取消、长度截断和错误。
+- [x] NG-501～NG-502 回归与质量检查通过。
 
 ### 14.4 证据
 
@@ -584,6 +604,22 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - 取消与错误恢复测试。
 - 请求 Schema 快照。
 - 无文件变化证明。
+
+### 14.5 技术完成记录（2026-08-26）
+
+- 新增严格 `ChapterProposalPayloadV1` / `ChapterProposalV1` 与构建期校验的 `chapter-proposal.output.schema.json`。Context Manifest、六字段 Reader Mental Model、目标章节和显式来源按固定中文协议编译；未知字段、不完整响应、伪造 Source ID、危险文本和非 `stop` 完成状态均被本地拒绝。
+- DeepSeek `deepseek-v4-pro` 与 OpenAI `gpt-5.6-terra` 复用固定 Provider Core 流式适配器和同一领域解析器；首个完整响应解析失败时最多向同一 Provider 修复一次，失败与重试不会自动切换 Provider。
+- 新增 `story_chapter_generate_start`、`story_chapter_status_load`、`story_chapter_generate_cancel` 三个最小 Tauri Command。运行状态、无效响应预览和 Proposal 仅存在于进程内；取消、失败、来源过期和项目关闭不会写章节、Story Ledger、临时文件、App State、缓存或数据库。
+- 中栏已接入显式生成、取消、同 Provider 重试和重新生成，并显示 Provider/固定模型、开始/完成时间、Manifest/Request Hash、完成原因、响应完整性、来源 current/stale、连续性检查版本与 `writeEnabled=false`。本 Story 没有应用、保存或接受章节控件。
+- Storytelling Pack 仍为不可路由、不可执行；只读操作扩展为 Context、请求预览与 Chapter Proposal。规范化 Pack 现含 6 个 Workflow、31 个编译期资源，固定 Pack Hash 为 `bb6b615e05bff316ba440481fd669224da492226d24362ff89d1f2d67352c4eb`；默认能力清单精确包含 40 个命令。
+- `pnpm quality` 已以退出码 0 全量通过：24 个前端测试文件/137 项测试、66 项 Workflow 测试、89 项 App Core 测试（另 4 项按设计忽略）、29 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501、NG-502 与 NG-503 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+- NG-503 脱敏证据位于 `target/ng503-evidence/chapter-proposal-provider-matrix.json`；报告确认 Provider 语义差异、错误响应误接收、过期来源写入解锁、取消项目/App State 写入、原始响应持久化、凭据泄漏、端点/模型覆盖、跨 Provider Failover 与隐藏连续性检查计数均为 0。
+
+当前结论：**NG-503 技术实现完成，等待产品验收；NG-504 尚未授权。**
+
+### 14.6 产品验收记录（2026-08-26）
+
+产品负责人明确回复“批准 NG-503 验收，开始 NG-504”。NG-503 的 Provider 中立只读 Chapter Proposal、双 Provider Loopback、取消/同 Provider 重试、来源过期锁与零写入边界正式通过产品验收；本次授权仅覆盖 NG-504，不授权 NG-505～NG-507，也不提前开放章节 Diff、章节写入、状态迁移或 Story Ledger 写入。
 
 ## 15. NG-504——本地连续性检查 v1
 
@@ -604,15 +640,15 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 15.3 验收标准
 
-- [ ] 相同输入产生稳定排序和稳定 ruleId。
-- [ ] blocking 始终阻止写入。
-- [ ] warning 必须在写入会话内得到明确确认。
-- [ ] unknown 不被计为通过。
-- [ ] 每条结果具有解释、证据和来源。
-- [ ] 连续性检查不调用 Provider。
-- [ ] 检查不写项目文件。
-- [ ] source-stale 或 target-stale 成为 blocking。
-- [ ] NG-501～NG-503 回归与质量检查通过。
+- [x] 相同输入产生稳定排序和稳定 ruleId。
+- [x] blocking 始终阻止写入。
+- [x] warning 必须在写入会话内得到明确确认。
+- [x] unknown 不被计为通过。
+- [x] 每条结果具有解释、证据和来源。
+- [x] 连续性检查不调用 Provider。
+- [x] 检查不写项目文件。
+- [x] source-stale 或 target-stale 成为 blocking。
+- [x] NG-501～NG-503 回归与质量检查通过。
 
 ### 15.4 证据
 
@@ -620,6 +656,22 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - blocking 与 warning UI 截图。
 - 无 Provider 调用证明。
 - 稳定排序测试。
+
+### 15.5 技术完成记录（2026-08-27）
+
+- 新增 Rust 本地连续性检查器与 17 条固定顺序规则，稳定输出 blocking、warning、unknown、passed；每条结果包含固定 `ruleId`、中文解释、证据、Source ID 和建议动作，`checkedAt` 不参与确定性报告 Hash。
+- 来源/请求过期、目标文件变化、章节动作/目标/路径/响应/Draft/Frontmatter/终止状态不符合契约均会阻断；Ledger 承诺、目标大纲标题、无来源声明、长度偏差与 forbiddenReveals 使用可解释 warning；读者认知回退与未来大纲兑现等深层语义保持 unknown。
+- 新增 `story_continuity_check`、`story_continuity_status_load`、`story_continuity_warning_confirm` 三个只读 Tauri Command 与严格 TypeScript IPC。报告、目标预览绑定和 warning 确认仅保存在当前进程会话，关闭项目或开始新检查即清除；不调用 Provider、不写项目/App State/缓存/数据库。
+- 中栏显示四类数量、逐条证据/来源/建议、blocking 原因和 warning 会话确认，并明确标注“本地规则检查，未再次调用 AI”。NG-504 不提供章节 Apply，`writeEnabled` 始终为 false。
+- Storytelling Pack 仍不可路由、不可执行；现含 6 个 Workflow、31 个编译期资源，默认能力清单精确包含 43 个命令，规范化 Pack Hash 为 `deecbcdb9505c63934626e9a9e236457a614eee2abd763975bf26bd3e2de1b14`。
+- `pnpm quality` 已以退出码 0 全量通过：25 个前端测试文件/141 项测试、68 项 Workflow 测试、89 项 App Core 测试（另 4 项按设计忽略）、30 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501～NG-504 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+- NG-504 脱敏证据位于 `target/ng504-evidence/continuity-rule-matrix.json`，SHA-256 为 `df42dbe97a27b24fde5a6174384953628f36d19443d2845484a3cfc27726a575`；报告确认 `providerRequestCount=0`、`projectWriteCount=0`、`sourceStaleBypassCount=0`、`targetStaleBypassCount=0`。
+
+当前结论：**NG-504 已获产品验收；NG-505 已获实施授权。**
+
+### 15.6 产品验收记录（2026-08-27）
+
+产品负责人明确回复“批准 NG-504 验收，开始 NG-505”。NG-504 的本地确定性连续性检查、warning 会话确认、过期来源/目标阻断与零 Provider/零写入边界正式通过产品验收；本次授权仅覆盖 NG-505，不授权 NG-506～NG-507，也不提前开放章节状态迁移或 Story Ledger 写入。
 
 ## 16. NG-505——章节差异与事务性写入
 
@@ -640,17 +692,17 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 16.3 验收标准
 
-- [ ] 创建只写用户输入章节号对应的单一目标文件。
-- [ ] 路径存在时阻断，不自动覆盖或重编号。
-- [ ] 修订默认只改变 Draft，保留未知 frontmatter 和其他区块。
-- [ ] 用户确认前项目零写入。
-- [ ] 确认时再次校验 Proposal、Manifest、连续性和目标哈希。
-- [ ] 写入采用同目录事务流程。
-- [ ] 校验失败恢复原文件且不留临时文件。
-- [ ] 写入结果回读哈希与预期一致。
-- [ ] 创建与修订均有差异预览。
-- [ ] 只在 NG-505 验收后开放工作流执行入口。
-- [ ] NG-501～NG-504 回归与完整质量检查通过。
+- [x] 创建只写用户输入章节号对应的单一目标文件。
+- [x] 路径存在时阻断，不自动覆盖或重编号。
+- [x] 修订默认只改变 Draft，保留未知 frontmatter 和其他区块。
+- [x] 用户确认前项目零写入。
+- [x] 确认时再次校验 Proposal、Manifest、连续性和目标哈希。
+- [x] 写入采用同目录事务流程。
+- [x] 校验失败恢复原文件且不留临时文件。
+- [x] 写入结果回读哈希与预期一致。
+- [x] 创建与修订均有差异预览。
+- [x] 只在 NG-505 验收后开放工作流执行入口。
+- [x] NG-501～NG-504 回归与完整质量检查通过。
 
 ### 16.4 失败恢复矩阵
 
@@ -672,6 +724,22 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - 差异和确认 UI 截图。
 - 完整质量命令摘要。
 
+### 16.6 技术完成记录（2026-08-27）
+
+- 新增确定性 `ChapterPatchPreviewV1` 构建器与逐行 Diff。create 只允许用户指定的 `chapters/NNN.md`，碰撞即阻断且不自动重编号；revise 保持原路径、章节 ID、章节号、未知 Frontmatter 与非 Draft 区块，只替换 Draft。现有 accepted/final 章节必须显式解锁，写回状态固定为 draft；本 Story 不实现 accepted/final 状态迁移。
+- 新增 `story_chapter_patch_preview`、`story_chapter_patch_status_load`、`story_chapter_patch_apply` 三个严格 Tauri Command。预览绑定 Run、Proposal、Manifest、Request、连续性报告、warning 确认、目标源 Hash 与最终编码字节 Hash；Apply IPC 只接受不透明标识、Hash 和 `confirmed=true`，写入前从当前项目重新构建全部绑定，不接受前端提供正文、路径或工具。
+- App Core 使用同目录临时文件、写入/flush/sync、严格校验、替换前源 Hash 重检、同卷备份、原子 create/replace、回读 Hash 校验和恢复 Journal。创建或修订在提交前故障/崩溃时分别移除未提交目标或恢复原文件；无法无歧义恢复时进入 `recovery_required`，禁止继续写入。
+- 中栏提供 create/revise 差异、行号、增删统计、accepted/final 显式解锁、独立确认按钮和事务回执。生成、连续性检查和 Diff 仍与 Apply 分离；Apply 不调用 Provider，关闭项目或重新生成/检查会清除旧 Patch 会话。
+- Storytelling Pack 仍保持 `executionAvailable=false`、`routable=false`，等待 NG-505 产品验收后才能开放公共执行入口。当前 Pack 含 6 个 Workflow、31 个构建期资源，默认能力清单精确包含 46 个命令，Workflow 注册表规范化 Pack Hash 为 `e47d451c39880c284c307ce30edb3a33d7bd939bc2e8aa112e23a9c17dc9fe8f`；G4 全资源路径绑定证据 Hash 为 `dcd95b6d8f798a573d29c809e3b9f2daa55a849d4484303004974a8cb164556e`。
+- `pnpm quality` 已以退出码 0 全量通过：26 个前端测试文件/145 项测试、72 项 Workflow 测试、93 项 App Core 测试（另 4 项按设计忽略）、31 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501～NG-505 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+- NG-505 脱敏证据位于 `target/ng505-evidence/chapter-apply-matrix.json`，SHA-256 为 `9994b7a069cfc03440752116ee996b234efa2f6029ba650f5e3f710284e069b8`；报告确认 `preconfirmationWriteCount=0`、`lostOriginalCount=0`、`storyLedgerWriteCount=0`、`providerRequestCount=0`。
+
+当前结论：**NG-505 已获产品验收；Storytelling 已开放直接执行但仍不可由 Router 路由；NG-506 已获实施授权。**
+
+### 16.7 产品验收与 NG-506 授权记录（2026-08-27）
+
+产品负责人明确回复“批准 NG-505 验收，开始 NG-506”。NG-505 的章节 Diff、显式确认、单文件可恢复事务、原稿保全和 Ledger 不变边界正式通过产品验收；`novelgainker.storytelling` 因此变为 `executionAvailable=true`、`routable=false`，只开放工作台直接执行，不扩大 Router。此次授权只覆盖 NG-506，不授权 NG-507 或 G5。
+
 ## 17. NG-506——章节状态与独立 Ledger 更新
 
 ### 17.1 用户价值
@@ -692,17 +760,17 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 17.3 验收标准
 
-- [ ] AI 不能自动接受或定稿章节。
-- [ ] draft 不能直接进入 final。
-- [ ] 状态变更与章节正文写入不是同一次确认。
-- [ ] accepted 或 final 修订前必须明确解锁。
-- [ ] 修订写回后状态为 draft。
-- [ ] Ledger 更新永远是单独提案、单独差异、单独确认。
-- [ ] Ledger 失败不回滚已接受章节。
-- [ ] 未更新 Ledger 时 pending 状态可见且可恢复。
-- [ ] 暂不更新不会触发后台重试。
-- [ ] 目标只能是 materials/000.story-ledger.md。
-- [ ] NG-501～NG-505 回归与完整质量检查通过。
+- [x] AI 不能自动接受或定稿章节。
+- [x] draft 不能直接进入 final。
+- [x] 状态变更与章节正文写入不是同一次确认。
+- [x] accepted 或 final 修订前必须明确解锁。
+- [x] 修订写回后状态为 draft。
+- [x] Ledger 更新永远是单独提案、单独差异、单独确认。
+- [x] Ledger 失败不回滚已接受章节。
+- [x] 未更新 Ledger 时 pending 状态可见且可恢复。
+- [x] 暂不更新不会触发后台重试。
+- [x] 目标只能是 materials/000.story-ledger.md。
+- [x] NG-501～NG-505 回归与完整质量检查通过。
 
 ### 17.4 证据
 
@@ -711,6 +779,23 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - Ledger 故障注入报告。
 - pending 恢复测试。
 - 完整质量命令摘要。
+
+### 17.5 实现与独立证据记录（2026-08-27）
+
+- 新增严格章节生命周期 Core：只允许 `draft → accepted → final`；禁止 draft 直达 final，任何状态变化都需要独立差异预览与 `confirmed=true`。NG-505 对 accepted/final 的修订仍必须显式解锁，并写回 draft。
+- 首次接受会在章节 Markdown 中写入可见的 `## Ledger Pending`。可恢复记录绑定当前章节 ID、编号、标题、相对路径及章节/Proposal/Manifest/Request Hash；记录数量、候选和 Source ID 都有界，手工篡改为其他章节会被拒绝。
+- 新增五个严格 Tauri Command：`story_chapter_state_preview`、`story_chapter_lifecycle_status_load`、`story_chapter_state_apply`、`story_ledger_update_preview`、`story_ledger_update_apply`。章节 Patch、状态变更、Ledger 更新分别使用独立最小 Apply DTO 与可恢复事务；Ledger 目标固定为 `materials/000.story-ledger.md`，失败不会回滚已接受章节。
+- 中栏提供章节状态 Diff、状态确认、Ledger Diff、Ledger 独立确认、pending 数量和“稍后处理”。“稍后处理”只关闭当前 UI，不创建定时器、队列、后台任务或自动 Provider 请求；重启后从章节与 Ledger Markdown 重建 pending/applied 状态。
+- Storytelling Pack 已增加 `story.transition_chapter_status` 与 `story.update_ledger`，并保持 `executionAvailable=true`、`routable=false`。当前 Pack 仍为 6 个 Workflow、31 个构建期资源，规范化 Pack Hash 为 `1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5`；默认能力清单精确包含 51 个命令。
+- `pnpm e2e:ng506` 已通过：5 项生命周期 Core、2 项严格 Tauri IPC、2 个前端测试文件/10 项测试，边界检查确认两次独立确认、draft→final 绕过数 0、Ledger 失败章节回滚数 0、Provider 请求数 0。最新完整质量门重放后的脱敏证据位于 `target/ng506-evidence/lifecycle-ledger-matrix.json`，SHA-256 为 `bb518af3d90b967748e1846889664ece00871220a83a2235c35eca0bd4314d3a`。
+- 产品负责人明确回复“授权更新 G4 回归基线并重跑完整质量门”。G4 当前回归基线已同步为 Pack Hash `1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5`，Storytelling 预期固定为 `executionAvailable=true`、`routable=false`；历史 G4 证据未被改写，Router 和运行时权限未扩大。
+- `pnpm quality` 已以退出码 0 全量通过：27 个前端测试文件/149 项测试、77 项 Workflow 测试、93 项 App Core 测试（另 4 项按设计忽略）、33 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501～NG-506 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+
+当前结论：**NG-506 已获产品验收；NG-507 已获实施授权。**
+
+### 17.6 产品验收与 NG-507 授权记录（2026-08-27）
+
+产品负责人明确回复“批准 NG-506 验收，开始 NG-507”。NG-506 的章节状态迁移、可见 Ledger Pending、固定 Ledger 更新、两次独立确认、失败隔离和零后台重试边界正式通过产品验收；本次授权只覆盖 NG-507 的双 Provider Loopback 与 G5 技术证据，不提前批准 G5，不授权 Sprint 6，也不授权真实 Live Smoke。
 
 ## 18. NG-507——双 Provider Storytelling E2E 与 G5 证据
 
@@ -731,17 +816,17 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 18.3 验收标准
 
-- [ ] 两 Provider 的 Loopback 都走同一个 Context、Proposal、Continuity 和 Apply 状态机。
-- [ ] 两 Provider 均证明流式取消后零项目写入。
-- [ ] 两 Provider 均证明截断或解析失败不能写入。
-- [ ] 创建和修订章节通过。
-- [ ] 手动 Markdown 编辑不会被旧 Proposal 静默覆盖。
-- [ ] 状态接受和 Ledger 更新保持两次确认。
-- [ ] 完整路径可按第 2 节脚本演示。
-- [ ] G5 报告列出 Manifest、请求、输出、章节和 Ledger 哈希。
-- [ ] 日志与证据不含 API Key。
-- [ ] Live Smoke 仅在用户授权时运行；未运行不会使 Loopback 证据失效。
-- [ ] 完整质量门通过。
+- [x] 两 Provider 的 Loopback 都走同一个 Context、Proposal、Continuity 和 Apply 状态机。
+- [x] 两 Provider 均证明流式取消后零项目写入。
+- [x] 两 Provider 均证明截断或解析失败不能写入。
+- [x] 创建和修订章节通过。
+- [x] 手动 Markdown 编辑不会被旧 Proposal 静默覆盖。
+- [x] 状态接受和 Ledger 更新保持两次确认。
+- [x] 完整路径可按第 2 节脚本演示。
+- [x] G5 报告列出 Manifest、请求、输出、章节和 Ledger 哈希。
+- [x] 日志与证据不含 API Key。
+- [x] Live Smoke 仅在用户授权时运行；未运行不会使 Loopback 证据失效。
+- [x] 完整质量门通过。
 
 ### 18.4 证据
 
@@ -752,6 +837,25 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - 章节事务与 Ledger 事务报告。
 - G5 Review Report 与校验清单。
 - 可选 Live Smoke 记录。
+
+### 18.5 实施授权记录（2026-08-27）
+
+产品负责人通过“批准 NG-506 验收，开始 NG-507”单独授权本 Story。授权范围保持为证据层与为完成真实演示路径所需的回归修复；不新增 Runtime Command、Capability、Provider、Router 路由、自动写入或后台任务。
+
+### 18.6 技术完成记录（2026-08-27）
+
+- 新增 DeepSeek/OpenAI 双 Loopback 事务测试。两者共享 `Context → Proposal → Continuity → Patch Preview → Chapter Create → Manual Edit → Stale Reject → Proposal Refresh → Chapter Revise → Status Accepted → Ledger Preview → Ledger Apply` 状态序列；Manifest、Request、结构化 Output、创建章节、手动编辑章节和修订章节 Hash 在 Provider 间一致，Provider 专属 Proposal/accepted/Ledger Hash 分别记录。
+- 修复完整演示路径中的 Continuity 死锁：v1 固定产生的 2 条深层语义 `unknown` 仍保持 unknown，绝不改写为 passed；作者必须在当前运行时会话中按精确 ruleId 显式确认 warning 与 unknown，Apply 前还会重建并复核同一组确认。`writeEnabled` 仍固定为 false，blocking 仍不可确认绕过。
+- 两家 Provider 均验证流式取消、响应截断、无效 JSON、Rate Limit 和 source-stale 为零章节/零 Ledger 写入；手动编辑后旧 Replace Hash 被 `file.source_changed` 拒绝，旧 Proposal 静默覆盖数为 0。create、revise、accepted 与 Ledger 更新均通过可恢复事务，状态和 Ledger 各保留一次独立确认。
+- 新增 `pnpm e2e:ng507` 与统一质量步骤。G5 证据目录包含精确命名的双 Provider 报告、章节事务、Ledger 事务、取消/恢复报告、Review Report、Manifest、脱敏桌面 PNG 和一份 `not-authorized` Live 记录；Live 请求数和项目写入数均为 0。
+- `pnpm quality` 已以退出码 0 全量通过：27 个前端测试文件/149 项测试、77 项 Workflow 测试、95 项 App Core 测试（另 4 项按设计忽略）、33 项 Tauri 测试，以及 Sprint 1～4、G4、NG-501～NG-507 E2E；Debug/Release Tauri 构建和桌面 Smoke 均通过。
+- G5 Review Gate 重放后的 `target/g5-evidence/g5-manifest.json` SHA-256 为 `63558807cf30ba33b9168632d2387e12f9cc2799a6d082d50bbcee980239b3ad`；`g5-review-report.md` 为 `bb8ba91910938bc2d038875c33339c9357697b7eb6f520d37a62ea22831aa11f`；脱敏桌面截图为 `743eb71591f746efd78f05124e1aa1e73b9725966f5e2ba33a5712e378bc012e`。Workflow Pack Hash 保持 `1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5`。
+
+当时结论（批准前技术状态）：**NG-507 已获产品验收；G5 Review Gate 技术复核通过，等待产品批准。**
+
+### 18.7 产品验收与 G5 Review Gate 授权记录（2026-08-27）
+
+产品负责人明确回复“批准 NG-507 验收，进入 G5 Review Gate”。NG-507 的双 Provider 共用状态机、失败路径零写入、手动编辑保护、章节/状态/Ledger 独立事务、unknown 作者确认以及完整 G5 脱敏证据正式通过产品验收。本次授权只允许执行 G5 Review Gate；不代替 G5 产品批准，不授权 Sprint 6，也不授权真实 Live Smoke。
 
 ## 19. 跨 Story 依赖与授权矩阵
 
@@ -778,26 +882,27 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 
 ### 20.1 阻断项
 
-- [ ] NG-501～NG-507 均有产品验收记录。
-- [ ] Context Manifest 对全部来源、排除、截断、预算和哈希可解释。
-- [ ] 用户可修改所有非必需上下文选择。
-- [ ] Reader Mental Model 可见、可编辑并进入请求哈希。
-- [ ] Provider 调用前本地执行 96 KiB 上限。
-- [ ] DeepSeek 与 OpenAI 走统一 Proposal 状态机。
-- [ ] 取消、截断、错误和 source-stale 均证明零项目写入。
-- [ ] 连续性检查不会静默调用第二次 AI。
-- [ ] blocking 不能被忽略并写入。
-- [ ] 章节创建和修订都有准确差异预览。
-- [ ] 用户确认前没有章节写入。
-- [ ] 写入具备校验、哈希冻结、原子替换与恢复。
-- [ ] 手动编辑后的文件不会被旧提案覆盖。
-- [ ] 章节状态由用户独立确认。
-- [ ] Ledger 更新只在 accepted 或 final 后提出。
-- [ ] Ledger 更新有第二次独立差异和确认。
-- [ ] Ledger 失败不破坏已接受章节，并保留 pending。
-- [ ] G5 Manifest 与 Review Report 可重复校验。
-- [ ] 证据和日志不含 API Key。
-- [ ] 完整质量命令通过。
+- [x] NG-501～NG-507 均有产品验收记录。
+- [x] Context Manifest 对全部来源、排除、截断、预算和哈希可解释。
+- [x] 用户可修改所有非必需上下文选择。
+- [x] Reader Mental Model 可见、可编辑并进入请求哈希。
+- [x] Provider 调用前本地执行 96 KiB 上限。
+- [x] DeepSeek 与 OpenAI 走统一 Proposal 状态机。
+- [x] 取消、截断、错误和 source-stale 均证明零项目写入。
+- [x] 连续性检查不会静默调用第二次 AI。
+- [x] blocking 不能被忽略并写入。
+- [x] 章节创建和修订都有准确差异预览。
+- [x] 用户确认前没有章节写入。
+- [x] 写入具备校验、哈希冻结、原子替换与恢复。
+- [x] 手动编辑后的文件不会被旧提案覆盖。
+- [x] 章节状态由用户独立确认。
+- [x] Ledger 更新只在 accepted 或 final 后提出。
+- [x] Ledger 更新有第二次独立差异和确认。
+- [x] Ledger 失败不破坏已接受章节，并保留 pending。
+- [x] G5 Manifest 与 Review Report 可重复校验。
+- [x] 证据和日志不含 API Key。
+- [x] 完整质量命令通过。
+- [x] 产品负责人明确批准 G5 并授权关闭 Sprint 5。
 
 ### 20.2 G5 非阻断信息项
 
@@ -817,6 +922,21 @@ accepted 和 final 状态变更都需要独立差异预览和确认。
 - cancellation-and-recovery-report.json
 - 脱敏截图或录像
 - 可选 live-smoke-report.json
+
+### 20.4 Review Gate 技术结论（2026-08-27）
+
+- NG-501～NG-507 的产品验收记录已齐全。
+- G5 阻断项已全部具备本地、确定性、可重放证据；完整 `pnpm quality` 已重新执行并以退出码 0 通过。
+- 质量门覆盖 27 个前端测试文件/149 项测试、77 项 Workflow 测试、95 项 App Core 测试（另 4 项按设计忽略）、33 项 Tauri 测试、Sprint 1～4/G4 与 NG-501～NG-507 E2E，以及 Debug/Release 构建和桌面 Smoke。
+- Live Smoke 未获授权，继续记录为 `not-authorized`、非阻断、零 Provider 请求和零项目写入。
+- G5 Manifest 状态为 `review-complete-product-approval-pending`；技术评审结论为 **PASS，建议产品批准 G5**。
+- 本技术结论不代替产品批准；只有产品负责人明确批准 G5 后，Sprint 5 才能关闭。
+
+### 20.5 G5 产品批准与 Sprint 5 关闭记录（2026-08-27）
+
+产品负责人明确回复“批准 G5，关闭 Sprint 5，创建 Sprint 6 Story Packet”。G5 最后一项产品批准条件由此闭环，Sprint 5 正式关闭，并授权创建 Sprint 6 Story Packet。20.4 中的 Manifest 状态与技术结论保留为批准前生成的历史证据，不重写其生成时间、内容或 SHA-256。
+
+本次授权不自动接受 S6-Q001～Q007，不通过 Sprint 6 Story Packet Review Gate，不授权开始 NG-601，也不授权真实 Live Smoke。
 
 ## 21. 待确认决策
 
@@ -935,5 +1055,5 @@ Review Gate 当前结论：**已通过（2026-08-26）**。
 - G4 已于 2026-08-26 获得产品批准。
 - Sprint 4 已关闭。
 - Sprint 5 Story Packet 已创建。
-- Sprint 5 Review Gate 已通过；NG-501 已完成技术实现并通过全量质量门，等待产品验收。
-- 下一步是产品负责人审查并验收 NG-501；只有明确批准后才可开始 NG-502，NG-502～NG-507 当前均未授权。
+- Sprint 5 Review Gate 已通过；NG-501～NG-507 均已获产品验收；G5 已于 2026-08-27 获得产品批准。
+- Sprint 5 已关闭；Sprint 6 Story Packet 已创建并等待 Review Gate，NG-601 尚未授权。

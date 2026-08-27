@@ -1,6 +1,6 @@
 # NovelGainker Sprint 3 Story Packet
 
-> 状态：NG-301～NG-306 已获产品验收；G3 已通过并关闭 Sprint 3；Sprint 4 Story Packet 已创建，NG-401 尚未授权
+> 状态：NG-301～NG-306 已获产品验收；G3 已由产品负责人批准，Sprint 3 已关闭
 > 日期：2026-08-24  
 > BMAD 数据包：execution-packet  
 > Sprint：3——安全提案循环  

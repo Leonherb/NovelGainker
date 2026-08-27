@@ -551,7 +551,7 @@ mod tests {
         let proposal = build_canon_proposal(input(CanonFileOperationKind::Create)).unwrap();
         assert_eq!(
             proposal.metadata().proposal_hash,
-            "1453f5902b069906c292f814e8892123d61427538b2ef70b23f430635fc1de0e"
+            "58345aec93c045f77264d2a056b9b4c2150da7fab1e359b09785f7f54d483f29"
         );
         let original_hash = proposal.metadata().proposal_hash.clone();
         for mutate in [

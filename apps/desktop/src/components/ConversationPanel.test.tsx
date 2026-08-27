@@ -166,7 +166,7 @@ describe("ConversationPanel", () => {
         description:
           "在本地审查章节上下文来源、预算、截断与哈希；当前只开放 Context Manifest 构建。",
         mode: "interactive-write" as const,
-        executionAvailable: false as const,
+        executionAvailable: true as const,
         routable: false as const,
       },
     ] as const,
@@ -246,7 +246,7 @@ describe("ConversationPanel", () => {
   });
 
   workflowMocks.load.mockResolvedValue(WORKFLOW_REGISTRY);
-  it("shows five routable workflows plus read-only Storytelling and routes offline project creation", async () => {
+  it("shows five routable workflows plus non-routable Storytelling and routes offline project creation", async () => {
     const user = userEvent.setup();
     const onProjectCreateRequested = vi.fn();
     render(

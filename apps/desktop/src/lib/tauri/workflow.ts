@@ -65,7 +65,7 @@ export type StorytellingWorkflowCatalogEntry = {
   displayName: string;
   description: string;
   mode: "interactive-write";
-  executionAvailable: false;
+  executionAvailable: true;
   routable: false;
 };
 
@@ -185,7 +185,7 @@ export function parseWorkflowCatalogEntry(value: unknown): WorkflowCatalogEntry 
     value.id === STORYTELLING_WORKFLOW_ID &&
     value.version === 1 &&
     value.mode === "interactive-write" &&
-    value.executionAvailable === false &&
+    value.executionAvailable === true &&
     value.routable === false
   ) {
     return value as StorytellingWorkflowCatalogEntry;

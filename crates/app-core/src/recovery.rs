@@ -68,6 +68,8 @@ enum RecoveryOperation {
     Create,
     #[default]
     Replace,
+    ChapterCreate,
+    ChapterReplace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +85,8 @@ struct RecoveryJournal {
     source_hash: String,
     replacement_hash: String,
     temporary_file_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backup_file_id: Option<String>,
 }
 
 pub struct RecoveryTransaction {
@@ -122,6 +126,7 @@ impl RecoveryStore {
             source_hash,
             replacement_hash,
             temporary_file_id,
+            None,
         )
     }
 
@@ -139,9 +144,50 @@ impl RecoveryStore {
             "absent",
             replacement_hash,
             temporary_file_id,
+            None,
         )
     }
 
+    pub fn begin_chapter_create_transaction(
+        &self,
+        handle: &ProjectHandle,
+        relative_path: &str,
+        replacement_hash: &str,
+        temporary_file_id: &str,
+    ) -> Result<RecoveryTransaction, AppError> {
+        self.begin_transaction_inner(
+            handle,
+            relative_path,
+            RecoveryOperation::ChapterCreate,
+            "absent",
+            replacement_hash,
+            temporary_file_id,
+            None,
+        )
+    }
+
+    pub fn begin_chapter_replace_transaction(
+        &self,
+        handle: &ProjectHandle,
+        relative_path: &str,
+        source_hash: &str,
+        replacement_hash: &str,
+        temporary_file_id: &str,
+        backup_file_id: &str,
+    ) -> Result<RecoveryTransaction, AppError> {
+        validate_hash(source_hash)?;
+        self.begin_transaction_inner(
+            handle,
+            relative_path,
+            RecoveryOperation::ChapterReplace,
+            source_hash,
+            replacement_hash,
+            temporary_file_id,
+            Some(backup_file_id),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn begin_transaction_inner(
         &self,
         handle: &ProjectHandle,
@@ -150,10 +196,14 @@ impl RecoveryStore {
         source_hash: &str,
         replacement_hash: &str,
         temporary_file_id: &str,
+        backup_file_id: Option<&str>,
     ) -> Result<RecoveryTransaction, AppError> {
         validate_writable_relative_path(relative_path)?;
         validate_hash(replacement_hash)?;
         validate_temporary_file_id(relative_path, temporary_file_id)?;
+        if let Some(backup_file_id) = backup_file_id {
+            validate_backup_file_id(relative_path, backup_file_id)?;
+        }
         validate_uuid(handle.project_id())?;
         let transaction_id = Uuid::new_v4().to_string();
         let project_directory = self.ensure_project_directory(handle.project_id())?;
@@ -168,6 +218,7 @@ impl RecoveryStore {
             source_hash: source_hash.to_owned(),
             replacement_hash: replacement_hash.to_owned(),
             temporary_file_id: temporary_file_id.to_owned(),
+            backup_file_id: backup_file_id.map(ToOwned::to_owned),
         };
         write_new_journal(&journal_path, &journal)?;
         Ok(RecoveryTransaction {
@@ -308,6 +359,41 @@ impl RecoveryStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => return RecoveryDecision::Required,
         };
+        let backup = journal
+            .backup_file_id
+            .as_ref()
+            .map(|file_id| parent.join(file_id));
+        let backup_hash = match backup.as_deref() {
+            Some(path) => match fs::symlink_metadata(path) {
+                Ok(value) if value.is_file() && !is_link_or_reparse(&value) => {
+                    match read_bounded(path, MAX_EDITABLE_FILE_BYTES) {
+                        Ok(bytes) => Some(sha256_hex(&bytes)),
+                        Err(_) => return RecoveryDecision::Required,
+                    }
+                }
+                Ok(_) => return RecoveryDecision::Required,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => return RecoveryDecision::Required,
+            },
+            None => None,
+        };
+
+        if matches!(
+            journal.operation,
+            RecoveryOperation::ChapterCreate | RecoveryOperation::ChapterReplace
+        ) {
+            return recover_chapter_journal(
+                journal_path,
+                project_directory,
+                &journal,
+                &target,
+                &temporary,
+                backup.as_deref(),
+                target_hash.as_deref(),
+                temporary_hash.as_deref(),
+                backup_hash.as_deref(),
+            );
+        }
 
         let (can_finish_commit, can_finish_rollback) = match journal.operation {
             RecoveryOperation::Replace => (
@@ -334,6 +420,9 @@ impl RecoveryStore {
                         .is_none_or(|hash| hash == journal.replacement_hash)
                     && journal.stage != RecoveryStage::Committed,
             ),
+            RecoveryOperation::ChapterCreate | RecoveryOperation::ChapterReplace => {
+                unreachable!("chapter recovery is handled above")
+            }
         };
         if !can_finish_commit && !can_finish_rollback {
             return RecoveryDecision::Required;
@@ -351,8 +440,16 @@ impl RecoveryStore {
 }
 
 impl RecoveryTransaction {
+    pub fn transaction_id(&self) -> &str {
+        &self.journal.transaction_id
+    }
+
     pub fn temporary_file_id(&self) -> &str {
         &self.journal.temporary_file_id
+    }
+
+    pub fn backup_file_id(&self) -> Option<&str> {
+        self.journal.backup_file_id.as_deref()
     }
 
     pub fn mark_temporary_synced(&mut self) -> Result<(), AppError> {
@@ -373,6 +470,33 @@ impl RecoveryTransaction {
         }
     }
 
+    pub fn commit_chapter(mut self, target: &Path) -> Result<(), AppError> {
+        if !matches!(
+            self.journal.operation,
+            RecoveryOperation::ChapterCreate | RecoveryOperation::ChapterReplace
+        ) {
+            return Err(AppError::project_recovery_required());
+        }
+        self.update_stage(RecoveryStage::Committed)?;
+        if let Some(backup_file_id) = self.journal.backup_file_id.as_deref() {
+            let parent = target
+                .parent()
+                .ok_or_else(AppError::project_recovery_required)?;
+            let backup = parent.join(backup_file_id);
+            remove_verified_auxiliary(
+                &backup,
+                parent,
+                backup_file_id,
+                self.journal.source_hash.as_str(),
+            )?;
+        }
+        remove_verified_journal(
+            &self.journal_path,
+            self.journal_path.parent().unwrap_or(&self.store.root),
+            &self.journal.transaction_id,
+        )
+    }
+
     pub fn abort_best_effort(self) {
         let _ = remove_verified_journal(
             &self.journal_path,
@@ -391,6 +515,158 @@ impl RecoveryTransaction {
 enum RecoveryDecision {
     Recovered,
     Required,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recover_chapter_journal(
+    journal_path: &Path,
+    project_directory: &Path,
+    journal: &RecoveryJournal,
+    target: &Path,
+    temporary: &Path,
+    backup: Option<&Path>,
+    target_hash: Option<&str>,
+    temporary_hash: Option<&str>,
+    backup_hash: Option<&str>,
+) -> RecoveryDecision {
+    if temporary_hash.is_some_and(|hash| hash != journal.replacement_hash) {
+        return RecoveryDecision::Required;
+    }
+    match journal.operation {
+        RecoveryOperation::ChapterCreate => {
+            if backup.is_some() || backup_hash.is_some() {
+                return RecoveryDecision::Required;
+            }
+            match journal.stage {
+                RecoveryStage::Committed => {
+                    if target_hash != Some(journal.replacement_hash.as_str()) {
+                        return RecoveryDecision::Required;
+                    }
+                }
+                RecoveryStage::Prepared | RecoveryStage::TemporarySynced => {
+                    if target_hash.is_some() {
+                        return RecoveryDecision::Required;
+                    }
+                }
+                RecoveryStage::Replacing => match target_hash {
+                    None => {}
+                    Some(hash) if hash == journal.replacement_hash => {
+                        if remove_verified_target(target, &journal.relative_path).is_err() {
+                            return RecoveryDecision::Required;
+                        }
+                    }
+                    Some(_) => return RecoveryDecision::Required,
+                },
+            }
+        }
+        RecoveryOperation::ChapterReplace => {
+            if backup_hash.is_some_and(|hash| hash != journal.source_hash) {
+                return RecoveryDecision::Required;
+            }
+            match journal.stage {
+                RecoveryStage::Committed => {
+                    if target_hash != Some(journal.replacement_hash.as_str()) {
+                        return RecoveryDecision::Required;
+                    }
+                }
+                RecoveryStage::Prepared | RecoveryStage::TemporarySynced => {
+                    if target_hash != Some(journal.source_hash.as_str()) {
+                        return RecoveryDecision::Required;
+                    }
+                }
+                RecoveryStage::Replacing => match target_hash {
+                    Some(hash) if hash == journal.source_hash => {}
+                    Some(hash) if hash == journal.replacement_hash => {
+                        let Some(backup_path) = backup else {
+                            return RecoveryDecision::Required;
+                        };
+                        if backup_hash != Some(journal.source_hash.as_str())
+                            || replace_state_file(backup_path, target).is_err()
+                        {
+                            return RecoveryDecision::Required;
+                        }
+                        let restored = match read_bounded(target, MAX_EDITABLE_FILE_BYTES) {
+                            Ok(bytes) => sha256_hex(&bytes),
+                            Err(_) => return RecoveryDecision::Required,
+                        };
+                        if restored != journal.source_hash {
+                            return RecoveryDecision::Required;
+                        }
+                    }
+                    _ => return RecoveryDecision::Required,
+                },
+            }
+        }
+        RecoveryOperation::Create | RecoveryOperation::Replace => {
+            return RecoveryDecision::Required
+        }
+    }
+
+    if temporary.exists()
+        && remove_verified_auxiliary(
+            temporary,
+            temporary.parent().unwrap_or(project_directory),
+            &journal.temporary_file_id,
+            &journal.replacement_hash,
+        )
+        .is_err()
+    {
+        return RecoveryDecision::Required;
+    }
+    if let (Some(backup), Some(backup_file_id)) = (backup, journal.backup_file_id.as_deref()) {
+        if backup.exists()
+            && remove_verified_auxiliary(
+                backup,
+                backup.parent().unwrap_or(project_directory),
+                backup_file_id,
+                &journal.source_hash,
+            )
+            .is_err()
+        {
+            return RecoveryDecision::Required;
+        }
+    }
+    if remove_verified_journal(journal_path, project_directory, &journal.transaction_id).is_err() {
+        return RecoveryDecision::Required;
+    }
+    RecoveryDecision::Recovered
+}
+
+fn remove_verified_target(target: &Path, relative_path: &str) -> Result<(), AppError> {
+    if target.file_name() != Path::new(relative_path).file_name() {
+        return Err(AppError::project_recovery_required());
+    }
+    let metadata =
+        fs::symlink_metadata(target).map_err(|_| AppError::project_recovery_required())?;
+    if !metadata.is_file() || is_link_or_reparse(&metadata) {
+        return Err(AppError::project_recovery_required());
+    }
+    fs::remove_file(target).map_err(|_| AppError::project_recovery_required())
+}
+
+fn remove_verified_auxiliary(
+    path: &Path,
+    parent: &Path,
+    expected_file_id: &str,
+    expected_hash: &str,
+) -> Result<(), AppError> {
+    if path.parent() != Some(parent)
+        || path.file_name().and_then(|value| value.to_str()) != Some(expected_file_id)
+    {
+        return Err(AppError::project_recovery_required());
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !is_link_or_reparse(&metadata) => {
+            let bytes = read_bounded(path, MAX_EDITABLE_FILE_BYTES)?;
+            if sha256_hex(&bytes) != expected_hash {
+                return Err(AppError::project_recovery_required());
+            }
+            fs::remove_file(path).map_err(|_| AppError::project_recovery_required())
+        }
+        Ok(_) => Err(AppError::project_recovery_required()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(AppError::project_recovery_required()),
+    }
 }
 
 fn ensure_child_directory(parent: &Path, name: &str) -> Result<PathBuf, AppError> {
@@ -424,12 +700,34 @@ fn validate_journal(journal: &RecoveryJournal, handle: &ProjectHandle) -> Result
     validate_uuid(&journal.project_id)?;
     validate_writable_relative_path(&journal.relative_path)?;
     match journal.operation {
-        RecoveryOperation::Replace => validate_hash(&journal.source_hash)?,
-        RecoveryOperation::Create if journal.source_hash == "absent" => {}
-        RecoveryOperation::Create => return Err(AppError::project_recovery_required()),
+        RecoveryOperation::Replace | RecoveryOperation::ChapterReplace => {
+            validate_hash(&journal.source_hash)?
+        }
+        RecoveryOperation::Create | RecoveryOperation::ChapterCreate
+            if journal.source_hash == "absent" => {}
+        RecoveryOperation::Create | RecoveryOperation::ChapterCreate => {
+            return Err(AppError::project_recovery_required())
+        }
     }
     validate_hash(&journal.replacement_hash)?;
-    validate_temporary_file_id(&journal.relative_path, &journal.temporary_file_id)
+    validate_temporary_file_id(&journal.relative_path, &journal.temporary_file_id)?;
+    match journal.operation {
+        RecoveryOperation::ChapterReplace => validate_backup_file_id(
+            &journal.relative_path,
+            journal
+                .backup_file_id
+                .as_deref()
+                .ok_or_else(AppError::project_recovery_required)?,
+        ),
+        RecoveryOperation::Create
+        | RecoveryOperation::Replace
+        | RecoveryOperation::ChapterCreate
+            if journal.backup_file_id.is_none() =>
+        {
+            Ok(())
+        }
+        _ => Err(AppError::project_recovery_required()),
+    }
 }
 
 fn validate_uuid(value: &str) -> Result<(), AppError> {
@@ -466,6 +764,25 @@ fn validate_temporary_file_id(
         return Err(AppError::project_recovery_required());
     };
     if temporary_file_id.contains(['/', '\\']) || Uuid::parse_str(uuid).is_err() {
+        Err(AppError::project_recovery_required())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_backup_file_id(relative_path: &str, backup_file_id: &str) -> Result<(), AppError> {
+    let target_name = Path::new(relative_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(AppError::project_recovery_required)?;
+    let prefix = format!(".{target_name}.novelgainker-");
+    let Some(uuid) = backup_file_id
+        .strip_prefix(&prefix)
+        .and_then(|value| value.strip_suffix(".bak"))
+    else {
+        return Err(AppError::project_recovery_required());
+    };
+    if backup_file_id.contains(['/', '\\']) || Uuid::parse_str(uuid).is_err() {
         Err(AppError::project_recovery_required())
     } else {
         Ok(())
@@ -859,6 +1176,70 @@ mod tests {
         let strict_report = project.store.recover_project(&project.handle);
         assert_eq!(strict_report.status, RecoveryStatus::Required);
         assert_eq!(strict_report.required_transactions, 1);
+    }
+
+    #[test]
+    fn ng_505_restart_restores_original_chapter_before_transaction_commit() {
+        let project = TestRecoveryProject::new("chapter-restore");
+        let target = project.target("003.md");
+        let old_body = b"old chapter body";
+        let new_body = b"new chapter body";
+        fs::write(&target, old_body).unwrap();
+        let temporary_id = TestRecoveryProject::temporary_id("003.md");
+        let backup_id = format!(".003.md.novelgainker-{}.bak", Uuid::new_v4());
+        let temporary = target.parent().unwrap().join(&temporary_id);
+        let backup = target.parent().unwrap().join(&backup_id);
+        let mut transaction = project
+            .store
+            .begin_chapter_replace_transaction(
+                &project.handle,
+                "chapters/003.md",
+                &sha256_hex(old_body),
+                &sha256_hex(new_body),
+                &temporary_id,
+                &backup_id,
+            )
+            .unwrap();
+        fs::write(&temporary, new_body).unwrap();
+        transaction.mark_temporary_synced().unwrap();
+        fs::hard_link(&target, &backup).unwrap();
+        transaction.mark_replacing().unwrap();
+        super::replace_state_file(&temporary, &target).unwrap();
+        drop(transaction);
+
+        let recovered = project.store.recover_project(&project.handle);
+        assert_eq!(recovered.status, RecoveryStatus::Recovered);
+        assert_eq!(fs::read(&target).unwrap(), old_body);
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn ng_505_restart_removes_an_uncommitted_created_chapter() {
+        let project = TestRecoveryProject::new("chapter-create-rollback");
+        let target = project.target("003.md");
+        let new_body = b"new chapter body";
+        let temporary_id = TestRecoveryProject::temporary_id("003.md");
+        let temporary = target.parent().unwrap().join(&temporary_id);
+        let mut transaction = project
+            .store
+            .begin_chapter_create_transaction(
+                &project.handle,
+                "chapters/003.md",
+                &sha256_hex(new_body),
+                &temporary_id,
+            )
+            .unwrap();
+        fs::write(&temporary, new_body).unwrap();
+        transaction.mark_temporary_synced().unwrap();
+        transaction.mark_replacing().unwrap();
+        fs::hard_link(&temporary, &target).unwrap();
+        drop(transaction);
+
+        let recovered = project.store.recover_project(&project.handle);
+        assert_eq!(recovered.status, RecoveryStatus::Recovered);
+        assert!(!target.exists());
+        assert!(!temporary.exists());
     }
 
     #[cfg(windows)]

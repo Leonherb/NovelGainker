@@ -46,6 +46,14 @@ pnpm e2e:ng407
 
 该命令只使用隔离合成项目和 Loopback Provider，生成脱敏 `target/g4-evidence/security-report.json` 与 `target/g4-evidence/tauri-g4-window.png`；不读取真实 Key、真实手稿或启动 Sprint 5 工作流。
 
+NG-507/G5 的双 Provider Storytelling 状态机、章节/Ledger 事务、取消/恢复、Canary 与真实窗口证据可独立运行：
+
+~~~powershell
+pnpm e2e:ng507
+~~~
+
+该命令只使用隔离合成项目和 DeepSeek/OpenAI Loopback Provider，生成脱敏 `target/g5-evidence/`；默认不读取真实 Key、真实手稿或执行 Live Smoke。G5 已获产品批准并关闭 Sprint 5。Sprint 6 目前只有 Story Packet，NG-601 未授权，因此尚无 Sprint 6 测试入口。
+
 修改质量门本身后，额外运行：
 
 ~~~powershell

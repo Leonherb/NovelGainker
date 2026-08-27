@@ -1,6 +1,6 @@
 # NovelGainker 第一版 Sprint Plan
 
-> 状态：Sprint 5 Story Packet Review Gate 已通过；NG-501 Context Builder v2 已完成技术实现并通过全量质量门，等待产品验收；NG-502 尚未授权
+> 状态：G5 已获产品批准，Sprint 5 已关闭；Sprint 6 Story Packet 已创建，等待 S6-Q001～Q007 与 Review Gate，NG-601 尚未授权
 > 日期：2026-08-24  
 > BMAD 数据包：`execution-packet`  
 > 上游架构：[architecture.zh-CN.md](./architecture.zh-CN.md)（已批准）
@@ -422,4 +422,4 @@ Story 完成必须满足：
 - 只为 Sprint 0 编写首批 Story Packet；
 - 当前目标是 Windows 内部测试包，不处理安装器、签名、公开分发或自动更新。
 
-首批 [Sprint 0 Story Packet](./stories/sprint-0-story-packet.zh-CN.md) 只覆盖 NG-001～NG-005；Sprint 0 已通过 G0，Sprint 1 已通过 G1 并关闭；[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) 已完成 NG-201～NG-207 并通过 G2，G2 Live Waiver 已按 S2-Q004 记录；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306 并通过 G3；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭。当前 [Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) Review Gate 已通过；NG-501 Context Builder v2 已完成技术实现并通过全量质量门，等待产品验收；NG-502 尚未授权。SP-Q002 不阻塞开发，只有在需要承诺日期、分配多人任务或确定单次 Sprint 容量时才必须确认。
+首批 [Sprint 0 Story Packet](./stories/sprint-0-story-packet.zh-CN.md) 只覆盖 NG-001～NG-005；Sprint 0 已通过 G0，Sprint 1 已通过 G1 并关闭；[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) 已完成 NG-201～NG-207 并通过 G2，G2 Live Waiver 已按 S2-Q004 记录；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306、通过 G3 并关闭；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭；[Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) 已完成 NG-501～NG-507、通过 G5 并关闭。当前 [Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 已获准创建，等待 S6-Q001～Q007 与 Story Packet Review Gate；NG-601 尚未授权。SP-Q002 不阻塞开发，只有在需要承诺日期、分配多人任务或确定单次 Sprint 容量时才必须确认。

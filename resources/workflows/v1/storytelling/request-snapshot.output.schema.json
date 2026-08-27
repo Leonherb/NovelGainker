@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.novelgainker.local/workflows/story-context-request-snapshot.v1.json",
+  "title": "StoryContextRequestSnapshotV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "budget",
+    "createdAt",
+    "manifest",
+    "readerMentalModel",
+    "readerModelHash",
+    "requestHash",
+    "snapshotVersion",
+    "sourceReview"
+  ],
+  "properties": {
+    "budget": { "type": "object" },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "manifest": { "type": "object" },
+    "readerMentalModel": { "type": "object" },
+    "readerModelHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "requestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "snapshotVersion": { "type": "integer", "const": 1 },
+    "sourceReview": { "type": "object" }
+  }
+}
