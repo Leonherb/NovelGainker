@@ -1,13 +1,14 @@
 use crate::credential_vault::ProviderId;
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client as BlockingClient, Response as BlockingResponse};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
-use reqwest::{redirect, StatusCode, Url};
+use reqwest::{redirect, Client as AsyncClient, Response as AsyncResponse, StatusCode, Url};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
 
 pub const PROVIDER_PRESET_VERSION: u16 = 1;
 pub const MAX_MESSAGE_COUNT: usize = 64;
@@ -586,18 +587,45 @@ impl ProviderError {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
+    signal: watch::Sender<bool>,
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        let (signal, _) = watch::channel(false);
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            signal,
+        }
+    }
 }
 
 impl CancellationToken {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
+        self.signal.send_replace(true);
     }
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        let mut receiver = self.signal.subscribe();
+        loop {
+            if *receiver.borrow() {
+                return;
+            }
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
     }
 }
 
@@ -955,7 +983,8 @@ fn map_finish_reason(reason: &str) -> FinishReason {
 }
 
 pub struct ProviderHttpClient {
-    client: Client,
+    blocking_client: BlockingClient,
+    async_client: AsyncClient,
     #[cfg(test)]
     test_endpoint: Option<(ProviderId, String)>,
 }
@@ -964,7 +993,14 @@ impl ProviderHttpClient {
     pub fn production() -> Result<Self, ProviderError> {
         validate_preset(&DEEPSEEK_PRESET)?;
         validate_preset(&OPENAI_PRESET)?;
-        let client = Client::builder()
+        let blocking_client = BlockingClient::builder()
+            .redirect(redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECONDS))
+            .timeout(Duration::from_secs(DEEPSEEK_PRESET.timeout_seconds))
+            .user_agent("NovelGainker/0.1")
+            .build()
+            .map_err(|_| ProviderError::unreachable())?;
+        let async_client = AsyncClient::builder()
             .redirect(redirect::Policy::none())
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECONDS))
             .timeout(Duration::from_secs(DEEPSEEK_PRESET.timeout_seconds))
@@ -972,7 +1008,8 @@ impl ProviderHttpClient {
             .build()
             .map_err(|_| ProviderError::unreachable())?;
         Ok(Self {
-            client,
+            blocking_client,
+            async_client,
             #[cfg(test)]
             test_endpoint: None,
         })
@@ -987,7 +1024,14 @@ impl ProviderHttpClient {
         {
             return Err(ProviderError::invalid_request());
         }
-        let client = Client::builder()
+        let blocking_client = BlockingClient::builder()
+            .redirect(redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_millis(TEST_REQUEST_TIMEOUT_MILLIS))
+            .no_proxy()
+            .build()
+            .map_err(|_| ProviderError::unreachable())?;
+        let async_client = AsyncClient::builder()
             .redirect(redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_millis(TEST_REQUEST_TIMEOUT_MILLIS))
@@ -995,7 +1039,8 @@ impl ProviderHttpClient {
             .build()
             .map_err(|_| ProviderError::unreachable())?;
         Ok(Self {
-            client,
+            blocking_client,
+            async_client,
             test_endpoint: Some((provider, endpoint)),
         })
     }
@@ -1058,6 +1103,55 @@ impl ProviderHttpClient {
                     }
                     last_error = error;
                     sleep_retry(attempt, None);
+                }
+            }
+        }
+        Err(last_error)
+    }
+
+    pub async fn complete_cancellable(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        request: &NormalizedRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<NormalizedResponse, ProviderError> {
+        request.validate()?;
+        let adapter = adapter(provider);
+        let body = serde_json::to_vec(&adapter.completion_body(request))
+            .map_err(|_| ProviderError::protocol())?;
+        let mut last_error = ProviderError::unreachable();
+        for attempt in 0..=MAX_RETRIES {
+            if cancellation.is_cancelled() {
+                return Err(ProviderError::cancelled());
+            }
+            let response = tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
+                response = self.send_async(provider, key, &body, "application/json") => response,
+            };
+            if cancellation.is_cancelled() {
+                return Err(ProviderError::cancelled());
+            }
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    return parse_bounded_completion_cancellable(response, adapter, cancellation)
+                        .await;
+                }
+                Ok(response) => {
+                    let retry_after = bounded_retry_after(response.headers());
+                    let error = map_http_status(response.status());
+                    if !error.retryable || attempt == MAX_RETRIES {
+                        return Err(error);
+                    }
+                    last_error = error;
+                    sleep_retry_cancellable(attempt, retry_after, cancellation).await?;
+                }
+                Err(error) => {
+                    if !error.retryable || attempt == MAX_RETRIES {
+                        return Err(error);
+                    }
+                    last_error = error;
+                    sleep_retry_cancellable(attempt, None, cancellation).await?;
                 }
             }
         }
@@ -1128,7 +1222,7 @@ impl ProviderHttpClient {
         key: &[u8],
         body: &[u8],
         accept: &'static str,
-    ) -> Result<Response, ProviderError> {
+    ) -> Result<BlockingResponse, ProviderError> {
         let endpoint = self.endpoint(provider)?;
         let mut authorization = Vec::with_capacity(key.len() + 7);
         authorization.extend_from_slice(b"Bearer ");
@@ -1143,11 +1237,41 @@ impl ProviderHttpClient {
         headers.insert(AUTHORIZATION, authorization_value);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT, HeaderValue::from_static(accept));
-        self.client
+        self.blocking_client
             .post(endpoint)
             .headers(headers)
             .body(body.to_vec())
             .send()
+            .map_err(|error| map_reqwest_error(&error))
+    }
+
+    async fn send_async(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        body: &[u8],
+        accept: &'static str,
+    ) -> Result<AsyncResponse, ProviderError> {
+        let endpoint = self.endpoint(provider)?;
+        let mut authorization = Vec::with_capacity(key.len() + 7);
+        authorization.extend_from_slice(b"Bearer ");
+        authorization.extend_from_slice(key);
+        let authorization_result = HeaderValue::from_bytes(&authorization);
+        wipe(&mut authorization);
+        let mut authorization_value =
+            authorization_result.map_err(|_| ProviderError::invalid_request())?;
+        authorization_value.set_sensitive(true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, authorization_value);
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT, HeaderValue::from_static(accept));
+        self.async_client
+            .post(endpoint)
+            .headers(headers)
+            .body(body.to_vec())
+            .send()
+            .await
             .map_err(|error| map_reqwest_error(&error))
     }
 }
@@ -1174,7 +1298,7 @@ fn validate_preset(preset: &ProviderPreset) -> Result<(), ProviderError> {
 }
 
 fn parse_bounded_completion(
-    mut response: Response,
+    mut response: BlockingResponse,
     adapter: &dyn ProviderAdapter,
 ) -> Result<NormalizedResponse, ProviderError> {
     let bytes = read_bounded(&mut response)?;
@@ -1182,7 +1306,23 @@ fn parse_bounded_completion(
     adapter.parse_completion(&value)
 }
 
-fn read_bounded(response: &mut Response) -> Result<Vec<u8>, ProviderError> {
+async fn parse_bounded_completion_cancellable(
+    response: AsyncResponse,
+    adapter: &dyn ProviderAdapter,
+    cancellation: &CancellationToken,
+) -> Result<NormalizedResponse, ProviderError> {
+    let bytes = read_bounded_cancellable(response, cancellation).await?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::cancelled());
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| ProviderError::protocol())?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::cancelled());
+    }
+    adapter.parse_completion(&value)
+}
+
+fn read_bounded(response: &mut BlockingResponse) -> Result<Vec<u8>, ProviderError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
@@ -1207,8 +1347,39 @@ fn read_bounded(response: &mut Response) -> Result<Vec<u8>, ProviderError> {
     Ok(bytes)
 }
 
+async fn read_bounded_cancellable(
+    mut response: AsyncResponse,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, ProviderError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        return Err(ProviderError::response_too_large());
+    }
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = tokio::select! {
+            _ = cancellation.cancelled() => {
+                wipe(&mut bytes);
+                return Err(ProviderError::cancelled());
+            }
+            chunk = response.chunk() => chunk.map_err(|error| map_reqwest_error(&error))?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            wipe(&mut bytes);
+            return Err(ProviderError::response_too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 fn consume_stream(
-    mut response: Response,
+    mut response: BlockingResponse,
     provider: ProviderId,
     adapter: &dyn ProviderAdapter,
     cancellation: &CancellationToken,
@@ -1455,6 +1626,18 @@ fn bounded_retry_after(headers: &HeaderMap) -> Option<Duration> {
 fn sleep_retry(attempt: u8, retry_after: Option<Duration>) {
     let fallback = Duration::from_millis(20 * u64::from(attempt + 1));
     std::thread::sleep(retry_after.unwrap_or(fallback));
+}
+
+async fn sleep_retry_cancellable(
+    attempt: u8,
+    retry_after: Option<Duration>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    let fallback = Duration::from_millis(20 * u64::from(attempt + 1));
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(ProviderError::cancelled()),
+        _ = tokio::time::sleep(retry_after.unwrap_or(fallback)) => Ok(()),
+    }
 }
 
 fn wipe(bytes: &mut [u8]) {

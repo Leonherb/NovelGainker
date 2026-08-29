@@ -88,6 +88,17 @@ impl ResponsePlan {
         }
     }
 
+    fn json_chunks(chunks: Vec<Vec<u8>>, between_chunks: Duration) -> Self {
+        Self {
+            status: "200 OK",
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            chunks,
+            declared_length: None,
+            before_headers: Duration::ZERO,
+            between_chunks,
+        }
+    }
+
     fn with_header(mut self, name: &str, value: String) -> Self {
         self.headers.push((name.to_owned(), value));
         self
@@ -971,6 +982,85 @@ fn common_cancellation_contract_stops_both_streams_after_the_first_delta() {
 
         assert_eq!(result.err().unwrap(), ProviderError::cancelled());
         assert_eq!(delta_count, 1);
+    }
+}
+
+#[test]
+fn ga2_r005_cancellable_completion_aborts_before_response_headers_without_retrying() {
+    for provider in ProviderId::ALL {
+        let server = MockServer::spawn(vec![ResponsePlan::json(
+            "200 OK",
+            success_body(provider, true),
+        )
+        .delayed(Duration::from_millis(TEST_REQUEST_TIMEOUT_MILLIS + 75))]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let cancellation = CancellationToken::default();
+        let cancel_signal = cancellation.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            cancel_signal.cancel();
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let started = Instant::now();
+        let result = runtime.block_on(client.complete_cancellable(
+            provider,
+            b"ga2-r005-cancel-canary",
+            &request(),
+            &cancellation,
+        ));
+        let elapsed = started.elapsed();
+        cancel_thread.join().unwrap();
+        let recorded = server.finish();
+
+        assert!(matches!(result, Err(error) if error == ProviderError::cancelled()));
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "cancellation took {elapsed:?} for {provider:?}"
+        );
+        assert_eq!(recorded.len(), 1, "cancelled requests must never retry");
+    }
+}
+
+#[test]
+fn ga2_r005_cancellable_completion_aborts_while_response_body_is_stalled() {
+    for provider in ProviderId::ALL {
+        let body = success_body(provider, true);
+        let split = body.len() / 2;
+        let server = MockServer::spawn(vec![ResponsePlan::json_chunks(
+            vec![body[..split].to_vec(), body[split..].to_vec()],
+            Duration::from_millis(TEST_REQUEST_TIMEOUT_MILLIS + 75),
+        )]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let cancellation = CancellationToken::default();
+        let cancel_signal = cancellation.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            cancel_signal.cancel();
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let started = Instant::now();
+        let result = runtime.block_on(client.complete_cancellable(
+            provider,
+            b"ga2-r005-body-cancel-canary",
+            &request(),
+            &cancellation,
+        ));
+        let elapsed = started.elapsed();
+        cancel_thread.join().unwrap();
+        let recorded = server.finish();
+
+        assert!(matches!(result, Err(error) if error == ProviderError::cancelled()));
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "body cancellation took {elapsed:?} for {provider:?}"
+        );
+        assert_eq!(recorded.len(), 1, "cancelled body reads must never retry");
     }
 }
 

@@ -99,7 +99,7 @@ pnpm quality
 
 AM0 证据写入 `target/qa/ng-a001`～`ng-a004`；AM1 Story 证据写入 `target/qa/ng-a101`～`ng-a104`，GA1 Manifest 与 Review Report 写入 `target/qa/ga1/`。GA1 默认入口不读取真实 Key、不访问外部网络，并保留技术提交时的 `ga1Approved=false` 与 Agent 项目写入数为 0。
 
-AM2 Story 证据写入 `target/qa/ng-a201`～`ng-a206`，GA2 Manifest 与 Review Report 写入 `target/qa/ga2/`。AM2 Runtime Contract Set Hash 为 `812b8d9208f46e70899ebb64681878f13a5a9854baf64f7afabd473e4dd64fa7`；默认入口断言 9 项 Skill、4 读 + 2 写工具、App State v10、60 条 Tauri Command、Windows 当前用户 DPAPI Undo、内存 Pending 正文、旧入口不可达、孤儿旧 Workflow `Generating` 状态只在无真实 Provider Run 时安全终止、`RecoveryRequired` 作为保留但不阻塞项目/Provider 且不展示的惰性兼容历史、拒绝输入可恢复、真实运行态继续受保护、JSON-object Provider 获得精确 `AgentActionPayloadV1` 形状、异步失败在 Session Reload 后仍可见且恢复原输入、`ga2Approved=false` 与 `sprint6Authorized=false`。GA2 revision 5 还把当前 Release 路径、大小与 SHA-256 写入 Manifest，以便产品验收排除旧构建。这些入口只使用 Loopback/合成项目和脱敏证据，不读取真实 Key，不访问外部网络。
+AM2 Story 证据写入 `target/qa/ng-a201`～`ng-a206`，GA2 Manifest 与 Review Report 写入 `target/qa/ga2/`。AM2 Runtime Contract Set Hash 为 `812b8d9208f46e70899ebb64681878f13a5a9854baf64f7afabd473e4dd64fa7`；默认入口断言 9 项 Skill、4 读 + 2 写工具、App State v10、60 条 Tauri Command、Windows 当前用户 DPAPI Undo、内存 Pending 正文、旧入口不可达、孤儿旧 Workflow `Generating` 状态只在无真实 Provider Run 时安全终止、`RecoveryRequired` 作为保留但不阻塞项目/Provider 且不展示的惰性兼容历史、拒绝输入可恢复、真实运行态继续受保护、JSON-object Provider 获得精确 `AgentActionPayloadV1` 形状、异步失败在 Session Reload 后仍可见且恢复原输入、Agent Provider 完成请求可在响应头与正文阶段中断且取消后零重试/零新工具/零新写入、窗口关闭复用取消信号、`ga2Approved=false` 与 `sprint6Authorized=false`。GA2 revision 6 还把当前 Release 路径、大小与 SHA-256 写入 Manifest，以便产品验收排除旧构建。这些入口只使用 Loopback/合成项目和脱敏证据，不读取真实 Key，不访问外部网络。
 
 真实 Provider Live Smoke 与默认质量门分离。只有产品负责人已在应用中把两家 Key 保存到固定 Windows Credential Manager 目标并明确授权时，才运行 `pnpm smoke:provider:live`；该入口拒绝命令行参数，删除疑似 Secret 环境变量，只输出 Provider、Preset、固定模型、结果和时间。若缺少 Key、额度或网络，G2 必须明确记录一次 Live Waiver。
 
@@ -154,7 +154,7 @@ Sprint 4 已实现离线 `project-create`、严格 `setting-create`、`material-
 
 Sprint 5 至 NG-507 已加入不可路由、可在工作台直接执行的 `novelgainker.storytelling`：NG-501/502 构建只读 Context Manifest、固定预算与六字段 Reader Mental Model；NG-503 通过当前 DeepSeek/OpenAI Provider 生成进程内严格 Chapter Proposal；NG-504 执行零 Provider、零写入的确定性连续性检查；NG-505 允许在完整 Diff 与一次显式确认后事务性创建或修订一个章节文件。NG-506 再把正文 Patch、状态迁移和 Ledger 更新冻结为三个独立确认/事务面，只允许 `draft → accepted → final`；接受时把绑定当前章节身份与 Proposal/Manifest/Request Hash 的可见 `Ledger Pending` 写入章节 Markdown，Ledger 只从该记录向固定 `materials/000.story-ledger.md` 生成独立 Diff。Ledger 失败不回滚章节，“稍后处理”不创建后台重试。NG-507 证明两家 Provider 共用完整状态机与错误边界，并补齐 unknown 作者确认：unknown 保留原分类，只有当前会话内精确确认后才可进入 Diff，blocking 仍不可绕过。Workflow Registry 当前为 `executionAvailable=true`、`routable=false`，Router 范围不变。
 
-G5、GA0 与 GA1 已获产品批准。AM2 的 NG-A201～NG-A206 已完成：统一 Timeline 现有 9 项 Skill、4 个读取工具、2 个受治理写工具、三种授权策略、八文件原子事务、Hash 绑定确认、DPAPI Undo 与 App State v10；GA2-R001～GA2-R004、revision 5 完整质量门和 GA2 技术提交通过。当前 `ga2Approved=false`，正在等待独立产品验收。[Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 已暂停，NG-601、analytical-review 写入迁移、图片导入和 EPUB 新运行时能力均未授权。
+G5、GA0 与 GA1 已获产品批准。AM2 的 NG-A201～NG-A206 已完成：统一 Timeline 现有 9 项 Skill、4 个读取工具、2 个受治理写工具、三种授权策略、八文件原子事务、Hash 绑定确认、DPAPI Undo 与 App State v10；GA2-R001～GA2-R005、revision 6 完整质量门和 GA2 技术提交通过。当前 `ga2Approved=false`，正在等待独立产品验收。[Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 已暂停，NG-601、analytical-review 写入迁移、图片导入和 EPUB 新运行时能力均未授权。
 
 - 真实 API Key 只能由 Rust CredentialVault 写入 Windows Credential Manager；项目、SQLite、前端持久状态、日志和错误不得保存 Key 或其掩码、尾号、Hash、指纹；
 - 项目访问必须绑定 Rust 持有的不透明会话与项目相对路径；
@@ -163,7 +163,7 @@ G5、GA0 与 GA1 已获产品批准。AM2 的 NG-A201～NG-A206 已完成：统�
 - 不启用 Shell、Process 或 Opener 权限；
 - 不打包 Python 或 Novelist 插件内容。
 
-`pnpm quality:boundaries` 会检查六十条精确 Command/Capability、Key-only UI 与提交前 Buffer 清理、受控文件路径、原子保存、单 Writer、脱敏恢复、只读搜索、App State Schema v10 及 v1～v9 历史迁移、固定 Windows CredentialVault/Provider Core、无 Key 读回、运行中切换锁、同 Provider Retry、NG-207 Leak/E2E 与独立 Live Smoke 边界、NG-301～NG-407 的固定 Workflow Pack、Manager、Context、结构化输出、Router、Proposal/Apply/Recovery、双 Loopback/Golden、G3/G4 Canary 与证据脱敏边界，以及 NG-501～NG-507 的 31 项固定 Pack 资源、Storytelling 事务、连续性与 Ledger 回归；还检查 AM0 四组不可变契约、AM1 的统一 Timeline/只读 Agent 基线，以及 AM2 的 9 项 Skill、4 读 + 2 写工具、严格 Patch、三种策略、八文件原子事务、来源/结果/事务 Hash、内存 Pending、DPAPI Undo、旧入口不可达、孤儿旧状态精确对账、`RecoveryRequired` 惰性兼容与 UI 隐藏、真实运行态保护、精确 Agent Action JSON 指引、异步失败保留、稳定错误代码、原输入恢复和 GA2 脱敏证据。边界门继续禁止浏览器网络、自动 Fallback、Stronghold Guest、Shell、Process、任意路径、完整聊天持久化、自动跨 Provider 请求和未授权 Live Smoke。
+`pnpm quality:boundaries` 会检查六十条精确 Command/Capability、Key-only UI 与提交前 Buffer 清理、受控文件路径、原子保存、单 Writer、脱敏恢复、只读搜索、App State Schema v10 及 v1～v9 历史迁移、固定 Windows CredentialVault/Provider Core、无 Key 读回、运行中切换锁、同 Provider Retry、NG-207 Leak/E2E 与独立 Live Smoke 边界、NG-301～NG-407 的固定 Workflow Pack、Manager、Context、结构化输出、Router、Proposal/Apply/Recovery、双 Loopback/Golden、G3/G4 Canary 与证据脱敏边界，以及 NG-501～NG-507 的 31 项固定 Pack 资源、Storytelling 事务、连续性与 Ledger 回归；还检查 AM0 四组不可变契约、AM1 的统一 Timeline/只读 Agent 基线，以及 AM2 的 9 项 Skill、4 读 + 2 写工具、严格 Patch、三种策略、八文件原子事务、来源/结果/事务 Hash、内存 Pending、DPAPI Undo、旧入口不可达、孤儿旧状态精确对账、`RecoveryRequired` 惰性兼容与 UI 隐藏、真实运行态保护、精确 Agent Action JSON 指引、异步失败保留、稳定错误代码、原输入恢复、可中断 Agent Provider HTTP、取消安全点、可访问取消反馈、窗口关闭取消钩子和 GA2 脱敏证据。边界门继续禁止浏览器网络、自动 Fallback、Stronghold Guest、Shell、Process、任意路径、完整聊天持久化、自动跨 Provider 请求和未授权 Live Smoke。
 
 ## Tauri Command 登记规则
 

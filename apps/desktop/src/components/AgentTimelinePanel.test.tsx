@@ -193,6 +193,44 @@ describe("AM1 unified Agent timeline", () => {
     await waitFor(() => expect(onRunActiveChange).toHaveBeenLastCalledWith(false));
   });
 
+  it("acknowledges cancellation immediately and releases the Turn on the terminal event", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(agentApi, "requestAgentTurnStart").mockResolvedValue(STARTED);
+    vi.spyOn(agentApi, "requestAgentTurnCancel").mockResolvedValue({ cancelRequested: true });
+    render(
+      <AgentTimelinePanel
+        desktopRuntime
+        projectSessionId="desktop-session"
+        providerState={CONNECTED}
+      />,
+    );
+    await screen.findByText("项目会话已绑定");
+    await user.type(screen.getByLabelText("Agent 会话输入"), "分析一段很长的故事背景");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("button", { name: "取消 Turn" });
+    await user.click(screen.getByRole("button", { name: "取消 Turn" }));
+
+    await waitFor(() =>
+      expect(agentApi.requestAgentTurnCancel).toHaveBeenCalledWith(STARTED.runId),
+    );
+    expect(screen.getByRole("button", { name: "正在取消…" })).toBeDisabled();
+    expect(
+      screen.getByText("正在中断 Provider 请求；不会再启动新的工具或写入"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      emit?.({
+        ...STARTED,
+        sequence: 2,
+        kind: "cancelled",
+        projectWriteCount: 0,
+      });
+    });
+    expect(await screen.findByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "正在取消…" })).not.toBeInTheDocument();
+    expect(screen.getByText("已取消")).toBeInTheDocument();
+  });
+
   it("keeps unsent input when a real workflow is still running", async () => {
     const user = userEvent.setup();
     vi.spyOn(agentApi, "requestAgentTurnStart").mockRejectedValue({

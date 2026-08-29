@@ -1168,6 +1168,8 @@ const presentAppErrorSource = read("apps/desktop/src/errors/present-app-error.ts
 const presentAppErrorTestSource = read("apps/desktop/src/errors/present-app-error.test.ts");
 const projectWorkspaceTestSource = read("apps/desktop/src/components/ProjectWorkspace.test.tsx");
 const zhCnSource = read("apps/desktop/src/i18n/zh-CN.ts");
+const desktopLibSource = read("apps/desktop/src-tauri/src/lib.rs");
+const providerCoreMockTests = read("crates/app-core/src/provider_core_mock_tests.rs");
 const workflowCommandSource = read("apps/desktop/src-tauri/src/workflow_commands.rs");
 const productionWorkflowCommandSource = workflowCommandSource.split("#[cfg(test)]")[0];
 assert(
@@ -1320,6 +1322,34 @@ assert(
     zhCnSource.includes('failedInputRestored: "Turn 失败 · 输入已恢复"') &&
     zhCnSource.includes('title: "Agent 操作格式未通过校验"'),
   "GA2-R004 must expose the exact Agent Action JSON shape to JSON-object Providers, retain asynchronous failure diagnostics and input through session reload, and keep the error accessible",
+);
+assert(
+  providerCore.includes("pub async fn complete_cancellable") &&
+    providerCore.includes("read_bounded_cancellable") &&
+    providerCore.includes("sleep_retry_cancellable") &&
+    providerCore.includes("tokio::select!") &&
+    providerCoreMockTests.includes(
+      "ga2_r005_cancellable_completion_aborts_before_response_headers_without_retrying",
+    ) &&
+    providerCoreMockTests.includes(
+      "ga2_r005_cancellable_completion_aborts_while_response_body_is_stalled",
+    ) &&
+    providerCoreMockTests.includes("cancelled requests must never retry") &&
+    productionAgentCommandSource.includes(
+      "tauri::async_runtime::block_on(client.complete_cancellable",
+    ) &&
+    (productionAgentCommandSource.match(/if context\.cancellation\.is_cancelled\(\)/gu) ?? [])
+      .length >= 8 &&
+    agentTimelineSource.includes('setTurnState("cancelling")') &&
+    agentTimelineSource.includes("ZH_CN.agent.cancellingStatus") &&
+    agentTimelineSource.includes('aria-live="polite"') &&
+    agentTimelineTestSource.includes(
+      "acknowledges cancellation immediately and releases the Turn on the terminal event",
+    ) &&
+    zhCnSource.includes('cancellingStatus: "正在中断 Provider 请求；不会再启动新的工具或写入"') &&
+    desktopLibSource.includes("tauri::WindowEvent::CloseRequested") &&
+    desktopLibSource.includes("cancel_active_provider_run"),
+  "GA2-R005 must interrupt an in-flight Agent Provider request, stop before new tools or writes, expose cancellation feedback, and reuse the signal on window close",
 );
 assert(
   productionWorkflowCommandSource.includes("pub fn workflow_run_prepare") &&
@@ -1713,7 +1743,6 @@ const sprint5ContinuityE2E = read("scripts/sprint5-continuity-e2e.mjs");
 const sprint5ChapterApplyE2E = read("scripts/sprint5-chapter-apply-e2e.mjs");
 const sprint5LifecycleLedgerE2E = read("scripts/sprint5-lifecycle-ledger-e2e.mjs");
 const sprint5G5StorytellingE2E = read("scripts/sprint5-g5-storytelling-e2e.mjs");
-const providerCoreMockTests = read("crates/app-core/src/provider_core_mock_tests.rs");
 const smokeDesktop = read("scripts/smoke-desktop.ps1");
 const qualitySource = read("scripts/quality.mjs");
 const rootPackage = read("package.json");

@@ -34,5 +34,5 @@ NovelGainker is a Windows-first, local-first Tauri 2 desktop application for Chi
 - Current architecture: `docs/architecture.zh-CN.md`
 - Approved Agent architecture review: `docs/architecture-unified-novelist-agent-review.zh-CN.md`
 - Delivery sequence and gates: `docs/sprint-plan.zh-CN.md`
-- Current review packet: `docs/stories/agent-migration-am2-story-packet.zh-CN.md`. GA1 is product-approved; NG-A201 through NG-A206 and the GA2 revision 5 technical submission have passed with GA2-R001 through GA2-R004 resolved. Stop at GA2: product approval, Sprint 6, real Provider Live Smoke, and any broader runtime work remain unauthorized.
+- Current review packet: `docs/stories/agent-migration-am2-story-packet.zh-CN.md`. GA1 is product-approved; NG-A201 through NG-A206 and the GA2 revision 6 technical submission have passed with GA2-R001 through GA2-R005 resolved. Stop at GA2: product approval, Sprint 6, real Provider Live Smoke, and any broader runtime work remain unauthorized.
 - Build, test, and command-registration guide: `docs/development.md`

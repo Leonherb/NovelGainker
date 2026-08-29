@@ -744,6 +744,7 @@ export const ZH_CN = {
     cancelled: "已取消",
     cancel: "取消 Turn",
     cancelling: "正在取消…",
+    cancellingStatus: "正在中断 Provider 请求；不会再启动新的工具或写入",
     clear: "清除会话",
     clearTitle: "清除本项目的 Agent 会话？",
     clearBody:

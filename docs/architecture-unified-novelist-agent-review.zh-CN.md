@@ -277,7 +277,7 @@ Review Gate 结论：**通过**（2026-08-28）。产品负责人批准统一 No
 - [x] AM1 建成统一 Timeline、9 项 Skill、4 个只读工具、App State v9、56 条 Command 与双 Provider 严格 Action Loop；该阶段端到端 Agent 项目写入数为 0。
 - [x] 产品负责人统一授权 AM2-Q001～Q007、AM2 Story Packet Review Gate、NG-A201～NG-A206、完整质量门与 GA2 技术提交。
 - [x] AM2 已实现 4 读 + 2 写工具、三种授权策略、八文件原子事务、Hash 绑定确认、DPAPI Undo、App State v10 与 60 条 Command；旧产品入口不可达。
-- [x] GA2 技术提交已生成且无技术阻断；`ga2Approved=false`、`sprint6Authorized=false`，当前停止并等待 GA2 独立产品验收。
+- [x] GA2 revision 6 技术提交已生成，GA2-R001～GA2-R005 均关闭且无技术阻断；`ga2Approved=false`、`sprint6Authorized=false`，当前停止并等待 GA2 独立产品验收。
 
 批准记录：产品负责人明确回复“AR-Q001～AR-Q006 按建议接受，批准统一 Novelist Agent 会话方向；暂停 Sprint 6，授权修订 ADR 与 Sprint Plan，不授权开始运行时代码实现。”
 

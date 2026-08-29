@@ -1,6 +1,6 @@
 # NovelGainker Agent Migration AM2 Story Packet
 
-> 状态：NG-A201～NG-A206 已通过；GA2-R001～GA2-R004 已修复，revision 5 完整质量门与 GA2 技术提交均已通过，等待 GA2 独立产品验收
+> 状态：NG-A201～NG-A206 已通过；GA2-R001～GA2-R005 已修复，revision 6 完整质量门与 GA2 技术提交均已通过，等待 GA2 独立产品验收
 >
 > 日期：2026-08-29
 >
@@ -149,6 +149,7 @@ AM2 完成后必须具备：
 - [x] Agent 启动会在没有真实 Provider Run 时精确终止并落盘迁移遗留的孤儿 `Generating` 状态；拒绝发送时保留输入、移除未发送气泡并展示可访问恢复提示。
 - [x] 启动后已归类为 `RecoveryRequired` 的旧状态保留为惰性兼容历史，但不阻塞项目/Provider、不在当前 UI 展示、不自动放弃且不写 Canon。
 - [x] JSON-object Provider 获得精确 `AgentActionPayloadV1` 字段形状；异步失败在 Session Reload 后仍可见，保留稳定错误代码并恢复原输入。
+- [x] Agent Provider 完成请求在响应头与正文阶段均可中断；取消后不重试、不启动新工具或写入，Timeline 和窗口关闭复用同一取消状态。
 - [x] 真实 Provider Live Smoke 未获额外授权时保持不执行且非阻断。
 
 ## 6. Exit Gate GA2
@@ -166,14 +167,15 @@ AM2 完成后必须具备：
 - 生产路径注册 9 项 Skill、4 个读取工具与 2 个受治理写工具；三种授权策略、八文件事务上限、Hash 绑定 Pending 和 DPAPI Undo 已接入统一 Timeline。
 - App State 已迁移到 v10；Tauri 登记 60 条命令，其中 9 条为 Agent IPC。Pending 写入正文只存在内存，完整聊天正文仍不持久化。
 - DeepSeek/OpenAI Loopback 共用严格 Agent Action 与写事务路径；旧 Conversation/Router/表单入口不可达，历史后端只为 G3～G5 回归保留。
-- 完整 `pnpm quality` 通过，包括 29 个前端测试文件/160 项测试、Workspace Rust 测试、严格 Clippy、AM0/AM1/AM2 契约锁、G1～G5 回归、Debug/Release 构建与桌面 Smoke。
+- 完整 `pnpm quality` 通过，包括 29 个前端测试文件/161 项测试、Workspace Rust 测试、严格 Clippy、AM0/AM1/AM2 契约锁、G1～G5 回归、Debug/Release 构建与桌面 Smoke。
 - 真实 Provider Live Smoke 未执行；未读取真实凭据，也未发起真实网络请求。
 - Story 证据：`target/qa/ng-a201/`～`target/qa/ng-a206/`；GA2 Manifest：`target/qa/ga2/ga2-manifest.json`；Review Report：`target/qa/ga2/ga2-review-report.md`。
 - GA2-R001 已在技术提交 revision 2 中关闭：迁移遗留的孤儿 Workflow `Generating` 状态不再永久阻断 Agent；真实 Provider Run 仍拥有更高优先级且不会被回收；失败输入保持可重试。
 - GA2-R002 已在技术提交 revision 3 中消除原项目恢复死锁；其“只放行原项目并显式结束”的交互方案由后续 GA2-R003 产品决策取代。
 - GA2-R003 按产品负责人明确授权实施：迁移遗留的 `RecoveryRequired` 作为惰性兼容历史保留，不自动删除、不写 Canon，但不再阻塞项目或 Provider 操作，也不在启动页和统一 Agent 中展示；真实运行态继续阻塞。
 - GA2-R004 已在技术提交 revision 5 中关闭：JSON-object Provider 获得精确 `AgentActionPayloadV1` 字段形状；异步失败在 Session Reload 后仍显示可操作错误与稳定错误代码，提交内容恢复到输入框，非法输出执行零工具、零写入。
-- 修订版 Release：`target/release/novelgainker-desktop.exe`，19,520,000 bytes，构建时间 `2026-08-29 20:35:18 +08:00`，SHA-256 `6f6a2f3e24811f0332aef6b8ca8c91237a2a116d295514be694c56a7a923f090`。
+- GA2-R005 已在技术提交 revision 6 中关闭：Provider 完成请求在等待响应头和读取正文时都可由取消信号直接中断，取消不触发重试；响应、只读工具、写入预览和事务提交前均有取消安全点，Timeline 立即显示可访问反馈，窗口关闭沿用同一信号。
+- 修订版 Release：`target/release/novelgainker-desktop.exe`，19,578,368 bytes，构建时间 `2026-08-29 21:59:41 +08:00`，SHA-256 `6416ae8dc383561f10265e7f46929b2f8bbe52dcc575bd4756d4f338ec2e9096`。
 - GA2 技术审查结论为通过，但 `ga2Approved=false`、`sprint6Authorized=false`；产品批准是独立决定。
 
 ### GA2-R001——统一 Agent 通道被迁移前 Workflow 状态阻断
@@ -210,6 +212,15 @@ AM2 完成后必须具备：
 - 安全边界：格式无效时保持 0 工具、0 写入；未执行真实 Provider Live Smoke，也未读取凭据。
 - 回归证据：Rust `storytelling_prompt_exposes_the_exact_respond_action_shape`、React 异步失败/输入恢复测试、App Error 子码测试、静态边界门与 NG-A206/GA2 Revision 5 Evidence。
 
+### GA2-R005——取消 Turn 后 Provider 请求与窗口仍长时间不结束
+
+- 产品验收报告：统一 Agent 的请求长时间运行；点击“取消 Turn”后界面持续显示取消中，后台仍像在运行，退出窗口也被拖延，必须先关闭项目才能顺利退出。
+- 根因一：Agent 使用 `reqwest::blocking` 完成请求，取消令牌只在每次请求开始前检查；单次 120 秒 HTTP 等待和响应正文读取本身不可中断，重试与一次结构修复还会扩大最坏等待时间。
+- 根因二：Provider 返回到 `Respond/Complete`、只读工具、写入预览和事务提交之间缺少取消安全点，因此取消与响应完成竞争时仍可能落盘为 `completed` 或继续后续动作。
+- 后端修订：统一 Agent 切换到 Tokio 驱动的 `complete_cancellable`；等待响应头、读取正文和重试退避均用同一取消信号竞争，取消立即丢弃请求 Future 并返回稳定 `provider.cancelled`，且不会重试。Agent 在响应处理、工具启动、预览构建和 Writer/事务提交前再次检查取消；事务一旦真正开始仍保持原子完成语义。
+- 前端与退出修订：点击取消立即进入 `cancelling` 状态，以 `aria-live` 显示“不会再启动新的工具或写入”；收到终态后释放 Turn。窗口关闭原有取消钩子现在可以真正中断 Agent HTTP Future，不再等待阻塞请求自然超时。
+- 回归证据：双 Provider Loopback 测试分别覆盖响应头未返回和正文中途停滞，均验证快速取消且单请求零重试；React 覆盖即时取消反馈与终态释放；静态边界门、NG-A206 与 GA2 Revision 6 Evidence 同步校验。
+
 ## 7. Review Gate 与授权记录
 
 AM2 Story Packet Review Gate：**通过**（2026-08-28）。
@@ -225,4 +236,4 @@ AM2 Story Packet Review Gate：**通过**（2026-08-28）。
 3. 任一安全、事务、隐私或恢复阻断必须先修复，不得弱化 Gate。
 4. NG-A206 完成后提交 GA2 技术审查并停止。
 
-执行结论：NG-A201～NG-A206 已按依赖顺序完成；GA2-R001～GA2-R004 修复、完整质量门与 GA2 revision 5 技术提交均已通过。当前停止在 GA2 独立产品验收点；不推定 GA2 产品批准，不授权 Sprint 6，也不授权真实 Provider Live Smoke。
+执行结论：NG-A201～NG-A206 已按依赖顺序完成；GA2-R001～GA2-R005 修复、完整质量门与 GA2 revision 6 技术提交均已通过。当前停止在 GA2 独立产品验收点；不推定 GA2 产品批准，不授权 Sprint 6，也不授权真实 Provider Live Smoke。

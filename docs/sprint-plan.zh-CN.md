@@ -350,7 +350,7 @@ NG-A004 技术记录：已冻结三档授权策略、四级风险矩阵、21 类
 
 执行授权：产品负责人已批准 [AM2 Story Packet](./stories/agent-migration-am2-story-packet.zh-CN.md) 的推荐决策、Review Gate、NG-A201～NG-A206 顺序实施、完整质量门与 GA2 技术提交。授权止于 GA2 技术提交，不自动批准 GA2 或 Sprint 6。
 
-技术结果：NG-A201～NG-A206 已按顺序完成。当前构建使用一个统一 Agent Timeline、9 项内置 Skill、4 个读取工具、2 个受治理写工具、三种授权策略、最多八文件原子事务、Hash 绑定确认和 Windows 当前用户 DPAPI Undo；App State 为 v10，Tauri Command 为 60 条，其中 Agent IPC 为 9 条。完整聊天与 Pending 写入正文均不持久化，旧 Conversation/Router/表单入口不可达。GA2-R001 已修复孤儿 `Generating` 通道占用与失败输入丢失；GA2-R002 消除原项目恢复死锁；GA2-R003 按产品授权把遗留 `RecoveryRequired` 保留为不阻塞、不展示、不自动删除且零 Canon 写入的惰性兼容历史；GA2-R004 向 JSON-object Provider 明示精确 `AgentActionPayloadV1` 字段形状，并确保异步失败、稳定错误代码与原输入不会被 Session Reload 吞掉。revision 5 完整质量门与 GA2 技术提交均已通过，产品批准仍为独立决定。
+技术结果：NG-A201～NG-A206 已按顺序完成。当前构建使用一个统一 Agent Timeline、9 项内置 Skill、4 个读取工具、2 个受治理写工具、三种授权策略、最多八文件原子事务、Hash 绑定确认和 Windows 当前用户 DPAPI Undo；App State 为 v10，Tauri Command 为 60 条，其中 Agent IPC 为 9 条。完整聊天与 Pending 写入正文均不持久化，旧 Conversation/Router/表单入口不可达。GA2-R001 已修复孤儿 `Generating` 通道占用与失败输入丢失；GA2-R002 消除原项目恢复死锁；GA2-R003 按产品授权把遗留 `RecoveryRequired` 保留为不阻塞、不展示、不自动删除且零 Canon 写入的惰性兼容历史；GA2-R004 向 JSON-object Provider 明示精确 `AgentActionPayloadV1` 字段形状，并确保异步失败、稳定错误代码与原输入不会被 Session Reload 吞掉；GA2-R005 让统一 Agent 的 Provider 完成请求在响应头与正文阶段都可直接中断，取消后禁止新工具或写入，并让窗口关闭复用相同取消信号。revision 6 完整质量门与 GA2 技术提交均已通过，产品批准仍为独立决定。
 
 #### 候选 Stories
 

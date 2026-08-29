@@ -834,6 +834,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
             .map_err(action_error)?;
         let (payload, response_usage) =
             provider_action(&state, context, request_messages, &selected_skills)?;
+        if context.cancellation.is_cancelled() {
+            continue;
+        }
         usage = response_usage.or(usage);
         action_count = action_count.saturating_add(1);
         let action_record = AgentActionRecordV1::wrap(
@@ -857,6 +860,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
 
         match action_record.payload {
             AgentActionPayloadV1::Respond { visible_text, .. } => {
+                if context.cancellation.is_cancelled() {
+                    continue;
+                }
                 let visible = safe_visible_text(&visible_text);
                 transition_turn(
                     &mut session,
@@ -882,6 +888,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
             AgentActionPayloadV1::Complete {
                 visible_summary, ..
             } => {
+                if context.cancellation.is_cancelled() {
+                    continue;
+                }
                 let visible = safe_visible_text(&visible_summary);
                 transition_turn(
                     &mut session,
@@ -921,6 +930,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                 budget.record_tool_batch(&requests).map_err(action_error)?;
                 latest_tool_messages.clear();
                 if has_write {
+                    if context.cancellation.is_cancelled() {
+                        continue;
+                    }
                     if turn.write_transaction_started {
                         return Err(AppError::agent_contract("agent-runtime.write-turn-reuse"));
                     }
@@ -934,6 +946,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                         .map_err(contract_error)?;
                     }
                     for request in &requests {
+                        if context.cancellation.is_cancelled() {
+                            break;
+                        }
                         for path in request.arguments.referenced_paths() {
                             budget
                                 .record_project_file(path.clone(), true)
@@ -958,6 +973,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                             },
                         )?;
                     }
+                    if context.cancellation.is_cancelled() {
+                        continue;
+                    }
                     let pending_id = opaque_uuid("pnd_");
                     let prepared = prepare_write_batch(
                         &context.handle,
@@ -966,6 +984,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                         &context.skill_ids,
                         parse_policy(&context.session_record.policy)?,
                     )?;
+                    if context.cancellation.is_cancelled() {
+                        continue;
+                    }
                     sequence = sequence.saturating_add(1);
                     emit_agent_event(
                         app,
@@ -976,7 +997,13 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                         },
                     )?;
                     if prepared.preview.authorization_effect == AuthorizationEffectV1::Execute {
+                        if context.cancellation.is_cancelled() {
+                            continue;
+                        }
                         let _ = session_writer_handle(&state, &context.project_session_id)?;
+                        if context.cancellation.is_cancelled() {
+                            continue;
+                        }
                         transition_turn(
                             &mut session,
                             &mut turn,
@@ -1066,6 +1093,9 @@ fn run_agent_turn(app: &tauri::AppHandle, context: &AgentWorkerContext) -> Resul
                     .map_err(contract_error)?;
                 }
                 for request in requests {
+                    if context.cancellation.is_cancelled() {
+                        break;
+                    }
                     for path in request.arguments.referenced_paths() {
                         budget
                             .record_project_file(path.clone(), false)
@@ -1189,9 +1219,13 @@ fn complete_agent_request(
         .credential_vault
         .with_secret(context.provider_id, &mut |key| {
             response = Some(
-                client
-                    .complete(context.provider_id, key, &request, &context.cancellation)
-                    .map_err(AppError::from_provider_error)?,
+                tauri::async_runtime::block_on(client.complete_cancellable(
+                    context.provider_id,
+                    key,
+                    &request,
+                    &context.cancellation,
+                ))
+                .map_err(AppError::from_provider_error)?,
             );
             Ok(())
         })?;

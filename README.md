@@ -2,7 +2,7 @@
 
 桌面优先、Local-first、可切换 AI Provider 的简体中文小说创作工具。
 
-当前进度：G5、GA0 与 GA1 已获产品批准；AM2 的 NG-A201～NG-A206 与 GA2-R001～GA2-R004 均已完成，revision 5 完整质量门与 GA2 技术提交通过。当前停在 GA2 独立产品验收点；`ga2Approved=false`，Sprint 6 与真实 Provider Live Smoke 未授权。
+当前进度：G5、GA0 与 GA1 已获产品批准；AM2 的 NG-A201～NG-A206 与 GA2-R001～GA2-R005 均已完成，revision 6 完整质量门与 GA2 技术提交通过。当前停在 GA2 独立产品验收点；`ga2Approved=false`，Sprint 6 与真实 Provider Live Smoke 未授权。
 
 ## 开发入口
 

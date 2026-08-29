@@ -58,6 +58,9 @@ async function buildEvidence(story) {
     text("apps/desktop/src/App.tsx"),
     text("apps/desktop/src-tauri/src/command_manifest.rs"),
     text("apps/desktop/src/components/ProjectWorkspace.test.tsx"),
+    text("crates/app-core/src/provider_core.rs"),
+    text("crates/app-core/src/provider_core_mock_tests.rs"),
+    text("apps/desktop/src-tauri/src/lib.rs"),
   ]);
   const [
     write,
@@ -73,6 +76,9 @@ async function buildEvidence(story) {
     app,
     manifest,
     projectWorkspaceTest,
+    providerCore,
+    providerCoreMockTests,
+    desktopLib,
   ] = sources;
   if (story === "ng-a201") {
     requireAll(
@@ -330,6 +336,53 @@ async function buildEvidence(story) {
     ],
     "NG-A206 project-entry current-run copy",
   );
+  requireAll(
+    providerCore,
+    [
+      "pub async fn complete_cancellable",
+      "read_bounded_cancellable",
+      "sleep_retry_cancellable",
+      "tokio::select!",
+    ],
+    "GA2-R005 cancellable Provider core",
+  );
+  requireAll(
+    commands,
+    [
+      "tauri::async_runtime::block_on(client.complete_cancellable",
+      "if context.cancellation.is_cancelled()",
+      "prepare_write_batch",
+      "commit_prepared_agent_write",
+    ],
+    "GA2-R005 Agent cancellation checkpoints",
+  );
+  requireAll(
+    providerCoreMockTests,
+    [
+      "ga2_r005_cancellable_completion_aborts_before_response_headers_without_retrying",
+      "ga2_r005_cancellable_completion_aborts_while_response_body_is_stalled",
+      'assert_eq!(recorded.len(), 1, "cancelled requests must never retry")',
+    ],
+    "GA2-R005 Provider regression",
+  );
+  requireAll(
+    panel,
+    ['setTurnState("cancelling")', "ZH_CN.agent.cancellingStatus", 'aria-live="polite"'],
+    "GA2-R005 cancellation feedback",
+  );
+  requireAll(
+    panelTest,
+    [
+      "acknowledges cancellation immediately and releases the Turn on the terminal event",
+      "正在中断 Provider 请求；不会再启动新的工具或写入",
+    ],
+    "GA2-R005 cancellation UI regression",
+  );
+  requireAll(
+    desktopLib,
+    ["tauri::WindowEvent::CloseRequested", "cancel_active_provider_run"],
+    "GA2-R005 window-close cancellation hook",
+  );
   return {
     story: "NG-A206",
     status: "technical_pass",
@@ -346,6 +399,10 @@ async function buildEvidence(story) {
     exactAgentActionShapePrompted: true,
     asynchronousFailureVisible: true,
     failedInputRestored: true,
+    cancellableProviderRequest: true,
+    cancellationStopsBeforeNewToolsOrWrites: true,
+    cancellationFeedbackAccessible: true,
+    windowCloseCancelsActiveRun: true,
     sprint6Authorized: false,
     liveProviderSmokeExecuted: false,
   };
@@ -376,6 +433,9 @@ async function writeStoryEvidence(story) {
     "apps/desktop/src/lib/tauri/agent.ts",
     "crates/app-core/src/project.rs",
     "apps/desktop/src/components/ProjectWorkspace.test.tsx",
+    "crates/app-core/src/provider_core.rs",
+    "crates/app-core/src/provider_core_mock_tests.rs",
+    "apps/desktop/src-tauri/src/lib.rs",
   ];
   const sourceHashes = {};
   for (const file of sourceFiles)
@@ -428,6 +488,13 @@ async function writeGa2Evidence() {
           evidence.failedInputRestored === true,
         "GA2-R004 Action guidance and failure recovery missing",
       );
+      assert(
+        evidence.cancellableProviderRequest === true &&
+          evidence.cancellationStopsBeforeNewToolsOrWrites === true &&
+          evidence.cancellationFeedbackAccessible === true &&
+          evidence.windowCloseCancelsActiveRun === true,
+        "GA2-R005 cancellation and window-close fix missing",
+      );
     }
     stories.push({
       story: evidence.story,
@@ -443,9 +510,9 @@ async function writeGa2Evidence() {
     gate: "GA2",
     generatedAt,
     gateStatus: "technical_review_passed_product_approval_required",
-    submissionRevision: 5,
+    submissionRevision: 6,
     ga2Approved: false,
-    acceptanceBlockersResolved: ["GA2-R001", "GA2-R002", "GA2-R003", "GA2-R004"],
+    acceptanceBlockersResolved: ["GA2-R001", "GA2-R002", "GA2-R003", "GA2-R004", "GA2-R005"],
     stories,
     am1RuntimeContractHash: EXPECTED_AM1_HASH,
     am2RuntimeContractHash: runtime.contractSetHash,
@@ -472,6 +539,10 @@ async function writeGa2Evidence() {
     exactAgentActionShapePrompted: true,
     asynchronousFailureVisible: true,
     failedInputRestored: true,
+    cancellableProviderRequest: true,
+    cancellationStopsBeforeNewToolsOrWrites: true,
+    cancellationFeedbackAccessible: true,
+    windowCloseCancelsActiveRun: true,
     releaseExecutablePath,
     releaseExecutableBytes: releaseExecutable.length,
     releaseExecutableSha256: sha256(releaseExecutable),
@@ -484,7 +555,7 @@ async function writeGa2Evidence() {
   await writeFile(path.join(root, "ga2-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(
     path.join(root, "ga2-review-report.md"),
-    `# GA2 Technical Review Report\n\n- Status: technical review passed; independent product approval required\n- Submission revision: 5 (GA2-R001 through GA2-R004 acceptance blockers resolved)\n- Generated: ${generatedAt}\n- Stories: NG-A201 through NG-A206 technical pass\n- Runtime contract: \`${runtime.contractSetHash}\`\n- Runtime: nine Skills, four bounded reads, two Skill-scoped governed writes\n- Persistence: App State v10 stores bounded metadata; Pending bodies are memory-only; Undo bodies use Windows user-context DPAPI\n- Providers: DeepSeek and OpenAI share one strict Agent Action contract and never cross-fallback\n- Legacy workflow backend: retained for regression; old ConversationPanel remains unmounted\n- GA2-R001: an orphaned pre-migration Generating state is retired only when no real Provider run owns the channel; rejected Agent input is retained with an accessible current-run error path\n- GA2-R002: the original-project recovery deadlock was removed in revision 3\n- GA2-R003: the product decision supersedes visible recovery handling; a restored RecoveryRequired checkpoint remains stored as inert compatibility history, does not block project or Provider actions, never appears in the unified Agent/start page, and causes no Canon write or automatic discard\n- GA2-R004: JSON-object Providers receive the exact AgentActionPayloadV1 field shapes; asynchronous failures remain visible through session reload, preserve their stable error code, restore the submitted input, and execute zero tools or writes on invalid output\n- Release executable: \`${releaseExecutablePath}\` (${releaseExecutable.length} bytes, SHA-256 \`${sha256(releaseExecutable)}\`)\n- Live Provider smoke: not executed; no credential or network authority was inferred\n- GA2 product approval: **false**\n- Sprint 6: **not authorized**\n\nGA2 stops here. Product approval is a separate decision.\n`,
+    `# GA2 Technical Review Report\n\n- Status: technical review passed; independent product approval required\n- Submission revision: 6 (GA2-R001 through GA2-R005 acceptance blockers resolved)\n- Generated: ${generatedAt}\n- Stories: NG-A201 through NG-A206 technical pass\n- Runtime contract: \`${runtime.contractSetHash}\`\n- Runtime: nine Skills, four bounded reads, two Skill-scoped governed writes\n- Persistence: App State v10 stores bounded metadata; Pending bodies are memory-only; Undo bodies use Windows user-context DPAPI\n- Providers: DeepSeek and OpenAI share one strict Agent Action contract and never cross-fallback\n- Legacy workflow backend: retained for regression; old ConversationPanel remains unmounted\n- GA2-R001: an orphaned pre-migration Generating state is retired only when no real Provider run owns the channel; rejected Agent input is retained with an accessible current-run error path\n- GA2-R002: the original-project recovery deadlock was removed in revision 3\n- GA2-R003: the product decision supersedes visible recovery handling; a restored RecoveryRequired checkpoint remains stored as inert compatibility history, does not block project or Provider actions, never appears in the unified Agent/start page, and causes no Canon write or automatic discard\n- GA2-R004: JSON-object Providers receive the exact AgentActionPayloadV1 field shapes; asynchronous failures remain visible through session reload, preserve their stable error code, restore the submitted input, and execute zero tools or writes on invalid output\n- GA2-R005: Agent completion HTTP is directly cancellable before headers and while reading the body; cancellation does not retry, new tools and writes are blocked at safety checkpoints, the Timeline exposes an accessible cancelling status, and window close uses the same cancellation signal\n- Release executable: \`${releaseExecutablePath}\` (${releaseExecutable.length} bytes, SHA-256 \`${sha256(releaseExecutable)}\`)\n- Live Provider smoke: not executed; no credential or network authority was inferred\n- GA2 product approval: **false**\n- Sprint 6: **not authorized**\n\nGA2 stops here. Product approval is a separate decision.\n`,
   );
   console.log("[agent-am2-e2e] PASS GA2 technical submission; product approval remains false");
 }

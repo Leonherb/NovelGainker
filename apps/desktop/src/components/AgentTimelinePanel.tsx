@@ -326,12 +326,15 @@ export function AgentTimelinePanel({
 
   const cancel = async () => {
     if (!activeRun || cancelling) return;
+    const previousTurnState = turnState;
     setCancelling(true);
+    setTurnState("cancelling");
     try {
       await requestAgentTurnCancel(activeRun.runId);
     } catch (cancelError: unknown) {
       setError(asAppError(cancelError));
       setCancelling(false);
+      setTurnState(previousTurnState);
     }
   };
 
@@ -428,9 +431,11 @@ export function AgentTimelinePanel({
         ? ZH_CN.agent.providerRequired
         : inputBytes > MAX_INPUT_BYTES
           ? ZH_CN.agent.inputTooLong
-          : active || starting
-            ? ZH_CN.agent.running(turnState)
-            : ZH_CN.agent.ready;
+          : cancelling
+            ? ZH_CN.agent.cancellingStatus
+            : active || starting
+              ? ZH_CN.agent.running(turnState)
+              : ZH_CN.agent.ready;
   const presentedError = error ? presentAppError(error) : null;
 
   return (
@@ -722,7 +727,7 @@ export function AgentTimelinePanel({
           value={input}
         />
         <div className="composer-footer">
-          <span>{footer}</span>
+          <span aria-live="polite">{footer}</span>
           {active ? (
             <button
               className="send-button stop-button"
