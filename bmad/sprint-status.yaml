@@ -1,0 +1,47 @@
+project:
+  name: "NovelGainker"
+  level: 2
+
+sprint:
+  number: 6
+  start_date: "not_recorded"
+  end_date: "paused"
+  goal: "登记并消除启动链路的已确认阻塞项"
+  capacity_points: 0
+  committed_points: 0
+  status: "paused"
+
+velocity:
+  current_sprint: 0
+  rolling_average: 0
+  history: []
+
+epics:
+  - id: "EPIC-STARTUP-RELIABILITY"
+    title: "启动可靠性"
+    status: "blocked"
+
+stories:
+  - id: "STORY-STARTUP-001"
+    title: "让本机状态库故障可诊断且可安全恢复"
+    points: 5
+    status: "not_started"
+    blocker: "Sprint 6 已暂停；需要用户授权后进入实现。"
+  - id: "STORY-STARTUP-002"
+    title: "防止 Git 行尾转换破坏受锁定资源"
+    points: 3
+    status: "not_started"
+    blocker: "Sprint 6 已暂停；需要用户授权后进入实现。"
+
+burndown: []
+
+metrics:
+  total_stories: 2
+  completed_stories: 0
+  in_progress_stories: 0
+  blocked_stories: 2
+  total_points: 8
+  completed_points: 0
+  completion_percentage: 0
+
+last_updated: "2026-08-29T18:12:34Z"

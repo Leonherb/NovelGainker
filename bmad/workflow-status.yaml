@@ -1,0 +1,86 @@
+project:
+  name: "NovelGainker"
+  level: 2
+  initialized: "2026-08-29T18:12:34Z"
+  last_updated: "2026-08-29T18:12:34Z"
+
+current_phase: 1
+current_workflow: null
+baseline_note: "本状态从 2026-08-30 的启动链路审计开始追踪；既有历史工作流未验证，不标记为已完成。"
+
+phases:
+  phase_1_analysis:
+    name: "分析"
+    status: "not_started"
+    workflows:
+      product_brief:
+        status: "required"
+        completed: false
+        output_file: null
+        completed_at: null
+      research:
+        status: "optional"
+        completed: false
+        output_file: null
+        completed_at: null
+      brainstorm:
+        status: "optional"
+        completed: false
+        output_file: null
+        completed_at: null
+  phase_2_planning:
+    name: "规划"
+    status: "not_started"
+    workflows:
+      prd:
+        status: "required"
+        completed: false
+        output_file: null
+        completed_at: null
+      tech_spec:
+        status: "optional"
+        completed: false
+        output_file: null
+        completed_at: null
+      ux_design:
+        status: "recommended"
+        completed: false
+        output_file: null
+        completed_at: null
+  phase_3_solutioning:
+    name: "方案设计"
+    status: "not_started"
+    workflows:
+      architecture:
+        status: "required"
+        completed: false
+        output_file: null
+        completed_at: null
+      gate_check:
+        status: "recommended"
+        completed: false
+        passed: null
+        completed_at: null
+  phase_4_implementation:
+    name: "实现"
+    status: "paused"
+    workflows:
+      sprint_planning:
+        status: "required"
+        completed: false
+        output_file: null
+        completed_at: null
+      stories:
+        total: 2
+        completed: 0
+        in_progress: 0
+        story_list:
+          - "STORY-STARTUP-001"
+          - "STORY-STARTUP-002"
+
+metrics:
+  total_workflows: 8
+  completed_workflows: 0
+  progress_percentage: 0
+  estimated_stories: 2
+  completed_stories: 0

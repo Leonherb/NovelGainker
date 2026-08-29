@@ -1,0 +1,37 @@
+project:
+  name: "NovelGainker"
+  type: "other"
+  level: 2
+  description: "Windows 桌面小说创作与工作流应用"
+
+paths:
+  output_folder: "docs"
+  stories_folder: "docs/stories"
+  status_file: "bmad/workflow-status.yaml"
+  sprint_file: "bmad/sprint-status.yaml"
+
+language:
+  communication_language: "Chinese"
+  document_output_language: "Chinese"
+
+workflow:
+  phase_1_analysis:
+    product_brief: "required"
+    research: "optional"
+    brainstorm: "optional"
+  phase_2_planning:
+    prd: "required"
+    tech_spec: "optional"
+    ux_design: "recommended"
+  phase_3_solutioning:
+    architecture: "required"
+    gate_check: "recommended"
+  phase_4_implementation:
+    sprint_planning: "required"
+    stories: "required"
+
+metadata:
+  created: "2026-08-29T18:12:34Z"
+  bmad_version: "6.0.0"
+  last_updated: "2026-08-29T18:12:34Z"
+  baseline_note: "既有项目在本次建立 BMAD 状态；历史阶段未回填为已完成。"
