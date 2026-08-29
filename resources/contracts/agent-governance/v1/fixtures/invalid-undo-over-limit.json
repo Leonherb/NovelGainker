@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "expectedError": "agent-governance.undo-limit-exceeded",
+  "encryptedBytes": 2097153,
+  "maximumEncryptedBytes": 2097152
+}

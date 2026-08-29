@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "policies": [
+    {
+      "id": "plan_only",
+      "readSafe": "execute",
+      "writeSafe": "block",
+      "alwaysConfirm": "block",
+      "forbiddenV1": "block"
+    },
+    {
+      "id": "review_every_write",
+      "readSafe": "execute",
+      "writeSafe": "await_confirmation",
+      "alwaysConfirm": "await_confirmation",
+      "forbiddenV1": "block"
+    },
+    {
+      "id": "auto_apply_safe",
+      "readSafe": "execute",
+      "writeSafe": "execute",
+      "alwaysConfirm": "await_confirmation",
+      "forbiddenV1": "block"
+    }
+  ],
+  "riskLevels": ["read-safe", "write-safe", "always-confirm", "forbidden-v1"],
+  "registeredTools": [
+    { "id": "project.list_markdown", "risk": "read-safe" },
+    { "id": "project.read_markdown", "risk": "read-safe" },
+    { "id": "project.search_markdown", "risk": "read-safe" },
+    { "id": "project.validate_markdown", "risk": "read-safe" },
+    { "id": "project.create_markdown", "riskResolution": "target-and-mutation-sensitive" },
+    { "id": "project.patch_markdown", "riskResolution": "target-and-mutation-sensitive" }
+  ],
+  "actions": [
+    { "id": "list_managed_markdown", "risk": "read-safe" },
+    { "id": "read_managed_markdown", "risk": "read-safe" },
+    { "id": "search_managed_markdown", "risk": "read-safe" },
+    { "id": "validate_managed_markdown", "risk": "read-safe" },
+    { "id": "create_entity_markdown", "risk": "write-safe" },
+    { "id": "patch_entity_markdown", "risk": "write-safe" },
+    { "id": "create_draft_chapter", "risk": "write-safe" },
+    { "id": "replace_whole_file", "risk": "always-confirm" },
+    { "id": "replace_whole_chapter", "risk": "always-confirm" },
+    { "id": "promote_chapter_state", "risk": "always-confirm" },
+    { "id": "update_story_ledger", "risk": "always-confirm" },
+    { "id": "modify_project_rules", "risk": "always-confirm" },
+    { "id": "modify_critical_metadata", "risk": "always-confirm" },
+    { "id": "import_outside_project", "risk": "always-confirm" },
+    { "id": "publish_or_export", "risk": "always-confirm" },
+    { "id": "delete_path", "risk": "forbidden-v1" },
+    { "id": "move_path", "risk": "forbidden-v1" },
+    { "id": "rename_path", "risk": "forbidden-v1" },
+    { "id": "arbitrary_filesystem", "risk": "forbidden-v1" },
+    { "id": "system_capability", "risk": "forbidden-v1" },
+    { "id": "modify_authorization_or_skill_pack", "risk": "forbidden-v1" }
+  ],
+  "protectedObjects": [
+    "project-agent-instructions",
+    "skill-and-security-configuration",
+    "materials/000.*",
+    "chapter-state-and-whole-chapter-replacement",
+    "project-critical-metadata",
+    "outside-project-assets-and-published-output"
+  ],
+  "writeClassificationBinding": [
+    "project-session-turn",
+    "tool-request-hash",
+    "registered-tool-id",
+    "project-relative-target",
+    "validated-mutation-shape",
+    "governed-action-and-risk",
+    "classification-hash",
+    "transaction-action-plan-hash"
+  ],
+  "transactionRule": "A mixed write-safe and always-confirm turn is one atomic transaction and performs zero writes before confirmation."
+}

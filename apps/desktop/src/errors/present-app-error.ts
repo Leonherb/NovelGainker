@@ -29,6 +29,7 @@ export const APP_ERROR_CODES = {
   fileSaveFailed: "file.save_failed",
   searchInvalidQuery: "search.invalid_query",
   appStateUnavailable: "app_state.unavailable",
+  agentContract: "agent.contract",
   providerInvalidId: "provider.invalid_id",
   providerKeyInvalid: "provider.key_invalid",
   providerVaultUnavailable: "provider.vault_unavailable",
@@ -92,6 +93,7 @@ export const APP_ERROR_MESSAGE_KEYS = {
   fileSaveFailed: "errors.fileSaveFailed",
   searchInvalidQuery: "errors.searchInvalidQuery",
   appStateUnavailable: "errors.appStateUnavailable",
+  agentContract: "errors.agentContract",
   providerInvalidId: "errors.providerInvalidId",
   providerKeyInvalid: "errors.providerKeyInvalid",
   providerVaultUnavailable: "errors.providerVaultUnavailable",
@@ -135,6 +137,7 @@ export type PresentedAppError = ErrorCopy & {
 };
 
 const SAFE_DIAGNOSTIC = /^[a-zA-Z0-9._-]{1,80}$/u;
+const SAFE_AGENT_ERROR_CODE = /^agent(?:[.-][a-z0-9_]+)+$/u;
 const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
   [APP_ERROR_MESSAGE_KEYS.runtimeUnavailable]: {
     code: APP_ERROR_CODES.runtimeUnavailable,
@@ -379,6 +382,16 @@ const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
 };
 
 export function presentAppError(error: AppError): PresentedAppError {
+  if (
+    error.messageKey === APP_ERROR_MESSAGE_KEYS.agentContract &&
+    error.code.length <= 96 &&
+    SAFE_AGENT_ERROR_CODE.test(error.code)
+  ) {
+    return {
+      code: error.code,
+      ...ZH_CN.errors.agentContract,
+    };
+  }
   const known = KNOWN_ERRORS[error.messageKey];
 
   if (!known || known.code !== error.code) {

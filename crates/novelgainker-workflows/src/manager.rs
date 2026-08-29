@@ -684,6 +684,13 @@ impl WorkflowManager {
             .map(|run| run.record.state)
     }
 
+    pub fn active_record(&self) -> Option<WorkflowRunRecord> {
+        self.active_run_id
+            .as_deref()
+            .and_then(|run_id| self.runs.get(run_id))
+            .map(|run| run.record.clone())
+    }
+
     pub fn active_project_id(&self) -> Option<&str> {
         self.active_run_id
             .as_deref()

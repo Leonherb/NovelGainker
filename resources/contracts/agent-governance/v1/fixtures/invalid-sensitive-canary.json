@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "expectedError": "agent-governance.sensitive-data-forbidden",
+  "canaries": [
+    "api_key=never-persist",
+    "Authorization: Bearer never-persist",
+    "C:\\Users\\writer\\secret.md",
+    "\\\\server\\share\\draft.md",
+    "<think>hidden</think>",
+    "raw_provider_response",
+    "sk-proj-synthetic-canary-000000000000",
+    "sk-ant-synthetic-canary-000000000000"
+  ]
+}

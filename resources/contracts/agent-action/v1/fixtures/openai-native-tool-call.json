@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "skillIds": ["create-setting"],
+  "toolCalls": [
+    {
+      "id": "call_read0001",
+      "type": "function",
+      "function": {
+        "name": "project.read_markdown",
+        "arguments": "{\"path\":\"world/city.md\",\"purpose\":\"读取城市设定以回答作者问题\"}"
+      }
+    }
+  ]
+}

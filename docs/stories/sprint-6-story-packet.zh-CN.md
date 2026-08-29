@@ -1,6 +1,6 @@
 # NovelGainker Sprint 6 Story Packet
 
-> 状态：已创建，等待 S6-Q001～Q007 与 Story Packet Review Gate；NG-601 尚未授权
+> 状态：已暂停；AM2 已完成 GA2 技术提交，但 GA2 尚未获产品批准；本 Packet 仅保留暂停前规划基线，NG-601 未授权
 >
 > 日期：2026-08-27
 >
@@ -779,4 +779,4 @@ Review Gate 当前结论：**等待产品确认。**
 - DeepSeek/OpenAI 共用 Storytelling 状态机；取消写入、过期覆盖、跨 Provider 自动请求和 Canary 泄漏均为 0。
 - G5 Live Smoke 未获授权并按 S5-Q007 记录为非阻断；真实 Live Conformance 仍由 NG-703 负责。
 - Sprint 5 已正式关闭。
-- 本 Packet 已获准创建，但尚未通过 Sprint 6 Story Packet Review Gate，NG-601 尚未授权。
+- 本 Packet 已获准创建，但随后被 Agent Migration Program 暂停。AM2 已完成 GA2 技术提交；在 GA2 获独立产品批准且本 Packet 按统一 Agent/Skill 架构重写、重新送审前，NG-601 未授权。

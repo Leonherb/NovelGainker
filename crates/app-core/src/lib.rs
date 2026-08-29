@@ -1,3 +1,6 @@
+pub mod agent_runtime;
+pub mod agent_transaction;
+pub mod agent_write;
 pub mod app_state;
 pub mod canon_apply;
 pub mod coordination;
@@ -55,6 +58,7 @@ pub const APP_ERROR_FILE_INVALID_SOURCE_HASH_CODE: &str = "file.invalid_source_h
 pub const APP_ERROR_FILE_SAVE_FAILED_CODE: &str = "file.save_failed";
 pub const APP_ERROR_SEARCH_INVALID_QUERY_CODE: &str = "search.invalid_query";
 pub const APP_ERROR_APP_STATE_UNAVAILABLE_CODE: &str = "app_state.unavailable";
+pub const APP_ERROR_AGENT_CONTRACT_CODE: &str = "agent.contract";
 pub const APP_ERROR_PROVIDER_INVALID_ID_CODE: &str = "provider.invalid_id";
 pub const APP_ERROR_PROVIDER_KEY_INVALID_CODE: &str = "provider.key_invalid";
 pub const APP_ERROR_PROVIDER_VAULT_UNAVAILABLE_CODE: &str = "provider.vault_unavailable";
@@ -100,6 +104,7 @@ pub const APP_ERROR_FILE_INVALID_SOURCE_HASH_KEY: &str = "errors.fileInvalidSour
 pub const APP_ERROR_FILE_SAVE_FAILED_KEY: &str = "errors.fileSaveFailed";
 pub const APP_ERROR_SEARCH_INVALID_QUERY_KEY: &str = "errors.searchInvalidQuery";
 pub const APP_ERROR_APP_STATE_UNAVAILABLE_KEY: &str = "errors.appStateUnavailable";
+pub const APP_ERROR_AGENT_CONTRACT_KEY: &str = "errors.agentContract";
 const REDACTED_DIAGNOSTIC: &str = "diagnostic-redacted";
 pub const APP_ERROR_PROVIDER_INVALID_ID_KEY: &str = "errors.providerInvalidId";
 pub const APP_ERROR_PROVIDER_KEY_INVALID_KEY: &str = "errors.providerKeyInvalid";
@@ -354,6 +359,26 @@ impl AppError {
             APP_ERROR_APP_STATE_UNAVAILABLE_CODE,
             APP_ERROR_APP_STATE_UNAVAILABLE_KEY,
         )
+    }
+
+    pub fn agent_contract(code: &str) -> Self {
+        let stable_code = if (code.starts_with("agent-") || code.starts_with("agent."))
+            && !code.is_empty()
+            && code.len() <= 96
+            && code.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'.' | b'-' | b'_')
+            }) {
+            code.to_owned()
+        } else {
+            APP_ERROR_AGENT_CONTRACT_CODE.to_owned()
+        };
+        Self {
+            code: stable_code,
+            message_key: APP_ERROR_AGENT_CONTRACT_KEY.to_owned(),
+            diagnostic: None,
+        }
     }
 
     pub fn provider_invalid_id() -> Self {

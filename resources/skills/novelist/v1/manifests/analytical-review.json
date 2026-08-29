@@ -1,0 +1,37 @@
+{
+  "id": "analytical-review",
+  "version": 1,
+  "description": "对大纲、章节、全稿或既有修订结论进行证据化、默认只读的独立评审。",
+  "triggerSummary": "作者明确要求评审、校对、发展性编辑或回归验证时使用。",
+  "instructionResources": [
+    "instructions/analytical-review.md"
+  ],
+  "templateResources": [],
+  "referenceResources": [
+    "references/analytical-review-method.zh-CN.md"
+  ],
+  "allowedTools": [
+    "project.list_files",
+    "project.read_markdown",
+    "project.search_markdown"
+  ],
+  "readScopes": [
+    "**/*.md"
+  ],
+  "writeScopes": [],
+  "riskClass": "read-only",
+  "alwaysConfirmActions": [],
+  "contextBudget": {
+    "maxRequestBytes": 98304,
+    "maxUniqueFiles": 24,
+    "maxModifiedFiles": 0
+  },
+  "outputContract": "AgentActionPayloadV1",
+  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
+  "resourceHashes": {
+    "instructions/analytical-review.md": "cc701c95fa12680fbd644160c0451ac71e04ff1658942659ea3c72f4877ac2c0",
+    "references/analytical-review-method.zh-CN.md": "77b451615d47962c41a47809e4346dceb8bf7ba2213a73192c0e5e5775846c09"
+  },
+  "featureGate": "agent_migration_skill_runtime_v1",
+  "enabledAtRuntime": false
+}

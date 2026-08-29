@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "packId": "novelgainker.novelist-compatible",
+  "skillPackVersion": "1.0.0",
+  "featureGate": "agent_migration_skill_runtime_v1",
+  "enabledAtRuntime": false,
+  "provenanceResource": "provenance.lock.json",
+  "licenseResource": "LICENSE.upstream",
+  "attributionResource": "ATTRIBUTION.md",
+  "inventoryResource": "inventory.json",
+  "skillManifests": [
+    "manifests/create-novel-project.json",
+    "manifests/create-setting.json",
+    "manifests/create-character.json",
+    "manifests/create-material.json",
+    "manifests/create-plot.json",
+    "manifests/novel-story-telling.json",
+    "manifests/analytical-review.json",
+    "manifests/create-visual-asset.json",
+    "manifests/publish-novel.json"
+  ]
+}

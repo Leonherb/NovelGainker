@@ -1,0 +1,42 @@
+{
+  "id": "publish-novel",
+  "version": 1,
+  "description": "执行 EPUB 出版预检，并为后续受控构建与验证形成严格计划。",
+  "triggerSummary": "作者明确要求出版、导出、构建、重新生成或验证 EPUB 时使用。",
+  "instructionResources": [
+    "instructions/publish-novel.md"
+  ],
+  "templateResources": [],
+  "referenceResources": [],
+  "allowedTools": [
+    "project.get_diff",
+    "project.list_files",
+    "project.read_markdown",
+    "project.search_markdown",
+    "project.validate_markdown"
+  ],
+  "readScopes": [
+    "**/*.md",
+    "assets/**"
+  ],
+  "writeScopes": [
+    "published/*.epub"
+  ],
+  "riskClass": "high",
+  "alwaysConfirmActions": [
+    "publication.build",
+    "publication.replace"
+  ],
+  "contextBudget": {
+    "maxRequestBytes": 98304,
+    "maxUniqueFiles": 24,
+    "maxModifiedFiles": 8
+  },
+  "outputContract": "AgentActionPayloadV1",
+  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
+  "resourceHashes": {
+    "instructions/publish-novel.md": "1d5515d1fa43536dd34b14139b5d5347ff03d22d979d845abf96e041d81eabf6"
+  },
+  "featureGate": "agent_migration_skill_runtime_v1",
+  "enabledAtRuntime": false
+}

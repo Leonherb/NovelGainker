@@ -25,6 +25,15 @@ const approvedCommands = [
   "health_check",
   "app_state_load",
   "app_state_save_ui",
+  "agent_skill_registry_load",
+  "agent_session_load",
+  "agent_turn_start",
+  "agent_turn_cancel",
+  "agent_session_clear",
+  "agent_policy_set",
+  "agent_write_confirm",
+  "agent_write_reject",
+  "agent_undo_apply",
   "workflow_registry_load",
   "router_resolve_local",
   "router_run_start",
@@ -83,14 +92,14 @@ const approvedPermissions = [
 const capability = JSON.parse(read("apps/desktop/src-tauri/capabilities/default.json"));
 assert(
   JSON.stringify(capability.permissions) === JSON.stringify(approvedPermissions),
-  "NG-507 capability must contain only fifty-one app commands plus close-event listen/unlisten and window close",
+  "GA2 capability must contain only sixty approved app commands plus close-event listen/unlisten and window close",
 );
 
 const commandManifest = read("apps/desktop/src-tauri/src/command_manifest.rs");
 const manifestCommands = [...commandManifest.matchAll(/"([a-z_]+)"/gu)].map((match) => match[1]);
 assert(
   JSON.stringify(manifestCommands) === JSON.stringify(approvedCommands),
-  "NG-507 command manifest must contain only the fifty-one approved commands",
+  "GA2 command manifest must contain only the sixty approved commands",
 );
 assert(
   commandManifest.includes("project_save_file"),
@@ -117,6 +126,7 @@ const runtimePaths = [
   "apps/desktop/src/components/AppErrorBoundary.tsx",
   "apps/desktop/src/components/ProviderSettings.tsx",
   "apps/desktop/src/components/ConversationPanel.tsx",
+  "apps/desktop/src/components/AgentTimelinePanel.tsx",
   "apps/desktop/src/components/StoryContextBuilder.tsx",
   "apps/desktop/src/components/conversation-state.ts",
   "apps/desktop/src/components/provider-settings-model.ts",
@@ -131,6 +141,7 @@ const runtimePaths = [
   "apps/desktop/src/lib/tauri/provider.ts",
   "apps/desktop/src/lib/tauri/analysis.ts",
   "apps/desktop/src/lib/tauri/provider-chat.ts",
+  "apps/desktop/src/lib/tauri/agent.ts",
   "apps/desktop/src/lib/tauri/workflow.ts",
   "apps/desktop/src/lib/tauri/story-context.ts",
   "apps/desktop/src/lib/tauri/story-chapter.ts",
@@ -159,9 +170,11 @@ const runtimePaths = [
   "apps/desktop/src/lib/tauri/workspace.ts",
   "apps/desktop/src/presentation/health.ts",
   "apps/desktop/src-tauri/src/commands.rs",
+  "apps/desktop/src-tauri/src/agent_commands.rs",
   "apps/desktop/src-tauri/src/lib.rs",
   "crates/app-core/src/lib.rs",
   "crates/app-core/src/app_state.rs",
+  "crates/app-core/src/agent_runtime.rs",
   "crates/app-core/src/credential_vault.rs",
   "crates/app-core/src/provider_core.rs",
   "crates/app-core/src/provider_state.rs",
@@ -809,13 +822,20 @@ const appStateService = read("crates/app-core/src/app_state.rs");
 const productionAppStateService = appStateService.split("#[cfg(test)]")[0];
 assert(
   productionAppStateService.includes('APP_STATE_DATABASE_NAME: &str = "app-state-v1.sqlite3"') &&
-    productionAppStateService.includes("APP_STATE_SCHEMA_VERSION: u16 = 8") &&
+    productionAppStateService.includes("APP_STATE_SCHEMA_VERSION: u16 = 10") &&
     productionAppStateService.includes("MAX_RECENT_PROJECTS: usize = 12") &&
     productionAppStateService.includes("CREATE TABLE ui_preferences") &&
     productionAppStateService.includes("CREATE TABLE recent_projects") &&
     productionAppStateService.includes("CREATE TABLE project_files") &&
     productionAppStateService.includes("CREATE TABLE provider_settings") &&
     productionAppStateService.includes("CREATE TABLE IF NOT EXISTS router_runs") &&
+    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_sessions") &&
+    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_turns") &&
+    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_msg_index") &&
+    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_undo_records") &&
+    productionAppStateService.includes("migrate_agent_state_v10") &&
+    productionAppStateService.includes("save_agent_checkpoint") &&
+    productionAppStateService.includes("clear_agent_state") &&
     productionAppStateService.includes("save_router_run") &&
     productionAppStateService.includes("create_provider_settings(&transaction)") &&
     productionAppStateService.includes('"user_version", APP_STATE_SCHEMA_VERSION') &&
@@ -833,7 +853,7 @@ assert(
     !productionAppStateService.includes("DROP TABLE workflow_runs_v4_archive") &&
     !productionAppStateService.includes("DROP TABLE workflow_runs_v5_archive") &&
     !productionAppStateService.includes("DROP TABLE workflow_runs_v6_archive"),
-  "NG-406 App State must transactionally migrate to bounded v8 Router metadata without deleting v3-v6 workflow history",
+  "GA2 App State must transactionally migrate to bounded v10 Agent and encrypted-Undo metadata without deleting v3-v6 workflow history",
 );
 assert(
   productionAppStateService.includes("root_path TEXT UNIQUE NOT NULL") &&
@@ -1140,6 +1160,14 @@ assert(
 
 const commandSource = read("apps/desktop/src-tauri/src/commands.rs");
 const productionCommandSource = commandSource.split("#[cfg(test)]")[0];
+const agentCommandSource = read("apps/desktop/src-tauri/src/agent_commands.rs");
+const productionAgentCommandSource = agentCommandSource.split("#[cfg(test)]")[0];
+const agentTimelineSource = read("apps/desktop/src/components/AgentTimelinePanel.tsx");
+const agentTimelineTestSource = read("apps/desktop/src/components/AgentTimelinePanel.test.tsx");
+const presentAppErrorSource = read("apps/desktop/src/errors/present-app-error.ts");
+const presentAppErrorTestSource = read("apps/desktop/src/errors/present-app-error.test.ts");
+const projectWorkspaceTestSource = read("apps/desktop/src/components/ProjectWorkspace.test.tsx");
+const zhCnSource = read("apps/desktop/src/i18n/zh-CN.ts");
 const workflowCommandSource = read("apps/desktop/src-tauri/src/workflow_commands.rs");
 const productionWorkflowCommandSource = workflowCommandSource.split("#[cfg(test)]")[0];
 assert(
@@ -1216,9 +1244,82 @@ assert(
     productionCommandSource.includes("workflow_generation_active") &&
     productionCommandSource.includes("save_workflow_run(&updated)") &&
     productionCommandSource.includes("requestProviderChatStart") === false &&
-    productionCommandSource.includes("workflow_run_active") &&
+    productionCommandSource.includes("legacy_workflow_blocks_unified_runtime") &&
     !/workflow_run_(?:apply|confirm|proposal)/u.test(productionCommandSource),
   "NG-304 foundation must restore checkpoints, block conflicting project/provider mutations, persist before commit, and keep Proposal Apply in its dedicated module",
+);
+assert(
+  productionCommandSource.includes("retire_orphaned_legacy_workflow_generation") &&
+    productionCommandSource.includes("state.active_provider_id().is_some()") &&
+    /manager\s*\.\s*active_record\(\)/u.test(productionCommandSource) &&
+    productionCommandSource.includes(".abandon(&current.run_id, true, now_unix_seconds())") &&
+    productionCommandSource.includes("save_workflow_run(&retired)"),
+  "GA2-R001 must retire only the exact orphaned legacy Generating run, preserve real Provider ownership, and persist the terminal state before Agent use",
+);
+assert(
+  productionAgentCommandSource.includes("if state.active_provider_id().is_some()") &&
+    productionAgentCommandSource.includes("retire_orphaned_legacy_workflow_generation(&state)?") &&
+    productionAgentCommandSource.includes("if workflow_generation_active(&state)?"),
+  "GA2-R001 Agent start must reconcile an orphaned legacy workflow without bypassing an active Provider run",
+);
+assert(
+  agentTimelineSource.includes("items.filter((item) => item.id !== messageId)") &&
+    agentTimelineSource.includes("setInput(submitted)") &&
+    agentTimelineSource.includes('id="agent-composer-error"') &&
+    agentTimelineSource.includes(
+      'aria-describedby={presentedError ? "agent-composer-error" : undefined}',
+    ) &&
+    agentTimelineSource.includes("ZH_CN.agent.errorCodeLabel") &&
+    agentTimelineTestSource.includes("keeps unsent input when a real workflow is still running") &&
+    agentTimelineTestSource.includes('toHaveValue("把港口规则同步到世界观")') &&
+    zhCnSource.includes('title: "已有工作流正在执行"') &&
+    zhCnSource.includes("请等待当前工作流结束") &&
+    !zhCnSource.includes("不能同时启动普通对话请求"),
+  "GA2-R001 rejected Agent starts must retain the input, remove the unsent optimistic bubble, and expose an accessible current-run error without ordinary-chat copy",
+);
+const legacyRuntimeGuardBody = productionCommandSource.slice(
+  productionCommandSource.indexOf("fn legacy_workflow_blocks_unified_runtime"),
+  productionCommandSource.indexOf("fn context_build_error"),
+);
+assert(
+  legacyRuntimeGuardBody.includes("record.state != WorkflowRunState::RecoveryRequired") &&
+    !productionCommandSource.includes("recovery_required_workflow_matches_project") &&
+    (productionCommandSource.match(/legacy_workflow_blocks_unified_runtime\(/gu) ?? []).length ===
+      11 &&
+    commandSource.includes(
+      "ng_302_restored_recovery_is_inert_and_can_still_be_explicitly_abandoned",
+    ) &&
+    productionCommandSource.includes("pub async fn project_create_preview") &&
+    !agentTimelineSource.includes("requestWorkflowRunStatus") &&
+    !agentTimelineSource.includes("requestWorkflowRunAbandon") &&
+    !agentTimelineSource.includes("legacyRecoveryRequired") &&
+    agentTimelineTestSource.includes('queryByRole("button", { name: "确认结束旧工作流" })') &&
+    projectWorkspaceTestSource.includes(
+      "reports a real active workflow when it blocks project selection",
+    ) &&
+    !zhCnSource.includes('title: "检测到迁移前的工作流状态"') &&
+    !zhCnSource.includes('legacyRecoveryAction: "确认结束旧工作流"'),
+  "GA2-R003 must retain RecoveryRequired as inert compatibility history, unblock unified project/provider actions, hide it from current UI, and preserve real active-run guards",
+);
+assert(
+  productionAgentCommandSource.includes("fn agent_action_format_instruction") &&
+    productionAgentCommandSource.includes(String.raw`\"action\":\"respond\"`) &&
+    productionAgentCommandSource.includes(String.raw`\"visibleText\"`) &&
+    productionAgentCommandSource.includes("不得使用 Markdown 代码围栏或增加字段") &&
+    agentCommandSource.includes("storytelling_prompt_exposes_the_exact_respond_action_shape") &&
+    agentTimelineSource.includes("submittedInputRef") &&
+    agentTimelineSource.includes("void loadSession(true)") &&
+    agentTimelineSource.includes('status: "failed"') &&
+    agentTimelineTestSource.includes(
+      "keeps an asynchronous Turn failure visible and restores the submitted input",
+    ) &&
+    agentTimelineTestSource.includes("agent-action.repair-exhausted") &&
+    presentAppErrorSource.includes("SAFE_AGENT_ERROR_CODE") &&
+    presentAppErrorSource.includes("ZH_CN.errors.agentContract") &&
+    presentAppErrorTestSource.includes("保留安全的 Agent 子错误码") &&
+    zhCnSource.includes('failedInputRestored: "Turn 失败 · 输入已恢复"') &&
+    zhCnSource.includes('title: "Agent 操作格式未通过校验"'),
+  "GA2-R004 must expose the exact Agent Action JSON shape to JSON-object Providers, retain asynchronous failure diagnostics and input through session reload, and keep the error accessible",
 );
 assert(
   productionWorkflowCommandSource.includes("pub fn workflow_run_prepare") &&
@@ -2105,5 +2206,5 @@ assert(
   "NG-507 unified quality must run after NG-506, exercise one shared dual-Provider Storytelling transaction state machine, prove every negative path is zero-write, protect manual edits, generate the full redacted G5 evidence set, and keep Live Smoke uncalled without authorization",
 );
 console.log(
-  "[boundary] PASS fifty-one scoped commands through NG-507; thirty-one fixed hash-bound resources, five routable workflows plus executable non-routable Storytelling, shared DeepSeek/OpenAI transaction state machine, author-confirmed visible unknown results, three separate confirmed write surfaces, recoverable original-preserving writes, visible Markdown Ledger Pending, App State v8 metadata-only Router terminals, deterministic Chinese commands, G4/G5 Canary scanning, no project/router escape, and no plugin runtime, hidden body persistence, raw Provider output retention, Key readback, browser network, fallback, Shell, Process, automatic status changes, background retries, or unauthorized Live Smoke",
+  "[boundary] PASS sixty scoped commands through GA2; embedded nine-Skill governed-write Agent, exact JSON-object Action guidance, four bounded read tools plus two Skill-scoped write tools, visible cancellable traces and line diffs, retained asynchronous failures and rejected input, orphaned legacy-generation reconciliation plus inert hidden RecoveryRequired compatibility, App State v10 bounded summaries/hashes/Undo metadata, DPAPI-protected Undo bodies, legacy workflow compatibility, no hidden pending-body persistence, raw Provider output retention, Key readback, browser network, cross-Provider fallback, Shell, Process, background retries, or unauthorized Live Smoke",
 );

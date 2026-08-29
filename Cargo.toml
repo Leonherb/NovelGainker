@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "apps/desktop/src-tauri",
+  "crates/novelgainker-agent",
   "crates/app-core",
   "crates/novelgainker-workflows",
   "crates/novelgainker-domain",

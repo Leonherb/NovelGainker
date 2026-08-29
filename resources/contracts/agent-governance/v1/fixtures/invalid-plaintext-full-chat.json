@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "expectedError": "agent-governance.plaintext-downgrade-forbidden",
+  "fullChat": {
+    "enabled": true,
+    "userOptIn": true,
+    "protection": "disabled",
+    "maxUtf8Bytes": 1024,
+    "retentionDays": 1,
+    "privacyNoticeVersion": 1,
+    "clearGeneration": 0
+  }
+}

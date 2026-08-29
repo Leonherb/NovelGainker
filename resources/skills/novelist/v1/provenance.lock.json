@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/comfuture/novelist",
+  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
+  "sourceSubtree": "plugins/novelist",
+  "retrievedAt": "2026-08-28T15:49:14.0686797+08:00",
+  "sourceArchiveSha256": "8b7c53e1832ee91fab29a320effe11efff9d3f07735b4ce8b3a541266bae85b8",
+  "licenseSpdx": "MIT",
+  "licenseTextSha256": "88b9a14391d40016e79135d201f277885eabf9b5388279a3ea0a4270e708c109",
+  "upstreamFileCount": 78,
+  "upstreamInventoryAlgorithm": "sha256(utf8(sort(path + tab + byteLength + tab + fileSha256 + lf)))",
+  "upstreamInventorySha256": "5831708ba45b668dac36c0e6541d25a9abccacfd7e06cb549d503a325b630362",
+  "adaptationVersion": "1.0.0",
+  "novelGainkerPackVersion": "1.0.0",
+  "includedFiles": [
+    {
+      "sourcePath": "LICENSE",
+      "sourceSha256": "88b9a14391d40016e79135d201f277885eabf9b5388279a3ea0a4270e708c109",
+      "integrationMode": "verbatim",
+      "localResources": ["LICENSE.upstream"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/analytical-review/SKILL.md",
+      "sourceSha256": "160a2189359a22167eec813b2731c1966abf83afe7243c3ee1322efc0feeb46d",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/analytical-review.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/analytical-review/references/report-contract.md",
+      "sourceSha256": "fed46fe723f486e26fa4f560df738ef9662e7563cec1af7f33237e002bbdf833",
+      "integrationMode": "adapted",
+      "localResources": ["references/analytical-review-method.zh-CN.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/analytical-review/references/review-method.md",
+      "sourceSha256": "ecb7f216277da3bc7420d665956c027cfafa4bbad5ce5e7d20a32fd9abe65bbc",
+      "integrationMode": "adapted",
+      "localResources": ["references/analytical-review-method.zh-CN.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/analytical-review/references/review-modes.md",
+      "sourceSha256": "fc3eae72826d3e1ac65fbd38bec5787a217bf4eb1e90c13aedc9e730e5537936",
+      "integrationMode": "adapted",
+      "localResources": ["references/analytical-review-method.zh-CN.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-character/SKILL.md",
+      "sourceSha256": "c4cb8e0f987fc5e6139bd6d7deff5acc99408e5502a38c00eccd0da1d252becb",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-character.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-material/SKILL.md",
+      "sourceSha256": "01f0edba07c3fb90a7678da5501e686e2bd4bf23218b30c5b90c38716cd40728",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-material.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-novel-project/SKILL.md",
+      "sourceSha256": "c2b264155b99a53c00f6a0dbe7d0269afc499e6b3ec353f69f4db4504bb7e82c",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-novel-project.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-plot/SKILL.md",
+      "sourceSha256": "dd0d0a3af835a3a64961a6b8e211c51499f24778d0b1bf3f7dbda03582983193",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-plot.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-setting/SKILL.md",
+      "sourceSha256": "e667bb96b6aaec91f07f31abf414fa6816ae77eb2b25211cc8a55e74fd047d81",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-setting.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-visual-asset/SKILL.md",
+      "sourceSha256": "ac0631795159b067752202089029813e9d9ea51a42de13834899c5193e78830b",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/create-visual-asset.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/SKILL.md",
+      "sourceSha256": "847f60e41b18735dae63c853ff429bddb9e0f92efc082dc7a5a76e7855981408",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/novel-story-telling.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/drama.md",
+      "sourceSha256": "434d0505dd713df3aff451f1e70d8058a1de66586c69ed86f25a5bd9b3676dde",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/drama.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/mystery.md",
+      "sourceSha256": "9345b363ca7bf23572e8e5fdbcfef9d4ee23135c66b59bbd66f298a424b013f2",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/mystery.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/romantic-entanglement.md",
+      "sourceSha256": "c0a2810fb319d099685736c83999f629a201794980aa69db8da717ab2ea8d8cf",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/romantic-entanglement.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/science-fiction.md",
+      "sourceSha256": "a84fa8094de6b0a050b49ff1dc48dfe53a612728c9062b2489bd54c0198af3d1",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/science-fiction.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/story-flow.md",
+      "sourceSha256": "04eeedbf42730388a9d828243ad35996b9e88f2ec0a991b59805c3716fb51f56",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/story-flow.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/time-travel-and-loop.md",
+      "sourceSha256": "fa9230b8de7487256939f4af854a81686aa7794014c84bf59dde615a2c5e47a8",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/time-travel-and-loop.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/references/wuxia.md",
+      "sourceSha256": "ff2b1fabf1dab932b3c5a0c8f5f72b4ee60f2f3d7568e86c70e822f7f0c98a89",
+      "integrationMode": "verbatim",
+      "localResources": ["references/storytelling/wuxia.md"]
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/publish-novel/SKILL.md",
+      "sourceSha256": "294404050f1a8e8732b5b4082befe17471fe60be076f85dbb527ad01ef7879b0",
+      "integrationMode": "adapted",
+      "localResources": ["instructions/publish-novel.md"]
+    }
+  ],
+  "excludedFiles": [
+    {
+      "sourcePattern": ".agents/**, .codex/**, .github/**, .claude-plugin/**",
+      "reason": "Repository and host integration metadata are outside the runtime Skill Pack."
+    },
+    {
+      "sourcePattern": "plugins/novelist/.claude-plugin/**, plugins/novelist/.codex-plugin/**, plugins/novelist/skills/*/agents/**",
+      "reason": "Claude, Codex and Agent YAML adapters are excluded."
+    },
+    {
+      "sourcePattern": "plugins/novelist/assets/scaffold/**",
+      "reason": "The upstream scaffold contains host guidance and Korean defaults; NovelGainker-native compatibility fixtures are used instead."
+    },
+    {
+      "sourcePattern": "plugins/novelist/skills/*/scripts/**, plugins/novelist/skills/*/tests/**",
+      "reason": "Python executables, bytecode and upstream host tests are excluded from release resources."
+    },
+    {
+      "sourcePattern": "plugins/novelist/skills/create-visual-asset/references/**",
+      "reason": "Provider-specific Codex, Claude and Antigravity image adapters are outside the approved local-import scope."
+    },
+    {
+      "sourcePattern": "plugins/novelist/plugin.json, plugins/novelist/README.md, plugins/novelist/assets/logo.png, plugins/novelist/submission/**",
+      "reason": "Plugin packaging, marketing assets and submission metadata are not runtime Skill semantics."
+    },
+    {
+      "sourcePattern": "scripts/**, tests/**, website/**",
+      "reason": "Repository tooling, site content and upstream integration tests are outside the selected subtree and product runtime."
+    }
+  ],
+  "localChanges": [
+    {
+      "id": "provider-neutral-instructions",
+      "description": "Nine instructions were rewritten in Simplified Chinese to remove host commands, absolute paths, shell, Git and executable-script flows while preserving approved product semantics.",
+      "localResources": ["instructions/*.md"]
+    },
+    {
+      "id": "native-compatibility-fixtures",
+      "description": "The Pack reuses the current build-validated NovelGainker Workflow Pack templates instead of the Korean-default upstream scaffold.",
+      "localResources": ["fixtures/*.template.md"]
+    },
+    {
+      "id": "analytical-review-reference",
+      "description": "The upstream analytical report, method and mode references were condensed into a Chinese read-only contract without Korean labels or script invocation.",
+      "localResources": ["references/analytical-review-method.zh-CN.md"]
+    },
+    {
+      "id": "visual-scope-reduction",
+      "description": "Visual semantics are limited to prompt planning and future confirmed local import; external image Provider adapters are not bundled.",
+      "localResources": ["instructions/create-visual-asset.md"]
+    }
+  ],
+  "generatedFromScripts": [
+    {
+      "sourcePath": "plugins/novelist/skills/analytical-review/scripts/inventory_review.py",
+      "targetContract": "future:review.inventory",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-character/scripts/write_character.py",
+      "targetContract": "future:project.create_or_patch_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-material/scripts/write_material.py",
+      "targetContract": "future:project.create_or_patch_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-novel-project/scripts/create_novel_project.py",
+      "targetContract": "future:project.create_scaffold",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-plot/scripts/write_plot.py",
+      "targetContract": "future:project.create_or_patch_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-setting/scripts/write_setting.py",
+      "targetContract": "future:project.create_or_patch_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/create-visual-asset/scripts/invoke_image_provider.py",
+      "targetContract": "future:asset.import",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/scripts/build_story_context.py",
+      "targetContract": "future:project.read_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/scripts/check_continuity.py",
+      "targetContract": "future:story.check_continuity",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/scripts/story_io.py",
+      "targetContract": "future:project.markdown_io",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/scripts/update_story_ledger.py",
+      "targetContract": "future:story_ledger.update",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/novel-story-telling/scripts/write_chapter.py",
+      "targetContract": "future:project.create_or_patch_markdown",
+      "status": "excluded-awaiting-authorized-port"
+    },
+    {
+      "sourcePath": "plugins/novelist/skills/publish-novel/scripts/build_epub.py",
+      "targetContract": "future:publication.build_epub",
+      "status": "excluded-awaiting-authorized-port"
+    }
+  ]
+}

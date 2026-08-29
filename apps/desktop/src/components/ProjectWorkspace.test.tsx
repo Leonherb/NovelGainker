@@ -272,6 +272,24 @@ describe("NG-105 project workspace", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("reports a real active workflow when it blocks project selection", async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectApi.requestProjectScan).mockRejectedValue({
+      code: "workflow.run_active",
+      messageKey: "errors.workflowRunActive",
+    });
+    render(<ProjectWorkspace desktopRuntime />);
+
+    await user.click(screen.getByRole("button", { name: "打开现有项目" }));
+
+    expect(await screen.findByText("已有工作流正在执行")).toBeInTheDocument();
+    expect(screen.getByText("当前工作流仍在占用运行通道，本次操作尚未执行。")).toBeInTheDocument();
+    expect(
+      screen.getByText("请等待当前工作流结束，或在对应运行界面取消后重试。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/本轮 Agent/u)).not.toBeInTheDocument();
+  });
+
   it("reopens an opaque recent project and restores its relative current file", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();

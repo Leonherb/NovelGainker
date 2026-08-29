@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "skillIds": ["create-setting"],
+  "toolCalls": [
+    {
+      "callId": "call_shell001",
+      "name": "system.shell",
+      "arguments": {
+        "purpose": "执行任意命令"
+      }
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "id": "novel-story-telling",
+  "version": 1,
+  "description": "管理读者认知、章间流动、写章、修订、连续性、伏笔和 Story Ledger。",
+  "triggerSummary": "用户要求规划下一章、写章、续写、修订或检查叙事连续性时使用。",
+  "instructionResources": [
+    "instructions/novel-story-telling.md"
+  ],
+  "templateResources": [
+    "fixtures/chapter.template.md"
+  ],
+  "referenceResources": [
+    "references/storytelling/drama.md",
+    "references/storytelling/mystery.md",
+    "references/storytelling/romantic-entanglement.md",
+    "references/storytelling/science-fiction.md",
+    "references/storytelling/story-flow.md",
+    "references/storytelling/time-travel-and-loop.md",
+    "references/storytelling/wuxia.md"
+  ],
+  "allowedTools": [
+    "project.create_markdown",
+    "project.get_diff",
+    "project.list_files",
+    "project.patch_markdown",
+    "project.read_markdown",
+    "project.search_markdown",
+    "project.validate_markdown"
+  ],
+  "readScopes": [
+    "chapters/*.md",
+    "characters/*.md",
+    "materials/*.md",
+    "outlines/*.md",
+    "plot/*.md",
+    "project.md",
+    "style/*.md",
+    "world/*.md"
+  ],
+  "writeScopes": [
+    "chapters/*.md",
+    "materials/000.story-ledger.md",
+    "outlines/*.md",
+    "plot/*.md"
+  ],
+  "riskClass": "high/mixed",
+  "alwaysConfirmActions": [
+    "chapter.replace_whole",
+    "chapter.transition_accepted_final",
+    "document.replace_whole",
+    "story_ledger.update"
+  ],
+  "contextBudget": {
+    "maxRequestBytes": 98304,
+    "maxUniqueFiles": 24,
+    "maxModifiedFiles": 8
+  },
+  "outputContract": "AgentActionPayloadV1",
+  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
+  "resourceHashes": {
+    "fixtures/chapter.template.md": "3b43ea80cce52e8ce657668612a2a895d59f8361f88e3ef10230bb4f3631ce25",
+    "instructions/novel-story-telling.md": "dd5a58e4193986c697103573c10722aafebfb56c6191483b34d52f81fce9aece",
+    "references/storytelling/drama.md": "434d0505dd713df3aff451f1e70d8058a1de66586c69ed86f25a5bd9b3676dde",
+    "references/storytelling/mystery.md": "9345b363ca7bf23572e8e5fdbcfef9d4ee23135c66b59bbd66f298a424b013f2",
+    "references/storytelling/romantic-entanglement.md": "c0a2810fb319d099685736c83999f629a201794980aa69db8da717ab2ea8d8cf",
+    "references/storytelling/science-fiction.md": "a84fa8094de6b0a050b49ff1dc48dfe53a612728c9062b2489bd54c0198af3d1",
+    "references/storytelling/story-flow.md": "04eeedbf42730388a9d828243ad35996b9e88f2ec0a991b59805c3716fb51f56",
+    "references/storytelling/time-travel-and-loop.md": "fa9230b8de7487256939f4af854a81686aa7794014c84bf59dde615a2c5e47a8",
+    "references/storytelling/wuxia.md": "ff2b1fabf1dab932b3c5a0c8f5f72b4ee60f2f3d7568e86c70e822f7f0c98a89"
+  },
+  "featureGate": "agent_migration_skill_runtime_v1",
+  "enabledAtRuntime": false
+}

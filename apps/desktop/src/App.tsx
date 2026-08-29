@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
-import { ConversationPanel } from "./components/ConversationPanel";
+import { AgentTimelinePanel } from "./components/AgentTimelinePanel";
 import { HealthRuntimeSummary, HealthStatusCard } from "./components/HealthStatus";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { DEFAULT_PROVIDER_STATE } from "./components/provider-settings-model";
@@ -81,8 +81,8 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   const rightPanelRef = useRef<HTMLElement>(null);
   const rightResizePointerRef = useRef<number | null>(null);
   const [projectSessionId, setProjectSessionId] = useState<string | null>(null);
-  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0);
-  const [workspaceOpenPath, setWorkspaceOpenPath] = useState<string | null>(null);
+  const [workspaceRefreshToken] = useState(0);
+  const [workspaceOpenPath] = useState<string | null>(null);
   const desktopRuntime = isTauriRuntime();
 
   const runHealthCheck = useCallback(async () => {
@@ -401,19 +401,11 @@ function App({ diagnosticsEnabled = false }: AppProps) {
         ) : null}
 
         <main aria-label={ZH_CN.conversation.ariaLabel} className="conversation-panel">
-          <ConversationPanel
+          <AgentTimelinePanel
             desktopRuntime={desktopRuntime}
             projectSessionId={projectSessionId}
             onRunActiveChange={setProviderRunActive}
             onProjectCreateRequested={revealProjectCreation}
-            onCanonApplied={(relativePath) => {
-              setWorkspaceOpenPath(relativePath);
-              setWorkspaceRefreshToken((current) => current + 1);
-              setRightCollapsed(false);
-              if (isNarrow) {
-                setNarrowPanel("right");
-              }
-            }}
             providerState={providerState}
           />
         </main>

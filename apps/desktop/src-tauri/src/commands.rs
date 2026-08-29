@@ -1,5 +1,6 @@
+use app_core::agent_transaction::{recover_incomplete_agent_transactions, AgentUndoStore};
+use app_core::agent_write::PreparedAgentWriteV1;
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
-
 use app_core::canon_apply::apply_canon_file_recoverable;
 use app_core::coordination::{try_acquire_project_write_lease, ProjectWriteLease};
 use app_core::credential_vault::{CredentialVault, ProviderId, WindowsCredentialVault};
@@ -50,6 +51,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
+#[path = "agent_commands.rs"]
+pub(crate) mod agent_commands;
 #[path = "router_commands.rs"]
 pub(crate) mod router_commands;
 #[path = "story_chapter_commands.rs"]
@@ -71,6 +74,8 @@ pub struct ProjectRegistry {
     inner: Mutex<ProjectRegistryInner>,
     recovery_store: RecoveryStore,
     app_state: AppStateRepository,
+    agent_undo_store: AgentUndoStore,
+    agent_pending_writes: Mutex<HashMap<String, StoredAgentWriteV1>>,
     credential_vault: Arc<dyn CredentialVault>,
     provider_run: Mutex<Option<ActiveProviderRun>>,
     workflow_manager: Mutex<Option<WorkflowManager>>,
@@ -83,6 +88,11 @@ pub struct ProjectRegistry {
         Mutex<HashMap<String, story_chapter_patch_commands::StoredStoryChapterPatchV1>>,
     story_lifecycle:
         Mutex<HashMap<String, story_lifecycle_commands::StoredStoryChapterLifecycleV1>>,
+}
+
+struct StoredAgentWriteV1 {
+    project_session_id: String,
+    prepared: PreparedAgentWriteV1,
 }
 
 #[derive(Default)]
@@ -111,12 +121,15 @@ struct ActiveProviderRun {
 impl ProjectRegistry {
     pub fn new(app_state_root: PathBuf) -> Result<Self, AppError> {
         let recovery_store = RecoveryStore::new(app_state_root.clone())?;
+        let agent_undo_store = AgentUndoStore::new(app_state_root.clone())?;
         let app_state = AppStateRepository::open(&app_state_root);
         let workflow_manager = restore_workflow_manager(&app_state);
         Ok(Self {
             inner: Mutex::new(ProjectRegistryInner::default()),
             recovery_store,
             app_state,
+            agent_undo_store,
+            agent_pending_writes: Mutex::new(HashMap::new()),
             credential_vault: Arc::new(WindowsCredentialVault::production()),
             provider_run: Mutex::new(None),
             workflow_manager: Mutex::new(workflow_manager),
@@ -317,6 +330,49 @@ fn workflow_generation_active(state: &ProjectRegistry) -> Result<bool, AppError>
     Ok(manager
         .as_ref()
         .is_some_and(|manager| manager.active_state() == Some(WorkflowRunState::Generating)))
+}
+
+fn retire_orphaned_legacy_workflow_generation(state: &ProjectRegistry) -> Result<bool, AppError> {
+    if state.active_provider_id().is_some() {
+        return Ok(false);
+    }
+
+    let mut manager_guard = state
+        .workflow_manager
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?;
+    let Some(manager) = manager_guard.as_mut() else {
+        return Ok(false);
+    };
+    if manager.active_state() != Some(WorkflowRunState::Generating) {
+        return Ok(false);
+    }
+    let current = manager
+        .active_record()
+        .ok_or_else(AppError::workflow_invalid_state)?;
+
+    let mut candidate = manager.clone();
+    let retired = candidate
+        .abandon(&current.run_id, true, now_unix_seconds())
+        .map_err(workflow_manager_error)?;
+    state
+        .app_state
+        .save_workflow_run(&retired)
+        .map_err(|_| AppError::workflow_unavailable())?;
+    *manager = candidate;
+    if let Ok(mut sessions) = state.workflow_sessions.lock() {
+        sessions.remove(&current.run_id);
+    }
+    Ok(true)
+}
+
+fn legacy_workflow_blocks_unified_runtime(state: &ProjectRegistry) -> Result<bool, AppError> {
+    let manager = state
+        .workflow_manager
+        .lock()
+        .map_err(|_| AppError::workflow_unavailable())?;
+    let current = manager.as_ref().and_then(WorkflowManager::active_record);
+    Ok(current.is_some_and(|record| record.state != WorkflowRunState::RecoveryRequired))
 }
 
 fn workflow_run_active(state: &ProjectRegistry) -> Result<bool, AppError> {
@@ -624,7 +680,7 @@ pub fn provider_key_save(
     provider_id: String,
     key: String,
 ) -> Result<ProviderStatus, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     save_provider_key(
@@ -641,7 +697,7 @@ pub fn provider_key_delete(
     provider_id: String,
     confirmed: bool,
 ) -> Result<ProviderStatus, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     delete_provider_key(
@@ -667,7 +723,7 @@ fn select_registered_provider(
     if state.active_provider_id().is_some() {
         return Err(AppError::provider_run_active());
     }
-    if workflow_run_active(state)? {
+    if legacy_workflow_blocks_unified_runtime(state)? {
         return Err(AppError::workflow_run_active());
     }
     select_provider(
@@ -683,7 +739,7 @@ pub async fn provider_connection_test(
     provider_id: String,
 ) -> Result<ProviderStatus, AppError> {
     let state = app.state::<ProjectRegistry>();
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     tauri::async_runtime::spawn_blocking(move || {
@@ -904,9 +960,6 @@ pub async fn project_scan(
     state: tauri::State<'_, ProjectRegistry>,
     mode: ProjectScanMode,
 ) -> Result<Option<ProjectCandidate>, AppError> {
-    if workflow_run_active(&state)? {
-        return Err(AppError::workflow_run_active());
-    }
     let selected = app.dialog().file().blocking_pick_folder();
     let Some(selected) = selected else {
         return Ok(None);
@@ -915,6 +968,9 @@ pub async fn project_scan(
         .into_path()
         .map_err(|_| AppError::project_invalid_root())?;
     let inspection = inspect_project_root(&selected_root, mode)?;
+    if legacy_workflow_blocks_unified_runtime(&state)? {
+        return Err(AppError::workflow_run_active());
+    }
     let candidate_id = Uuid::new_v4().to_string();
     let preview = inspection.preview().clone();
 
@@ -940,7 +996,7 @@ pub async fn project_create_preview(
     candidate_id: String,
     input: ProjectCreateInputV1,
 ) -> Result<ProjectCreatePreview, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     let inspection = candidate_inspection(&state, &candidate_id)?;
@@ -966,7 +1022,7 @@ pub async fn project_create(
     preview_hash: String,
     confirmed: bool,
 ) -> Result<ProjectSession, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     if !confirmed {
@@ -985,10 +1041,10 @@ pub async fn project_open(
     candidate_id: String,
     confirm_metadata: bool,
 ) -> Result<ProjectSession, AppError> {
-    if workflow_run_active(&state)? {
+    let inspection = candidate_inspection(&state, &candidate_id)?;
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
-    let inspection = candidate_inspection(&state, &candidate_id)?;
     let write_lease = try_acquire_project_write_lease(&inspection.coordination_key())?;
     if write_lease.is_none() && inspection.preview().requires_metadata_confirmation {
         return Err(AppError::project_writer_required());
@@ -1002,7 +1058,7 @@ pub async fn project_open_recent(
     state: tauri::State<'_, ProjectRegistry>,
     project_id: String,
 ) -> Result<ProjectSession, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     open_registered_recent_project(&state, &project_id)
@@ -1075,7 +1131,7 @@ pub fn project_close(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
 ) -> Result<ProjectCloseResult, AppError> {
-    if workflow_run_active(&state)? {
+    if legacy_workflow_blocks_unified_runtime(&state)? {
         return Err(AppError::workflow_run_active());
     }
     state.cancel_active_provider_run();
@@ -1208,6 +1264,24 @@ fn session_handle(state: &ProjectRegistry, session_id: &str) -> Result<ProjectHa
         .ok_or_else(AppError::project_session_not_found)
 }
 
+fn session_writer_handle(
+    state: &ProjectRegistry,
+    session_id: &str,
+) -> Result<ProjectHandle, AppError> {
+    let registry = lock_registry(state)?;
+    let session = registry
+        .sessions
+        .get(session_id)
+        .ok_or_else(AppError::project_session_not_found)?;
+    if session.write_lease.is_none() {
+        return Err(AppError::project_writer_required());
+    }
+    if session.recovery.status == RecoveryStatus::Required {
+        return Err(AppError::project_recovery_required());
+    }
+    Ok(session.handle.clone())
+}
+
 fn register_session(
     state: &ProjectRegistry,
     candidate_id: Option<String>,
@@ -1221,11 +1295,35 @@ fn register_session(
     } else {
         ProjectAccessMode::ReadOnly
     };
-    let recovery = if write_lease.is_some() {
+    let mut recovery = if write_lease.is_some() {
         state.recovery_store.recover_project(&handle)
     } else {
         RecoveryReport::not_checked()
     };
+    if write_lease.is_some() && recovery.status != RecoveryStatus::Required {
+        match state.app_state.agent_undo_records(handle.project_id()) {
+            Ok(records) => {
+                let agent_recovery = recover_incomplete_agent_transactions(
+                    &handle,
+                    &records,
+                    &state.recovery_store,
+                    &state.agent_undo_store,
+                );
+                recovery.recovered_transactions = recovery
+                    .recovered_transactions
+                    .saturating_add(u32::from(agent_recovery.recovered_transactions));
+                recovery.required_transactions = recovery
+                    .required_transactions
+                    .saturating_add(u32::from(agent_recovery.recovery_required_transactions));
+                if agent_recovery.recovery_required_transactions > 0 {
+                    recovery.status = RecoveryStatus::Required;
+                } else if agent_recovery.recovered_transactions > 0 {
+                    recovery.status = RecoveryStatus::Recovered;
+                }
+            }
+            Err(_) => recovery.status = RecoveryStatus::Required,
+        }
+    }
     let can_write = write_lease.is_some() && recovery.status != RecoveryStatus::Required;
     let restored_current_file = state
         .app_state
@@ -1279,8 +1377,9 @@ fn lock_registry(
 #[cfg(test)]
 mod tests {
     use super::{
-        health_check, load_registered_workflow_status, mutate_registered_workflow_run,
-        open_registered_recent_project, register_session, save_registered_project_file,
+        health_check, legacy_workflow_blocks_unified_runtime, load_registered_workflow_status,
+        mutate_registered_workflow_run, open_registered_recent_project, register_session,
+        retire_orphaned_legacy_workflow_generation, save_registered_project_file,
         select_registered_provider, set_registered_current_file, workflow_generation_active,
         workflow_registry_load, ProjectRegistry, RegisteredProjectSession, WorkflowRunAction,
     };
@@ -1629,7 +1728,7 @@ mod tests {
     }
 
     #[test]
-    fn ng_302_recovers_without_replay_and_requires_confirmation_to_abandon() {
+    fn ng_302_restored_recovery_is_inert_and_can_still_be_explicitly_abandoned() {
         let root =
             std::env::temp_dir().join(format!("novelgainker-ng302-recovery-{}", Uuid::new_v4()));
         fs::create_dir(&root).expect("test root must create");
@@ -1668,6 +1767,7 @@ mod tests {
         let restarted = ProjectRegistry::new(app_state.clone()).expect("registry must restart");
         assert_eq!(restarted.active_provider_id(), None);
         assert!(!workflow_generation_active(&restarted).unwrap());
+        assert!(!legacy_workflow_blocks_unified_runtime(&restarted).unwrap());
         let write_lease = try_acquire_project_write_lease(&handle.coordination_key())
             .expect("writer lease must resolve")
             .expect("writer lease must be available");
@@ -1807,6 +1907,93 @@ mod tests {
         fs::remove_dir_all(app_state).expect("verified app state must remove");
         fs::remove_dir_all(root).expect("verified project must remove");
     }
+
+    #[test]
+    fn ga2_retires_only_orphaned_legacy_generation_before_agent_use() {
+        let app_state = std::env::temp_dir().join(format!(
+            "novelgainker-ga2-orphaned-workflow-{}",
+            Uuid::new_v4()
+        ));
+        let registry_state = ProjectRegistry::new(app_state.clone()).expect("registry must create");
+        let initial = WorkflowRunRecord {
+            run_id: Uuid::new_v4().to_string(),
+            project_id: Uuid::new_v4().to_string(),
+            workflow_id: CHARACTER_CREATE_WORKFLOW_ID.to_owned(),
+            workflow_version: 2,
+            pack_hash: registry().pack_hash.to_owned(),
+            state: WorkflowRunState::Created,
+            sequence: 0,
+            provider_id: Some("deepseek".to_owned()),
+            preset_version: Some(1),
+            model: Some("deepseek-v4-pro".to_owned()),
+            manifest_hash: None,
+            proposal_hash: None,
+            target_relative_path: None,
+            target_source_hash: None,
+            confirmed_at: None,
+            updated_at: 1,
+        };
+        let generating = {
+            let mut guard = registry_state.workflow_manager.lock().unwrap();
+            let manager = guard.as_mut().expect("manager must be available");
+            manager.create(initial.clone()).unwrap();
+            let mut current = initial.clone();
+            for next in [
+                WorkflowRunState::Routed,
+                WorkflowRunState::AwaitingInput,
+                WorkflowRunState::ContextReady,
+                WorkflowRunState::Generating,
+            ] {
+                current = manager
+                    .transition(
+                        &initial.run_id,
+                        current.sequence + 1,
+                        next,
+                        current.updated_at + 1,
+                    )
+                    .unwrap();
+            }
+            current
+        };
+        registry_state
+            .app_state
+            .save_workflow_run(&generating)
+            .unwrap();
+        registry_state
+            .workflow_sessions
+            .lock()
+            .unwrap()
+            .insert(initial.run_id.clone(), "legacy-session".to_owned());
+
+        assert_eq!(registry_state.active_provider_id(), None);
+        assert!(workflow_generation_active(&registry_state).unwrap());
+        assert!(retire_orphaned_legacy_workflow_generation(&registry_state).unwrap());
+        assert!(!workflow_generation_active(&registry_state).unwrap());
+        assert!(!registry_state
+            .workflow_manager
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .has_active_run());
+        assert!(!registry_state
+            .workflow_sessions
+            .lock()
+            .unwrap()
+            .contains_key(&initial.run_id));
+        let stored = registry_state
+            .app_state
+            .workflow_runs()
+            .unwrap()
+            .into_iter()
+            .find(|record| record.run_id == initial.run_id)
+            .expect("retired record must persist");
+        assert_eq!(stored.state, WorkflowRunState::Cancelled);
+        assert!(!retire_orphaned_legacy_workflow_generation(&registry_state).unwrap());
+
+        drop(registry_state);
+        fs::remove_dir_all(app_state).expect("verified app state must remove");
+    }
     #[test]
     fn registers_only_the_approved_commands() {
         assert_eq!(
@@ -1815,6 +2002,15 @@ mod tests {
                 "health_check",
                 "app_state_load",
                 "app_state_save_ui",
+                "agent_skill_registry_load",
+                "agent_session_load",
+                "agent_turn_start",
+                "agent_turn_cancel",
+                "agent_session_clear",
+                "agent_policy_set",
+                "agent_write_confirm",
+                "agent_write_reject",
+                "agent_undo_apply",
                 "workflow_registry_load",
                 "router_resolve_local",
                 "router_run_start",
@@ -1867,6 +2063,11 @@ mod tests {
         );
         assert!(!APP_COMMANDS.contains(&"shell"));
         assert!(!APP_COMMANDS.contains(&"process"));
+        assert!(APP_COMMANDS.contains(&"agent_skill_registry_load"));
+        assert!(APP_COMMANDS.contains(&"agent_session_load"));
+        assert!(APP_COMMANDS.contains(&"agent_turn_start"));
+        assert!(APP_COMMANDS.contains(&"agent_turn_cancel"));
+        assert!(APP_COMMANDS.contains(&"agent_session_clear"));
         assert!(APP_COMMANDS.contains(&"provider_chat_start"));
         assert!(APP_COMMANDS.contains(&"provider_chat_cancel"));
         assert!(APP_COMMANDS.contains(&"provider_select"));

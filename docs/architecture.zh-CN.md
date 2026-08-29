@@ -1,59 +1,64 @@
 # NovelGainker 架构设计
 
-> 状态：架构评审通过——Q-001 至 Q-017 已确认  
-> 日期：2026-08-19  
+> 状态：Architecture Amendment A-001、GA0 与 GA1 已批准；AM2 已完成 GA2 技术提交，等待 GA2 独立产品验收；Sprint 6 已暂停
+> 日期：2026-08-29
 > BMAD 数据包：`architecture-packet`（已批准）  
 > 项目级别：3  
-> 主要目标：桌面优先、本地优先、可切换 AI Provider  
+> 主要目标：桌面优先、本地优先、统一项目 Agent 会话、可切换 AI Provider
 > 可选目标：未来评估独立 Android 版；不建设远程伴侣端
 
 ## 1. 执行摘要
 
-NovelGainker 是一款桌面优先、本地优先的中文小说写作应用。第一版面向 Windows 11 x64，只连接 DeepSeek 与 OpenAI 两种文本 AI API；未联网或未配置 API Key 时，用户仍可完整浏览和手动编辑本地项目。
+NovelGainker 是一款桌面优先、本地优先的中文小说写作应用。第一版面向 Windows 11 x64，只连接 DeepSeek 与 OpenAI 两种文本 AI API；未联网或未配置 API Key 时，用户仍可完整浏览和手动编辑本地项目。打开项目后，中栏只有一个持续的项目 Agent 会话，不再区分“普通聊天”和独立工作流入口。
 
-Novelist 插件仅作为早期产品分析和行为参考，不是应用的运行时、打包依赖或兼容目标。NovelGainker 从第一天起拥有自己的工作流定义、Markdown 契约与 Rust 确定性核心；后续缺陷、格式演进和发布节奏均由本项目自行负责，不受 Novelist 更新影响。
+NovelGainker 内置版本锁定、经许可与安全审查的 Novelist-compatible Skill Pack，由自身 Agent Host 持续选择和执行。发行包不读取用户目录、Codex Plugin Cache 或外部 `SKILL.md`，也不依赖外部 Codex/Novelist Host 或 Python 环境；需要的确定性行为由 Rust 工具或声明式契约实现。Skill Pack 的升级、迁移、回归和发布节奏由本项目负责。
 
 核心架构决策，是把当前 Agent 宿主中混合在一起的四类职责拆开：
 
 1. **小说源文件与正史（Canon）**——Markdown 文件、图片资源和故事账本。
-2. **工作流定义**——带版本的 NovelGainker 原生工作流、参考资料、模板、规则和输出契约。
-3. **确定性执行**——上下文构建、文件创建、格式验证、连续性检查、账本更新、图片登记和 EPUB 打包。
-4. **概率性生成**——通过 DeepSeek 或 OpenAI Provider Adapter 完成文本生成、评审和意图分类。
+2. **Skill 定义**——带版本的 Novelist-compatible Skill、参考资料、模板、触发说明、允许工具和输出契约。
+3. **Agent 编排与确定性执行**——持续会话、Skill 路由、Action/Tool Loop、上下文构建、文件事务、格式验证、连续性检查、账本更新、图片登记和 EPUB 打包。
+4. **概率性生成**——通过 DeepSeek 或 OpenAI Provider Adapter 完成规划、写作、评审、Skill 选择和结构化 Action 生成。
 
-推荐的桌面架构是 **Tauri 2 + React/TypeScript**，Rust 后端负责文件系统、密钥、网络、权限、工作流执行、格式校验和任务边界。应用不打包 Python、Novelist 插件或通用 Shell。若未来批准独立 Android 版，可复用同一 Rust Core，并仅为移动端系统能力增加少量 Kotlin 层。
+推荐的桌面架构是 **Tauri 2 + React/TypeScript**，Rust 后端负责文件系统、密钥、网络、Agent 状态、Skill/Tool 权限、格式校验和任务边界。应用内置经审查的 Skill 资源，但不打包 Python、外部插件运行时或通用 Shell。若未来批准独立 Android 版，可复用同一 Rust Core，并仅为移动端系统能力增加少量 Kotlin 层。
 
 Markdown 始终是小说内容的唯一权威来源。SQLite 和应用状态可以用于索引、缓存和运行日志，但必须能够从项目文件重建。
 
 ## 2. 架构决策
 
-| ID | 决策 | 状态 | 理由 |
-| --- | --- | --- | --- |
-| ADR-001 | 桌面优先，第一版只支持 Windows 11 x64 | 已确认 | 符合当前开发环境，可控制第一阶段打包范围。 |
-| ADR-002 | Local-first，不依赖 NovelGainker 云服务 | 已确认 | 保证手稿所有权、离线编辑和长期可用性。 |
-| ADR-003 | 使用 Tauri 2 外壳、React/TypeScript UI 和 Rust 后端 | 已确认 | 体积较小、原生权限可控，并为后续 Android 提供可行路径。 |
-| ADR-004 | Markdown 和项目资源是唯一权威数据 | 已确认 | 形成 NovelGainker 自有、可移植且不依赖数据库的项目格式。 |
-| ADR-005 | 由 App 自己编排工作流，厂商 SDK 只作为 Adapter | 已确认 | API 切换不能依赖某家厂商的 Skill 或 Agent 运行时。 |
-| ADR-006 | 内置固定版本的 NovelGainker 原生 Workflow Pack | 已确认 | 产品从第一天起独立维护，不加载或运行 Novelist 插件。 |
-| ADR-007 | 确定性能力从第一版起全部实现于 Rust Core | 已确认 | 不引入 Python Sidecar，也不遗留后续移植负担。 |
-| ADR-008 | 所有 Canon 写入先预览、再经人工确认 | 已确认 | 保护手稿，并让 AI 修改始终可审查。 |
-| ADR-009 | 第一版只使用单一 Manager；不建设 Multi-agent | 已确认 | 降低运行、合并、成本与 Provider 兼容复杂度。 |
-| ADR-010 | BYOK；密钥仅保存在本机加密存储 | 已确认 | 不引入账号、代理、额度或云端秘密管理。 |
-| ADR-011 | 第一版只支持 DeepSeek 与 OpenAI 文本 API，且禁止自动跨 Provider Fallback | 已确认 | 控制首发测试范围，并确保手稿不会被静默发送给另一方。 |
-| ADR-012 | 不支持离线 AI，但完整支持离线浏览和手动编辑 | 已确认 | 不承担本地模型部署成本，同时保证基本写作不依赖网络。 |
-| ADR-013 | 采用类似 Codex 的可折叠三栏界面 | 已确认 | 左栏配置 API，中栏对话，右栏查看项目文件，符合首版交互目标。 |
-| ADR-014 | 用户只输入 API Key，其余 Provider 配置由 App 固定 | 已确认 | 降低配置门槛，并缩小错误与安全输入面。 |
-| ADR-015 | UI 与默认写作语言为简体中文，不引入韩语专用逻辑 | 已确认 | 聚焦首批中文用户，避免继承无关的插件内容。 |
+| ID      | 决策                                                                     | 状态              | 理由                                                                                |
+| ------- | ------------------------------------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------- |
+| ADR-001 | 桌面优先，第一版只支持 Windows 11 x64                                    | 已确认            | 符合当前开发环境，可控制第一阶段打包范围。                                          |
+| ADR-002 | Local-first，不依赖 NovelGainker 云服务                                  | 已确认            | 保证手稿所有权、离线编辑和长期可用性。                                              |
+| ADR-003 | 使用 Tauri 2 外壳、React/TypeScript UI 和 Rust 后端                      | 已确认            | 体积较小、原生权限可控，并为后续 Android 提供可行路径。                             |
+| ADR-004 | Markdown 和项目资源是唯一权威数据                                        | 已确认            | 形成 NovelGainker 自有、可移植且不依赖数据库的项目格式。                            |
+| ADR-005 | 由 App 自己编排 Agent/Skill/Tool Loop，厂商 SDK 只作为 Adapter           | A-001 修订后确认  | API 切换不能依赖某家厂商的隐藏会话、Skill 或 Agent 运行时。                         |
+| ADR-006 | 内置固定版本的 NovelGainker 原生 Workflow Pack                           | 已被 ADR-017 取代 | 旧设计造成聊天与项目能力割裂。                                                      |
+| ADR-007 | 路径、事务、校验、恢复等确定性能力实现于 Rust Core                       | A-001 修订后确认  | 不引入 Python Sidecar；Skill 语义不必全部重写成固定表单工作流。                     |
+| ADR-008 | 所有 Canon 写入先预览、再经人工确认                                      | 已被 ADR-018 取代 | 逐文件预确认不符合持续 Agent 会话体验。                                             |
+| ADR-009 | 第一版只使用单一 Manager；不建设 Multi-agent                             | 已被 ADR-016 取代 | 保留唯一前台 Agent 和唯一 Writer，但 Manager 升级为持续 Agent Runtime。             |
+| ADR-010 | BYOK；密钥仅保存在本机加密存储                                           | 已确认            | 不引入账号、代理、额度或云端秘密管理。                                              |
+| ADR-011 | 第一版只支持 DeepSeek 与 OpenAI 文本 API，且禁止自动跨 Provider Fallback | 已确认            | 控制首发测试范围，并确保手稿不会被静默发送给另一方。                                |
+| ADR-012 | 不支持离线 AI，但完整支持离线浏览和手动编辑                              | 已确认            | 不承担本地模型部署成本，同时保证基本写作不依赖网络。                                |
+| ADR-013 | 采用类似 Codex 的可折叠三栏界面                                          | 已确认            | 左栏配置 API，中栏对话，右栏查看项目文件，符合首版交互目标。                        |
+| ADR-014 | 用户只输入 API Key，其余 Provider 配置由 App 固定                        | 已确认            | 降低配置门槛，并缩小错误与安全输入面。                                              |
+| ADR-015 | UI 与默认写作语言为简体中文，不引入韩语专用逻辑                          | 已确认            | 聚焦首批中文用户，避免继承无关的插件内容。                                          |
+| ADR-016 | 打开项目后的中栏是唯一、持续的 `ProjectAgentSession`                     | 已确认（A-001）   | 删除无工具普通聊天；所有请求都可选择 Skill 并调用受控项目工具。                     |
+| ADR-017 | 内置版本锁定、经审查的 Novelist-compatible Skill Pack                    | 已确认（A-001）   | 获得一致的小说工作方法，同时不依赖用户插件缓存、外部 Host 或 Python 环境。          |
+| ADR-018 | Canon 写入采用项目级授权策略，默认 `auto-apply-safe`                     | 已确认（A-001）   | 常规 Markdown create/patch 自动应用并提供逐轮 Diff 与撤销；高风险操作继续单独确认。 |
+| ADR-019 | 一个 Agent Turn 可串行修改多个 Markdown，并绑定 Turn 事务与撤销记录      | 已确认（A-001）   | 支持跨人物、设定、剧情和章节的连续更新，同时保持唯一 Writer 和可恢复性。            |
+| ADR-020 | 默认持久化有界会话摘要、Turn/Skill/Tool 元数据与撤销记录                 | 已确认（A-001）   | 支持跨重启连续协作；完整聊天正文仅在用户显式选择后保存。                            |
 
 ## 3. 目标与非目标
 
 ### 3.1 目标
 
 - 创建、打开、手动编辑、校验和导出 NovelGainker 原生 Markdown 项目。
-- 用 NovelGainker 原生工作流覆盖项目、设定、人物、素材、剧情、叙事、评审、视觉素材和 EPUB 等核心小说流程；这些是产品能力分类，不是对 Novelist Skill 的运行时兼容承诺。
+- 让统一项目 Agent 持续调用 Novelist-compatible Skill，覆盖项目、设定、人物、素材、剧情、叙事、评审、视觉素材和 EPUB。
 - 允许用户在 DeepSeek 与 OpenAI 之间显式切换，切换过程不修改小说项目文件。
 - 通过两个独立 Adapter 隔离厂商协议差异，业务代码不按厂商分叉。
 - API Key 不得进入项目文件、日志、导出物或 Prompt。
-- 修改 Canon 前展示提案和 Diff。
+- 常规 Markdown create/patch 在 `auto-apply-safe` 会话授权内执行，每轮展示 Diff 并支持撤销；高风险写入仍需独立确认。
 - 保留严格章节结构、连续性检查、故事账本更新以及确定性 EPUB 校验。
 - 无网络或无 API Key 时，文件树、预览、搜索、手动编辑、保存和本地确定性校验仍可使用。
 - 保证核心领域和工作流代码可被未来单独立项的 Android App 复用。
@@ -75,30 +80,31 @@ Markdown 始终是小说内容的唯一权威来源。SQLite 和应用状态可�
 
 以下属性按优先级驱动架构选择：
 
-1. **手稿安全**——不能静默覆盖、越出项目路径或未经审核修改 Canon。
+1. **手稿安全**——不能不可逆地静默覆盖或越出项目路径；自动写入必须受授权策略、Hash、事务、校验和撤销保护。
 2. **Provider 可移植性**——即使模型不支持 Tool Calling、Structured Output 或 Provider 会话状态，核心工作流仍可运行。
 3. **本地所有权与隐私**——不需要 NovelGainker 账户或服务器，也能持续使用项目。
 4. **生成过程外围确定性**——用 Schema、Validator 和本地工具包围模型输出。
 5. **可恢复性**——中断的运行不能留下半写入 Canon。
-6. **可追踪性**——用户能看到当前工作流、Provider、模型、上下文来源、拟修改内容、校验结果、Token 用量和成本估算。
-7. **可扩展性**——新增工作流或 Provider 时不应修改编辑器和项目领域模型。
+6. **可追踪性**——用户能看到当前 Turn、Skill、Tool、Provider、模型、上下文来源、文件 Diff、校验结果、Token 用量和成本估算。
+7. **可扩展性**——新增 Skill、工具或 Provider 时不应修改编辑器和项目领域模型。
 
 ## 5. 系统上下文
 
 ```mermaid
 flowchart LR
     Author[作者] --> UI[NovelGainker 界面]
-    UI --> Orchestrator[工作流编排器]
-    Orchestrator --> Workflows[工作流注册表与 Prompt 编译器]
-    Orchestrator --> Core[确定性小说核心]
-    Orchestrator --> Providers[AI Provider 网关]
+    UI --> Agent[ProjectAgentSession]
+    Agent --> Skills[Novelist-compatible Skill Registry]
+    Agent --> Policy[Action 与 Tool Policy]
+    Policy --> Core[确定性小说核心]
+    Agent --> Providers[AI Provider 网关]
     Core <--> Workspace[Markdown 项目工作区]
     Providers --> TextAPIs[文本模型 API]
     Core --> EPUB[已校验 EPUB]
     Secrets[加密密钥库] --> Providers
 ```
 
-NovelGainker 掌握编排权。AI Provider 只接收受限输入并返回提案；它们不拥有项目、文件系统、工作流状态或授权规则。
+NovelGainker 掌握编排和授权权。AI Provider 只接收有界上下文并返回结构化 Action、Patch 或文本；它们不拥有项目、文件系统、Skill 状态、写入事务或授权规则。
 
 ## 6. 运行时边界
 
@@ -107,12 +113,12 @@ NovelGainker 掌握编排权。AI Provider 只接收受限输入并返回提案�
 React/TypeScript 前端采用类似 Codex 的三栏工作台：
 
 - **左侧栏（可整体收起）**：只显示 DeepSeek/OpenAI Provider 选择、连接状态与 API Key 录入；API 设置卡本身也可折叠。第一版不显示 Base URL、协议、Model ID 或生成参数。
-- **中间主栏**：承载对话流、流式输出、当前工作流状态、停止生成、上下文说明、提案及确认入口，是最小宽度优先的主区域。
+- **中间主栏**：承载唯一项目 Agent Timeline、流式输出、Skill/Tool 活动、来源清单、逐轮 Diff、撤销和高风险确认入口，是最小宽度优先的主区域。
 - **右侧栏（可整体收起）**：承载项目文件树和当前文件的 Markdown 源文本。选中文件后直接手动编辑，不设置“预览 / 编辑”双标签；保存仍经过原子写入与外部修改检查。
 - 三栏宽度、折叠状态和右栏当前文件保存在本机 UI 偏好中，不写入项目。
 - 窄窗口优先保留中间栏，左右栏以抽屉方式打开，避免压缩对话区。
-- Diff、校验警告和 Canon 写入确认使用模态或覆盖面板，不与 Markdown 编辑区、API Key 表单混在一起。
-- 离线时对话输入仍可用于本地命令，但“发送给 AI”明确禁用并显示网络/密钥原因；预览、编辑、搜索、保存和确定性校验继续可用。
+- Diff、校验警告、Turn 撤销和高风险写入确认使用 Timeline 卡片、模态或覆盖面板，不与 Markdown 编辑区、API Key 表单混在一起。
+- 离线时 Agent 输入明确禁用并显示网络/密钥原因；预览、编辑、搜索、保存、撤销已有 Turn 和确定性校验继续可用，不排队待联网发送。
 
 前端不能执行任意 Shell。API Key 录入控件只把密钥提交给 Rust 后端存入加密 Vault；保存后前端只取得“是否已配置”和连接状态，不能取得掩码、尾号、指纹、凭据引用或任何 Key 字符。
 
@@ -129,9 +135,9 @@ Rust 后端是可信应用边界，负责：
 - 密钥保存和只读 Provider Preset 管理；
 - 向 Provider 发起网络请求；
 - 输出标准化流式事件；
-- 保存工作流状态并取消任务；
+- 保存 Agent Session/Turn/Skill/Tool 状态并取消任务；
 - 原子写入事务和恢复日志；
-- 运行 NovelGainker 原生确定性工具及参数 Schema 校验；
+- 运行 Novelist-compatible Skill Registry、Agent Action Policy、原生确定性工具及参数 Schema 校验；
 - 访问应用数据库；
 - 协调更新和数据迁移。
 
@@ -139,7 +145,7 @@ Provider HTTP 请求应从 Rust 发出，而不是从 WebView 发出。这样 AP
 
 ### 6.3 原生确定性工具
 
-第一版直接通过 Rust Crate 和带类型的 Tauri Command 暴露确定性操作。模型只能提出结构化参数；是否允许执行由编排器、工作流状态和用户确认共同决定。
+第一版通过 Rust Crate 和带类型的 Tauri Command 暴露确定性操作。模型只能提出结构化 Action/Patch；是否允许执行由 App Policy、项目授权策略、Turn 状态、路径/Hash/Schema 校验和必要的高风险确认共同决定。
 
 注册的应用能力包括：
 
@@ -157,7 +163,7 @@ Provider HTTP 请求应从 Rust 发出，而不是从 WebView 发出。这样 AP
 - `publish.build_epub`
 - `publish.validate_epub`
 
-这些名称是 App 内部命令契约，不是 CLI。模型不能提供可执行文件路径、Shell 命令或任意参数。覆盖操作只能通过独立 UI 操作和新的确认记录触发。
+这些名称是 App 内部命令契约，不是 CLI。Agent 工具还包括受限的 `project.list_files`、`project.read_markdown`、`project.search_markdown`、`project.create_markdown`、`project.patch_markdown`、`project.validate_markdown`、`project.get_diff` 与 `project.revert_turn`。模型不能提供可执行文件路径、Shell 命令、绝对路径或任意参数；覆盖和高风险动作必须满足 ADR-018 的授权矩阵。
 
 ### 6.4 共享 Rust Core
 
@@ -184,6 +190,7 @@ NovelGainker/
     desktop/                    Tauri + React 桌面应用
   crates/
     app-core/                   编排、授权、事务与应用服务
+    novelgainker-agent/         ProjectAgentSession、Turn 与 Action/Tool Loop
     novelgainker-domain/        项目格式与领域类型
     novelgainker-workflows/     原生工作流状态机
     novelgainker-validation/    格式与连续性校验
@@ -194,8 +201,10 @@ NovelGainker/
   packages/
     ui/                         React 组件与三栏布局
     workflow-schemas/           生成的 TypeScript Schema
+    agent-schemas/              生成的 Agent Action、Tool、Turn 与 Undo Schema
   resources/
-    workflows/v1/              NovelGainker 原生工作流、模板与参考资料
+    workflows/v1/              G3～G5 as-built 工作流资源，迁移完成前保留
+    skills/novelist/v1/         内置、版本锁定、经审查的 Novelist-compatible Skill Pack
   tests/
     fixtures/
     provider-contract/
@@ -206,7 +215,7 @@ NovelGainker/
     decisions/                  后续 ADR
 ```
 
-运行时不读取 Codex Plugin Cache，也不打包 Novelist 目录、`SKILL.md`、`openai.yaml` 或 Python 脚本。工作流的产品意图可以参考早期分析，但实现、措辞、Schema、Fixture 和 Golden Test 均由 NovelGainker 自己维护。若未来确需复制第三方代码、文字或资源，必须单独完成许可审查并保留相应声明；默认路径是原生实现。
+运行时不读取用户目录、Codex Plugin Cache、外部 `SKILL.md`、`openai.yaml` 或 Python 脚本。发行包只读取自身构建期固定并 Hash 的 Novelist-compatible Skill Pack；引入的文字、模板和参考资料必须完成许可、来源与变更审查。确定性脚本行为移植到 Rust 或声明式工具契约，Skill Pack 的 Schema、Fixture、Golden Test 和升级 Gate 由 NovelGainker 维护。
 
 ## 8. 项目数据模型
 
@@ -260,6 +269,16 @@ NovelGainker 原生 Scaffold 采用以下权威结构：
 
 数据库不能成为隐藏的 Canon 来源。删除数据库可能丢失界面历史，但不能让小说项目无法读取或无法出版。
 
+Architecture Amendment A-001 允许 App State 为持续 Agent 会话保存以下可删除、本机状态：
+
+- 项目隔离的有界会话摘要与消息索引；
+- Turn、Skill、Tool、Provider、状态、时间、来源 Hash 和结果 Hash；
+- `auto-apply-safe | review-every-write | plan-only` 授权策略；
+- Turn 事务、恢复与撤销记录；
+- 用户显式启用时保存的完整聊天正文。
+
+默认不持久化完整聊天正文。会话状态不得成为隐藏 Canon，不得包含 API Key、绝对路径、Provider 隐藏状态、隐藏推理或无法从项目与可见会话重建的小说事实。删除 App State 可以丢失聊天连续性和撤销历史，但不能损坏 Markdown、阻止项目打开或改变 Canon。
+
 NG-201 已把 App State 从 Schema v1 事务迁移到 v2。为支持现有 `app-state-v1.sqlite3` 原位升级，数据库文件名保持不变；Sprint 1 的 `ui_preferences`、`recent_projects` 和 `project_files` 三张表及其职责也保持不变。
 
 Schema v2 只新增 `provider_settings`：保存固定 `provider_id`、`preset_version`、不透明 `credential_ref`、选择状态、连接状态和检查时间。Provider 只能是 `deepseek` 或 `openai`，默认选择 OpenAI，且最多一个 Provider 被选中。真实 Key、Key 特征、Prompt、Response、Usage 和 Canon 均不得进入 SQLite。
@@ -268,178 +287,156 @@ NG-302 已把同一数据库事务迁移到 Schema v3。v3 只新增 `workflow_r
 
 启动读取到非终态 Run 时，Manager 必须把它归类为 `recovery_required` 并清除已丢失语义的进程内正文，绝不自动重发请求、重建提案、Apply 或写入 Markdown。v1/v2 → v3 Migration 失败必须事务回滚并安全降级；Vault、Workflow 检查点与 SQLite 不一致时只报告脱敏恢复状态，不自动联网，也不阻塞项目打开、手动编辑或原子保存。
 
+AM1 已把同一数据库事务迁移到 Schema v9，并保留 v1～v8 历史迁移。v9 只新增项目隔离的 `agent_sessions`、`agent_turns` 与 `agent_msg_index`：每项目最多一个有界摘要，最多 200 条角色/Hash/字节数消息索引和 100 个终态 Turn 元数据。完整聊天正文、项目正文副本、API Key、绝对路径、隐藏推理和 Provider 原始响应均不落库；启动时不重放活动 Turn，显式清空只删除 Agent 本机状态且 Canon 写入数为 0。
 
-## 9. 原生工作流运行时
+AM2 将 Schema 事务迁移到 v10，并保留 v1～v9 历史迁移。v10 增加项目授权策略、Pending/事务/Undo 的有界脱敏元数据与 30 天清理状态；Pending 写入正文只存在当前进程内，Undo 正文只存在 App State 专用目录的 Windows 当前用户 DPAPI 密文中。每项目最多 20 条/20 MiB Undo、每 Turn 最大 2 MiB；SQLite、事件、日志和证据都不得包含 Undo 明文或完整聊天正文。
 
-### 9.1 工作流定义
+## 9. Novelist-compatible Skill 运行时
 
-NovelGainker 把“Skill”概念产品化为自己的版本化工作流定义。每个工作流由可审查的说明、状态机、输入/输出 Schema、允许工具和确认点组成；安全边界由代码与 Schema 执行，不能只依赖 Prompt。
+### 9.1 Skill 定义与供应链
+
+发行包内置一个版本锁定、构建期验证并记录内容 Hash 的 Novelist-compatible Skill Pack。每个 Skill 声明触发说明、工作规则、模板、参考资料、允许工具、风险等级和输出契约；安全边界由 Rust Policy、Schema 与工具实现，不能只依赖 Prompt。
 
 ```yaml
-id: novelgainker.storytelling
+id: novel-story-telling
 version: 1
-mode: interactive-write
+risk: mixed
 allowed_tools:
-  - story.build_context
+  - project.list_files
+  - project.read_markdown
+  - project.search_markdown
+  - project.create_markdown
+  - project.patch_markdown
+  - project.validate_markdown
   - story.check_continuity
-  - story.apply_chapter_patch
-  - story.update_ledger
-requires_confirmation:
-  - create_chapter
-  - revise_chapter
-  - update_canon
-output_schema: ChapterProposalV1
+high_risk_actions:
+  - replace_whole_chapter
+  - promote_chapter_state
+  - update_story_ledger
 ```
 
-每个发行版内置并固定一个 Workflow Pack 版本。升级由 NovelGainker 自己提供 Schema Migration、变更记录和回归测试，不存在 Novelist 上游同步或兼容门。
+Pack 第一版覆盖 `create-novel-project`、`create-setting`、`create-character`、`create-material`、`create-plot`、`novel-story-telling`、`analytical-review`、`create-visual-asset` 与 `publish-novel`。许可、来源、版本和本地改动必须进入 Manifest；release 不读取外部插件缓存或运行 Python 脚本。
 
-### 9.2 工作流注册与路由
+AM1 首先激活目标架构的只读切片：9 项 Skill 与 `project.list_markdown`、`project.read_markdown`、`project.search_markdown`、`project.validate_markdown` 四个项目相对读取工具，运行时 Contract Set Hash 为 `a46ace17642e407f0f2b10c0579ddc7044352e2cea59fb2e7915d0813aeaa425`。
 
-构建阶段验证 `resources/workflows/v1/`，并生成包含 ID、描述、版本、参考资料、权限、Schema 和内容哈希的注册表。运行时按以下顺序路由：
+AM2 已在同一注册表中加入 `project.create_markdown` 与 `project.patch_markdown` 两个受 Skill/目录治理的写工具；create/patch 先形成 App 校验的 Preview、逐文件完整 Diff、来源/结果 Hash、风险与事务计划，再由冻结策略自动安全提交或等待 Hash 绑定确认。AM2 Runtime Contract Set Hash 为 `812b8d9208f46e70899ebb64681878f13a5a9854baf64f7afabd473e4dd64fa7`。删除、移动、重命名、任意文件系统/Shell、项目外读写、完整聊天持久化与 Sprint 6 能力仍未开放。
 
-1. 用户点击明确功能时，直接进入对应工作流。
-2. 用户输入明确的工作流命令时，验证后直接进入对应工作流。
-3. 自由对话先用确定性意图规则判断。
-4. 只有含糊的自由对话才调用当前选定 Provider 做意图分类。
-5. Router 只能返回工作流 ID 和置信度，不能执行工具。
-6. 低置信度或多意图结果必须让用户选择。
+### 9.2 会话内 Skill 路由
 
-高风险路由不能被随意推断。“分析评审”默认只读；普通出版不能偷偷增加文学评审或自动修订。
+项目打开后的每条聊天消息都进入同一个 Agent Turn：
 
-### 9.3 Prompt 编译
+1. 从当前项目、会话摘要和最近 Turn 构建有界上下文。
+2. Agent 选择一个或多个 Skill，并形成结构化 Action Plan。
+3. App Policy 校验 Skill、工具、路径、风险、预算和授权策略。
+4. Rust 执行允许的读取/搜索，把 Tool Result 标为不可信数据返回 Agent。
+5. Agent 可继续规划、读取或提交一个有界多文件 Patch Plan。
+6. Rust 校验源 Hash、目标、Schema 和事务边界后执行允许的写入。
+7. Timeline 展示 Skill、工具、来源、文件 Diff、诊断、用量和撤销入口。
 
-每次只加载当前工作流所需内容。Prompt 顺序如下：
+不存在与此循环并列的“普通 AI 对话”。未打开项目时只允许创建/打开项目和无写入的产品帮助。
 
-1. 不可变的 NovelGainker 安全与授权规则；
-2. 项目 `AGENTS.md`（若存在，仅作为项目写作约束，不授予系统权限）；
-3. 当前工作流说明；
-4. 当前任务需要的参考资料；
-5. 带来源标签的有限项目上下文；
-6. 标准化的对话状态；
+### 9.3 Agent Prompt 与 Context 编译
+
+每个 Turn 只加载完成当前请求所需的内容，顺序为：
+
+1. 不可变的 App Policy 与授权策略；
+2. 当前 Skill 定义、允许工具和风险矩阵；
+3. 项目 `AGENTS.md`（仅作为不可信写作约束）；
+4. 有界会话摘要与最近消息；
+5. 当前任务需要的参考资料；
+6. 带来源路径、Hash 和信任标签的项目上下文；
 7. 当前用户请求；
-8. 精确输出 Schema 和完成契约。
+8. 精确 Agent Action/Tool/Patch Schema 和完成契约。
 
-项目正文必须标记为不可信数据。章节、研究笔记或导入手稿中的文字不能授予工具权限，也不能覆盖 App Policy。发送敏感或大量上下文前，App 展示 Context Manifest，列出将发送的 Provider、模型、项目文件和片段。
+项目正文、会话正文、Skill 参考资料和 Tool Result 都不能授予权限或覆盖 App Policy。Timeline 必须让用户检查当前 Provider、Skill、来源和发送范围；大范围或敏感上下文仍需显式确认。
 
-### 9.4 工作流映射
+### 9.4 Skill 映射
 
-| 工作流 ID | 产品流程 | 修改规则 |
-| --- | --- | --- |
-| `novelgainker.project-create` | 目标目录预检、元数据向导、确定性 Scaffold 创建和验证 | 确认目标目录及所有冲突 |
-| `novelgainker.setting-create` | 读取关联上下文、生成结构化提案、交互修订、确定性写入 | 确认新文件，不静默覆盖 |
-| `novelgainker.character-create` | 人物简报细化、命名循环、结构化人物表、确定性写入 | 确认身份和最终人物表 |
-| `novelgainker.material-create` | 素材种子、用途决策、结构化素材文件 | 确认是否成为 Canon 以及是否写入 |
-| `novelgainker.plot-create` | Promise/Pressure/Turns 提案、方向调整、结构化 Plot 文件 | 确认重要 Canon 后写入 |
-| `novelgainker.storytelling` | 有限上下文、章节契约、连续性门禁、提案与 Diff、写章、严格校验、接受后更新账本 | Manager 串行写入 |
-| `novelgainker.analytical-review` | 范围清单、只读分批、证据化报告、可选的选定问题移交 | 除非另行授权修订，否则禁止写入 |
-| `novelgainker.visual-asset` | 锁定风格的 Prompt、导入或未来图片 Provider 结果、登记到项目 | 第一版不内置图片生成 API；确认资源与引用 |
-| `novelgainker.publish` | 结构预检、封面决策、确定性暂存、EPUB 构建和验证 | 只写生成目录，不执行外部分发 |
+| Skill ID               | 产品能力                             | 默认写入策略                                           |
+| ---------------------- | ------------------------------------ | ------------------------------------------------------ |
+| `create-novel-project` | 创建结构化项目与初始前提             | 目标目录与冲突始终确认                                 |
+| `create-setting`       | 创建或持续维护世界、地点、规则       | 普通项目内 create/patch 可 auto-apply-safe             |
+| `create-character`     | 创建或维护人物、关系、动机与秘密     | 普通项目内 create/patch 可 auto-apply-safe             |
+| `create-material`      | 创建或维护主题、线索、物件和场景种子 | 普通项目内 create/patch 可 auto-apply-safe             |
+| `create-plot`          | 创建或维护主剧情、转折、揭示与回收   | 局部 patch 可自动；大范围方向替换需确认                |
+| `novel-story-telling`  | 规划、写章、修订、连续性与读者认知   | 计划/局部 patch 可自动；整章覆盖、状态和 Ledger 需确认 |
+| `analytical-review`    | 评审大纲、章节或全稿并移交发现       | 默认只读；修订由同一会话明确进入写入 Action            |
+| `create-visual-asset`  | 视觉 Prompt、本地图片导入与项目登记  | 图片导入、项目外读取和 Canon 引用需确认                |
+| `publish-novel`        | 预检、构建并验证 EPUB                | 只写 `published/`；构建/替换需确认                     |
 
-工作流默认使用简体中文交互和中文写作。人物命名、文化语境和语言风格从项目设定推导；不保留原插件中的韩语命名或韩国语境专用分支。
+Skill 默认使用简体中文交互和中文写作。人物命名、文化语境和语言风格从项目设定推导，不保留韩语专用分支。
 
-## 10. 工作流状态机
+## 10. Agent Session 与 Turn 状态机
 
-所有 AI 辅助工作流共用持久化状态模型：
+每个项目最多一个活动 `ProjectAgentSession`，每个 Session 最多一个活动 Turn：
 
 ```text
-created
-  -> routed
-  -> awaiting_input
-  -> context_ready
-  -> generating
-  -> proposal_ready
-  -> awaiting_confirmation
+idle
+  -> planning
+  -> reading
+  -> acting
+  -> awaiting_high_risk_confirmation
   -> applying
   -> validating
   -> completed
-generating -> cancelled
-允许放弃的非终态 -> cancelled
-任何非终态 -> failed | recovery_required
+planning | reading | acting -> cancelled | failed
+applying | validating -> completed | recovery_required
 ```
 
 规则：
 
-- 生成阶段绝不能直接修改 Canon。
-- 提案必须包含计划执行的文件操作和用户可读的理由。
-- 用户确认与 Proposal Hash 绑定；上下文或提案变化后，旧确认自动失效。
-- Apply 前再次检查源文件 Hash，发现预览后被外部修改时立即停止。
-- 生成阶段可安全取消；Apply 阶段则等待原子事务完成或回滚。
-- 校验失败时尽量保留原文件，并记录恢复事件。
-- 每个 Run 的 Project/Workflow/Pack/Provider/Preset/Model 快照创建后不可更换；事件必须携带下一 sequence，旧事件与终态后的事件一律拒绝。
-- 全 App 最多一个非终态 Workflow Run；只有 `generating` 占用与普通聊天共享的 Provider 请求通道。
-- NG-303 在既有 `status/cancel/abandon` 上增加 `workflow_run_prepare` 与 `workflow_run_generate`：Prepare 只接受不透明项目会话、固定人物工作流和 `CharacterBriefV1`；Generate 只接受 Run ID、Manifest Hash 和显式确认。前端仍不能提交目标状态、完整 Prompt、Provider Response、Proposal、Diff、文件路径或 Apply 内容。
-- 放弃需要显式确认，只清除内存运行内容并把 Run 终止为 `cancelled`，不修改 Canon。
+- Turn 创建后冻结 Project/Provider/Preset/Model、授权策略和 Skill Pack 版本。
+- Provider 只能提出结构化 Action/Tool/Patch，Rust Policy 决定是否合法执行。
+- `plan-only` 禁止全部写工具；`review-every-write` 在每次写入前停留；`auto-apply-safe` 只自动执行风险矩阵允许的 create/局部 patch。
+- 多文件 Turn 先冻结全部源 Hash，再由唯一 Writer 串行提交；任一前置校验失败时写入数为 0。
+- 每个已提交 Turn 保存结果 Hash、事务/恢复记录和可执行撤销信息；撤销同样重检当前 Hash，不静默覆盖后续编辑。
+- 高风险确认绑定 Turn、Action Plan 和全部源 Hash；任何变化使确认失效。
+- 取消不启动新的工具；Applying/Validating 必须完成、回滚或进入 `recovery_required`。
+- 不允许跨 Provider 自动 Fallback、并行 Canon Writer、后台静默继续或从 Provider 隐藏状态恢复。
 
-### 10.1 章节写作顺序
+### 10.1 连续小说协作顺序
 
 ```mermaid
 sequenceDiagram
     participant U as 作者
-    participant O as 编排器
-    participant C as 小说核心
+    participant A as ProjectAgentSession
+    participant S as Skill Registry
+    participant P as App Policy / Rust Tools
     participant M as 文本 Provider
-    participant W as 项目工作区
+    participant W as Markdown 工作区
 
-    U->>O: 编写或修改第 N 章
-    O->>C: 构建有限上下文包
-    C->>W: 读取关联 Canon 和近期 Draft
-    C-->>O: 返回 Context Manifest 与结构发现
-    O->>M: 工作流规则 + 有限上下文 + ChapterProposal Schema
-    M-->>O: 返回结构化章节提案
-    O->>C: 校验提案并预检查连续性
-    O-->>U: 展示章节契约、正文、警告和 Diff
-    U->>O: 确认 Proposal Hash
-    O->>C: 执行原子写入
-    C->>W: 创建或 Patch 章节
-    C->>C: 严格连续性校验
-    C-->>O: 返回校验报告
-    O-->>U: 展示结果和剩余警告
-    U->>O: 接受或定稿章节
-    O->>C: 预览并更新 Story Ledger
+    U->>A: 更新世界规则，并同步主剧情与下一章计划
+    A->>S: 选择 setting + plot + storytelling
+    A->>M: 会话摘要 + Skill + 有界项目目录
+    M-->>A: 结构化读取与搜索 Action
+    A->>P: 校验并执行只读工具
+    P->>W: 读取受限 Markdown
+    P-->>A: 带路径与 Hash 的 Tool Result
+    A->>M: Tool Result + Patch Schema
+    M-->>A: 多文件 Patch Plan
+    A->>P: 风险、授权、Hash、Schema 与事务校验
+    P->>W: 串行原子应用允许的 Patch
+    P-->>A: Diff、诊断、结果 Hash 与撤销记录
+    A-->>U: 同一 Timeline 展示结果并继续对话
 ```
 
-故事账本必须在作者接受或定稿章节后更新，不能在模型刚完成 Token 输出时就更新。
+章节状态提升和 Story Ledger 关键状态变更仍属于高风险 Action，不能仅因 Token 输出完成而自动执行。
 
 ## 11. Agent 运行时
 
-### 11.1 单 Manager 模型
+### 11.1 单项目 Agent 模型
 
-第一版只有一个由 App 编排器实现的 **Manager**。它持有一个用户可见 Run 的状态、上下文、确认记录和全部 Canon 写入权。Manager 不是独立常驻 AI Agent；它是确定性状态机，按需要调用当前选中的文本 Provider。
+`ProjectAgentSession` 是一个持续、项目隔离的前台 Agent Runtime，不是普通聊天包装器。它持有会话摘要、最近消息、目标、当前 Skill、工具结果、授权策略、Turn 状态和唯一 Canon Writer 租约；不同项目之间不得共享这些内容。
 
-NG-302 的 as-built Manager 位于 App 自有 Rust Crate，不依赖 Novelist、Codex Skill/Agent 或厂商 Agent Runtime。Manager 生产代码不访问文件系统或网络；App State 只持久化脱敏检查点，简报、上下文正文、Provider Response 和 Proposal 只允许存在于可清除的进程内内存。Tauri 层采用“克隆 Manager → 验证转换 → 持久化检查点 → 提交内存状态”的顺序，持久化失败不会把未记录的目标状态留在 Manager 中。
+NovelGainker 自己实现 Agent Host 和权限面，不依赖 Codex、ChatGPT 或 Provider 原生 Agent Runtime。DeepSeek/OpenAI Adapter 都映射到同一内部 Agent Action 协议；若某 Provider 没有原生 Tool Calling，则使用严格结构化 Action、同一 Rust Validator 和最多一次同 Provider 格式修复。
 
-NG-303 的 as-built Context Builder 位于同一 App 自有 Rust Crate，生产代码不访问文件系统或网络；Tauri 只能通过 App Core 的受控项目句柄读取 `project.md` 与根目录 `AGENTS.md`。人物简报固定为 Schema v1，最多 4000 字符/16 KiB；每个来源最多纳入 1600 字符/4 KiB，并在 Manifest 中展示准确的相对路径、来源 Hash、原始/纳入计数、包含理由、信任标签、有界明文预览和截断状态。未保存编辑器文本、搜索结果、其他 Canon、隐藏目录、普通聊天历史和项目外文件不在输入面内。
+Agent 可以通过注册工具读取和更新项目，但不能获得操作系统路径、任意文件系统、Shell、Process、Opener、任意 URL 或权限配置。Skill 与项目内容是不可信输入；只有 App Policy 能授予工具调用和写入权限。
 
-Manifest 的 canonical JSON Hash 绑定 Run、Project、Workflow/Pack、Provider/Preset/Model、Brief Hash 与全部来源 Hash。固定 Prompt 依次包含 App 安全策略、标为不可信的项目 `AGENTS.md`、工作流说明、固定参考/模板、标为不可信的 `project.md`、空对话历史、标为不可信的人物简报和输出 Schema；每个不可信边界同时包含对应内容 SHA-256，使项目文本不能伪造结束标签或扩大权限。Prompt 顺序、注入 Fixture 与 Golden Hash 由纯 Rust 测试锁定。
+### 11.2 单 Agent、多 Skill、唯一 Writer
 
-`workflow_run_prepare` 完全离线且不写项目，只在内存保存 Prepared Context，并在 App State 写入脱敏运行元数据与 Manifest Hash。用户审查 Manifest 后，`workflow_run_generate` 必须同时满足显式 `confirmed=true`、完全相同的 Manifest Hash、来源文件 Hash 未变化、捕获的 Provider 仍是当前已配置且连接成功的 Provider，才会通过固定 Provider Core 发起人物结构化生成；本地严格解析失败时最多向同一捕获 Provider 发起一次有界修复请求。生成期间普通聊天、Provider/Key 切换和项目切换被锁定，但右栏 Markdown 手动编辑仍保持独立；若用户编辑了被纳入来源，Hash 重检会阻止发送并要求重新准备。
+Novelist 的九项能力是同一 Agent 会话中的 Skill，不是九个常驻并行 Agent。一个 Turn 可以选择多个 Skill 并串行调用多个工具，但第一版仍不实现 Agent 间通信、Handoff、并行任务、并行 Canon 写入或自动合并。
 
-完整简报、Prompt 和 Context 只存在可清除的 Rust 内存；Provider 原始响应只存在于解析/单次修复的短生命周期局部变量，随后立即清除，均不进入 WebView 事件、App State、日志或证据。NG-304 建立的通用 Proposal 安全层保持不变：严格 `CanonProposalV1` 只允许一个 create/replace Operation；版本化 Canonical JSON 与 Proposal Hash 绑定 Workflow/Pack/Run、Provider/Preset/Model、Manifest、目标源状态、拟写入字节 Hash/长度、严格校验结果和警告。Rust 只在内存保留精确拟写入字节，Debug、检查点、日志和错误不含正文或 Diff。
-
-Workflow 状态快照升级为 Schema v3；WebView 可以显示目标、操作、来源状态、安全校验、完整新内容和 replace 逐行 Diff，但 `workflow_proposal_apply` 只接受 `runId`、`proposalHash` 与 `confirmed`。Apply 从 Rust 持有的 Proposal 取回全部材料，重新检查 Context 和目标状态，拒绝当前编辑目标、只读会话、第二 Writer、恢复阻断、create collision 和过期 replace；写入使用同目录临时文件、恢复日志、不覆盖 create 或 Windows 原子 replace，并在写后 Hash 与严格 Validation 都通过后才进入 `completed`。失败只会保持旧 Canon、回滚或进入 `recovery_required`。
-
-NG-305 已把 `character-create` 接入生产路径。Provider 只能返回拒绝未知字段、带严格语义上限的 `CharacterProposalV1`，不能指定路径、Frontmatter、工具或文件操作；DeepSeek 固定使用 JSON Output，OpenAI 固定使用 strict JSON Schema Structured Outputs，普通对话请求不携带结构化输出设置。两家 Adapter 最终进入同一个本地 Validator；OpenAI 请求 Schema 只移除其支持子集未接受的 `uniqueItems`，本地唯一性约束仍保留。
-
-有效人物数据由纯 Rust Serializer 确定性生成为 UTF-8/LF Markdown，并只在安全中文显示名通过 Windows 保留名、分隔符、隐藏名、尾点/空格与长度检查后映射到 `characters/<人物名>.md`。目标必须处于 `missing`，否则返回冲突且零写入；成功生成只形成 create Proposal，继续经过完整预览、Proposal Hash、独立确认与可恢复原子 Apply。创建成功后前端刷新文件树并请求右栏打开新文件，现有未保存编辑仍受丢弃确认保护。
-
-NG-306 已把取消、冲突、故障恢复和双 Provider 路径汇总为 G3 技术证据。DeepSeek/OpenAI Loopback 均经过生产 Validator、确定性 Serializer、Proposal Hash、显式确认与可恢复 Apply；未确认、取消、过期和冲突路径保持零 Canon 写入。Applying 子进程故障注入覆盖提交前回滚与写后完成，重启对账只允许完成、回滚或进入 `recovery_required`。隔离临时项目中的高熵 Canary 会扫描 SQLite、日志、错误、DOM、截图元数据和 G3 产物，默认质量门仍不读取真实 Key、不联网，也不触发跨 Provider Fallback。
-
-原 Novelist 包中的 `agents/openai.yaml` 仅曾被用于分析显示名称和起始提示，不会打包、解析或运行。NovelGainker 不承诺兼容任何 Codex、ChatGPT 或厂商 Agent 格式。
-
-### 11.2 逻辑角色而非 Multi-agent
-
-Router、Writer、Reviewer、Summarizer、Continuity Auditor 和 Publisher 是同一 Manager 内部的工作流步骤或 Prompt Profile，不是可并行自治的 Agent：
-
-| 逻辑角色 | 职责 | 执行边界 |
-| --- | --- | --- |
-| Router | 对含糊自由请求分类 | 只返回工作流 ID 和置信度 |
-| Writer | 规划、起草或提出修订 | 只提交结构化提案 |
-| Reviewer | 执行大纲、章节或全稿评审 | 默认只读 |
-| Summarizer | 生成带来源的有限摘要 | 不写 Canon |
-| Continuity Auditor | 检查人物、时间线、世界规则和线索 | 不写 Canon |
-| Publisher | 调用确定性 EPUB 工具 | 只能写 `published/` |
-
-第一版不实现 Agent 创建、Agent 间通信、Handoff、并行任务或自动合并。若未来产品目标发生变化，必须另开 ADR 与安全评审，不能把 Provider 原生 Multi-agent 能力直接接入 Canon 写入路径。
+G3～G5 已实现的 Manager、Context Builder、Validator、Serializer、Hash、原子写入、恢复与 Provider/Vault 作为迁移输入保留。旧 `provider_chat_start`、独立 Router、固定表单 Workflow Run 和逐文件确认 UI 属于 as-built 兼容层；它们只有在 Agent Migration Program 的 Story Packet 明确授权后才能被重构或移除。
 
 ## 12. AI Provider 架构
 
@@ -500,23 +497,23 @@ ProviderAdapter
 
 ### 12.3 能力与降级
 
-| 能力 | 首选路径 | 本地降级路径 |
-| --- | --- | --- |
-| Streaming | Provider 原生流 | 非流式响应，并显示任务进行中状态 |
-| Structured Output | 原生 Schema 约束 | JSON 指令、严格本地解析、一次同 Provider 修复尝试，失败后停止 |
-| Tool Calling | 原生 Function/Tool Call | 模型只输出结构化提案，由 App 工作流调用确定性工具 |
-| Token Count | Provider 返回计数 | 保守本地估算并预留输出预算 |
-| Persisted Conversation | 不作为依赖 | App 从标准化对话与 Canon 重建上下文 |
+| 能力                   | 首选路径                 | 本地降级路径                                                             |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------ |
+| Streaming              | Provider 原生流          | 非流式响应，并显示任务进行中状态                                         |
+| Structured Output      | 原生 Schema 约束         | JSON 指令、严格本地解析、一次同 Provider 修复尝试，失败后停止            |
+| Tool Calling           | 原生 Function/Tool Call  | 模型输出严格 Agent Action JSON，由 App Policy 校验后调用同一组确定性工具 |
+| Token Count            | Provider 返回计数        | 保守本地估算并预留输出预算                                               |
+| Persisted Conversation | 不依赖 Provider 会话状态 | App 从 Canon、有界会话摘要和最近可见消息重建上下文                       |
 
-第一版不支持 Vision 或图片生成 API；视觉素材工作流只生成文字 Prompt、导入本地图片并登记资源。第一版也不实现离线 AI、本地端点或自定义兼容端点。
+第一版不支持 Vision 或图片生成 API；`create-visual-asset` Skill 只生成文字 Prompt、导入本地图片并登记资源。第一版也不实现离线 AI、本地端点或自定义兼容端点。
 
-只允许在两个 Run 之间切换 Provider。存在未完成写事务时，必须先完成、失败或回滚。切换后从 Canon 文件和标准化对话重新构建上下文，不能迁移 Provider 隐藏状态或隐藏推理。
+只允许在两个 Turn 之间切换 Provider。存在未完成写事务时，必须先完成、失败或回滚。切换后从 Canon 文件、有界会话摘要和最近可见消息重新构建上下文，不能迁移 Provider 隐藏状态或隐藏推理。
 
 ### 12.4 模型角色与 Fallback
 
-当前选中的 Provider 负责 Router、Writer、Reviewer 和 Summarizer 等全部 AI 步骤。所有步骤使用该 Provider 的固定预设模型，第一版没有按角色选择模型的 UI。
+当前选中的 Provider 为同一个 `ProjectAgentSession` 执行意图判断、Skill 选择、计划、内容生成、评审和摘要等 AI 步骤。所有步骤使用该 Provider 的固定预设模型，第一版没有按角色选择模型的 UI，也不把这些步骤拆成常驻多 Agent。
 
-禁止自动跨 Provider Fallback。当前 Provider 失败时，Run 进入失败或可重试状态；只有用户明确切换并重新发送后，内容才能交给另一 Provider。同一 Provider 内也只允许对瞬时网络错误或 Rate Limit 做有界重试，不能借重试更换厂商。
+禁止自动跨 Provider Fallback。当前 Provider 失败时，Turn 进入失败或可重试状态；只有用户明确切换并重新发送后，内容才能交给另一 Provider。同一 Provider 内也只允许对瞬时网络错误或 Rate Limit 做有界重试，不能借重试更换厂商。
 
 ## 13. 工具与文件系统安全
 
@@ -527,9 +524,9 @@ ProviderAdapter
 - Input Schema；
 - Output Schema；
 - 只读或写入分类；
-- 允许调用的工作流状态；
+- 允许调用的 Skill、Turn 状态和目标目录；
 - 对 Project Root 的要求；
-- 是否需要确认；
+- 风险等级、授权策略与是否需要单独确认；
 - Timeout 和取消行为；
 - 审计日志脱敏规则。
 
@@ -544,24 +541,25 @@ ProviderAdapter
 3. 拒绝模型提供的绝对路径；
 4. 拒绝 `..`、符号链接和 Reparse Point 越界；
 5. 只允许访问预期的源目录或生成目录；
-6. 除非工作流和用户确认允许，否则拒绝覆盖；
+6. 只有 Action Plan、工具契约、授权策略和风险门共同允许时才可创建或覆盖；
 7. Canon 写入使用同目录临时文件和原子 Rename。
 
 模型可访问功能中不包含递归删除。
 
-### 13.3 Diff 与确认
+### 13.3 Diff、授权与撤销
 
-新文件展示完整预览，修改展示语义或逐行 Diff。确认记录包含：
+每个写入 Turn 完成后必须展示新文件全文或修改 Diff，并生成可恢复的撤销记录。`review-every-write` 在提交前展示同一 Diff；`auto-apply-safe` 可在会话授权内直接提交常规安全变更；`plan-only` 禁止提交。覆盖受保护文件、整章替换、章节状态变化、Story Ledger 更新、项目外读取/导入和发布替换等高风险动作在任何策略下都需单独确认。
 
-- Proposal Hash；
-- 源文件 Hash；
+- Turn ID、Action Plan Hash；
+- 全部源文件与目标文件 Hash；
 - Provider 与 Model；
-- 工作流 ID 和当前步骤；
+- Skill ID、工具调用和当前步骤；
 - 要创建或修改的文件；
+- 生效的授权策略和高风险确认记录；
 - 用户接受的校验警告；
 - 时间戳。
 
-如果预览后文件发生变化，Apply 必须停止并重新生成 Diff。
+如果计划冻结后任一源文件或目标文件发生变化，Apply 必须停止并重新生成 Action Plan 与 Diff。撤销只能恢复该 Turn 实际修改的文件，并在撤销前再次检查当前 Hash，避免覆盖后续人工编辑。
 
 ## 14. 密钥与隐私
 
@@ -571,20 +569,22 @@ API Key 保存在加密应用 Vault，例如 Tauri Stronghold 或操作系统凭
 
 - Telemetry 默认不包含手稿和 Prompt 正文；
 - 日志脱敏 Authorization Header、API Key、Signed URL 和 Response Body；
-- 每个 Run 明确显示会收到内容的 Provider 和 Model；
+- 每个 Turn 明确显示会收到内容的 Provider 和 Model；
 - Context Inspector 展示将离开设备的文件或片段；
 - 跨 Provider Fallback 不存在；用户必须显式切换并重新发送；
 - Crash Report 必须选择加入，且不能包含项目正文；
-- 内置 Workflow Pack 在构建时经过 Hash 与 Schema 校验；项目文本始终按不可信输入处理。
+- 内置 Skill Pack 在构建时经过来源、许可、Hash、Schema 与工具权限校验；项目文本始终按不可信输入处理。
 
 Threat Model 必须覆盖：导入手稿中的恶意文字、研究笔记 Prompt Injection、模型 JSON 中的路径穿越、被入侵的 Provider Response、密钥泄漏和外部文件并发修改。
 
 ## 15. 可靠性、恢复与并发
 
 - 每个打开项目由一个进程级 Lock 保护，确保同一时间只有一个 NovelGainker Writer。第二个窗口只能只读，或请求转移 Lock。
+- 每个项目同一时间最多有一个活动写入 Turn；多 Skill、多工具仍由唯一 Writer 串行执行。
 - 通过 File Watcher 和内容 Hash 检测外部编辑器修改。
 - Canon 写入使用事务日志；日志保存在 App 状态目录，而不是手稿正文中。
-- 事务失败时恢复旧文件并报告恢复状态。
+- 多文件 Turn 在写入前冻结全部源/目标 Hash；任一前置校验失败时零写入，提交失败时恢复旧文件并报告恢复状态。
+- 已完成 Turn 提供有界撤销；撤销前校验当前 Hash，不能静默覆盖后续修改。
 - `published/` 可在预检后重建，但不能通过修改生成物来反向修复源文件。
 - 长时间 Provider Call 支持取消和明确 Timeout。
 - 只自动重试瞬时网络错误和 Rate Limit；不能自动重试写入或含糊模型响应。
@@ -592,12 +592,12 @@ Threat Model 必须覆盖：导入手稿中的恶意文字、研究笔记 Prompt
 
 ## 16. 搜索、检索与上下文预算
 
-NovelGainker 原生 Context Builder 按产品规则优先考虑显式链接、Master Source、目标大纲、近期 Draft、Story Ledger 和 Query Match。
+Agent Context Builder 按当前目标、已选 Skill、显式链接、Master Source、目标大纲、近期 Draft、Story Ledger 和 Query Match 编译有界 Context Pack。
 
 检索规则：
 
 - 显式 Source ID 的优先级高于词法相似度；
-- 按当前工作流契约加载项目 `AGENTS.md`、Style Guide、Master Plot 和 Master Outline；
+- 按当前 Skill 契约加载项目 `AGENTS.md`、Style Guide、Master Plot 和 Master Outline；
 - 读者已知信息只能从之前章节的 `## Draft` 判断；
 - 隐藏 Canon 和 Outline 信息必须标为作者侧上下文；
 - 只有有限摘要无法解决任务时，才读取完整旧章节；
@@ -608,13 +608,13 @@ NovelGainker 原生 Context Builder 按产品规则优先考虑显式链接、Ma
 
 ## 17. 视觉素材与出版
 
-第一版不调用图片生成 API。视觉素材工作流根据项目源文件生成并保存锁定风格的文字 Prompt，用户可在外部工具生成图片后导入：
+第一版不调用图片生成 API。统一 Agent 会话中的 `create-visual-asset` Skill 根据项目源文件生成并保存锁定风格的文字 Prompt，用户可在外部工具生成图片后导入：
 
 1. App 生成并展示可复制的完整 Prompt；
 2. 用户从本地选择候选图片；
 3. App 在临时视图中预览并检查格式；
-4. 用户确认后复制到 `assets/cover/` 或 `assets/illustrations/`；
-5. 再次确认 Markdown 相对路径和登记信息。
+4. 用户单独确认后复制到 `assets/cover/` 或 `assets/illustrations/`；
+5. Agent Timeline 展示 Markdown 相对路径、登记信息和最终 Diff。
 
 EPUB 出版保持确定性。Publisher 必须：
 
@@ -636,12 +636,12 @@ Windows 内部测试包包含：
 
 - Tauri 应用与 WebView UI；
 - Rust 后端及原生确定性 Core；
-- 固定版本的 NovelGainker Workflow Pack；
+- 固定版本、经许可审查和构建期校验的 Novelist-compatible Skill Pack；
 - SQLite Migration；
 - Windows Credential Manager 集成；
 - 必要的许可和 Attribution 文件。
 
-发行包不包含 Python、Novelist 插件缓存、本地模型或远程控制服务。
+发行包不包含 Python、外部 Novelist 插件或缓存、本地模型或远程控制服务；运行时只读取发行包内置 Skill Pack。
 
 ### 18.2 Android 范围
 
@@ -660,24 +660,26 @@ Windows 内部测试包包含：
 
 ## 19. 可观测性与成本控制
 
-每个 Run 记录不含手稿正文的元数据：
+每个 Turn 记录不含手稿正文的元数据：
 
-- Run ID、工作流 ID、状态转换和耗时；
+- Turn ID、Skill ID、状态转换和耗时；
 - Provider、Model 和采用的 Capability 路径；
 - Provider 返回的 Input/Output Token；
 - 根据带更新时间的价格元数据计算的估算成本；
-- 工具名称、状态和脱敏错误；
+- Agent Action、工具名称、状态和脱敏错误；
 - 上下文源路径与 Hash；
-- 确认记录和校验结果 ID。
+- 授权策略、高风险确认、Diff、撤销和校验结果 ID。
 
-价格会随时间变化，必须显示更新时间。成本只是估算值，App 可提供每次 Run 的最大输出限制和每月警告阈值，但不能保证 Provider 最终账单。
+价格会随时间变化，必须显示更新时间。成本只是估算值，App 可提供每次 Turn 的最大输出限制和每月警告阈值，但不能保证 Provider 最终账单。
 
 ## 20. 测试策略
 
-### 20.1 NovelGainker 原生契约测试
+### 20.1 Skill Pack 与本地契约测试
 
 由本项目维护 Fixture 与 Golden Test，覆盖：
 
+- Skill Manifest、来源/许可记录、版本、内容 Hash 和允许工具；
+- Agent Action、Turn、事务与撤销 Schema；
 - 项目初始化、已有目录与冲突处理；
 - Markdown/Frontmatter Schema 与严格章节标记；
 - Story Ledger 渲染与更新；
@@ -686,7 +688,7 @@ Windows 内部测试包包含：
 - 图片导入与资源路径登记；
 - EPUB 渲染、打包和验证。
 
-这些测试表达 NovelGainker 自己的产品契约，不以 Novelist 版本或测试结果作为发布门。
+这些测试表达 NovelGainker 自己的产品与兼容契约。内置 Skill Pack 的固定版本、许可清单、Hash、Schema、Fixture 和 Golden Test 都是发布门；外部 Novelist 安装及其缓存不参与运行时或测试判定。
 
 ### 20.2 Provider Contract Test
 
@@ -696,6 +698,8 @@ DeepSeek 与 OpenAI Adapter 都必须通过 Mock 契约测试，以及由开发�
 - 固定 Base URL、协议与 Model ID；
 - Streaming Event 标准化与取消；
 - Structured Output 成功、畸形输出和同 Provider 修复；
+- 原生 Tool Calling 与严格 Agent Action JSON 降级路径产生等价工具请求；
+- 多轮 Tool Result 回传、Turn 上限、取消和异常停止；
 - Rate Limit、Timeout 与有界重试；
 - Usage 标准化；
 - 用户显式切换 Provider；
@@ -704,21 +708,22 @@ DeepSeek 与 OpenAI Adapter 都必须通过 Mock 契约测试，以及由开发�
 
 普通单元测试与离线编辑测试不能依赖 Live Provider。
 
-### 20.3 安全、离线与工作流测试
+### 20.3 安全、离线与 Agent 测试
 
 - 路径穿越、绝对路径、符号链接和 Reparse Point；
 - 恶意文件名、Frontmatter 与 Prompt Injection；
 - 模型请求未注册工具；
-- 过期 Proposal Hash 和并发外部修改；
-- 每个工作流状态中的取消；
-- 原子写入阶段的 Crash Recovery；
+- 过期 Action Plan/源文件 Hash 和并发外部修改；
+- 每个 Agent Turn 状态中的取消；
+- 多文件零写入前置校验、事务 Crash Recovery 和有界撤销；
 - 离线或无 Key 时仍能打开、预览、编辑、保存、搜索和本地校验；
 - 离线时 AI 发送明确禁用，且不会排队后静默发送；
-- 所有 Canon 写入都显示预览或 Diff，并绑定确认 Hash；
+- `plan-only`、`review-every-write` 与 `auto-apply-safe` 的授权矩阵，以及全部高风险动作的单独确认；
+- 所有 Canon 写入都产生可见 Diff，并绑定 Turn、Action Plan 与源文件 Hash；
 - UI 不暴露 Base URL、Model ID 或自定义 Endpoint；
 - 中文 UI 与新项目默认写作语言为简体中文；
-- 工作流资源中不存在韩语专用分支；
-- 应用不加载 Novelist 插件缓存，也不启动 Python/通用 Shell。
+- Skill Pack 中不存在韩语专用分支；
+- 应用不加载外部 Novelist 插件或缓存，也不启动 Python/通用 Shell。
 
 ### 20.4 端到端验收路径
 
@@ -727,17 +732,17 @@ DeepSeek 与 OpenAI Adapter 都必须通过 Mock 契约测试，以及由开发�
 1. 在 Windows 11 x64 创建 NovelGainker 项目；
 2. 不配置 Key，离线打开、编辑并保存 Markdown；
 3. 分别录入 DeepSeek 与 OpenAI Platform API Key，并完成连接测试；
-4. 折叠 API 卡、左侧栏和右侧栏，重启后确认布局偏好恢复；
-5. 创建人物并完善剧情；
-6. 使用 DeepSeek 生成一章提案，预览并确认写入；
-7. 显式切换到 OpenAI，通过新 Context Pack 提出修订；
-8. 运行严格连续性校验，接受章节并更新 Story Ledger；
-9. 构建并验证 EPUB；
-10. 关闭并重新打开 App，确认项目完整、密钥受到保护且没有自动 Fallback。
+4. 在同一项目 Agent 会话中提出人物、设定和剧情要求，确认 Agent 选择对应 Skill 并连续更新多个 Markdown；
+5. 在默认 `auto-apply-safe` 下检查 Turn Diff，并撤销一次常规安全修改；
+6. 使用 DeepSeek 生成或修订一章，高风险整章替换必须单独确认；
+7. 显式切换到 OpenAI，从 Canon、有界会话摘要和最近可见消息重建上下文后继续修订；
+8. 运行严格连续性校验，分别确认章节状态变化和 Story Ledger 更新；
+9. 通过 `publish-novel` 构建并验证 EPUB；
+10. 关闭并重新打开 App，确认项目、会话摘要、Turn 元数据与撤销状态完整，密钥受到保护且没有自动 Fallback。
 
 ## 21. 交付顺序
 
-以下是架构层面的先后关系，还不是 Sprint Plan。
+以下是架构层面的先后关系；阶段 A～C 为 G0～G5 的 as-built 历史，阶段 D 起是 Amendment A-001 批准后的迁移方向。具体实施仍必须由独立 Story Packet 授权。
 
 ### 阶段 A——桌面与本地基础
 
@@ -760,13 +765,21 @@ DeepSeek 与 OpenAI Adapter 都必须通过 Mock 契约测试，以及由开发�
 - 实现 Context Builder、Continuity Checker、Chapter Patch 和 Story Ledger；
 - 增加严格校验、Recovery Journal 与离线回归测试。
 
-### 阶段 D——原生工作流覆盖
+### 阶段 D——统一 Agent Migration Program
 
-- 完成项目、设定、人物、素材、剧情、叙事与分析评审工作流；
+- 冻结 `ProjectAgentSession`、Agent Action、Tool、Turn、授权和撤销契约；
+- 引入版本锁定、经许可审查的 Novelist-compatible Skill Pack；
+- 把普通聊天、独立 Router 和表单 Run 迁移为统一 Agent Timeline 与会话内 Skill/Tool Loop；
+- 先交付只读工具循环，再交付 `auto-apply-safe`、多文件事务和撤销；
+- 在迁移 Gate 通过前不移除 G3～G5 as-built 能力。
+
+### 阶段 E——Skill 覆盖与出版
+
+- 在统一 Agent 会话中覆盖项目、设定、人物、素材、剧情、叙事与分析评审 Skill；
 - 完成视觉 Prompt/本地图片导入和 EPUB Publishing；
 - 完成中文默认值、韩语专用内容排除和安全测试。
 
-### 阶段 E——Windows 内部测试包门
+### 阶段 F——Windows 内部测试包门
 
 - 执行完整端到端验收、性能与大项目测试；
 - 生成明确标注“内部测试”的 Windows 测试包，并验证测试版本数据与 Preset Migration；
@@ -776,51 +789,65 @@ macOS、Linux、新 Provider、图片生成 API、Multi-agent 和独立 Android 
 
 ## 22. 风险与缓解措施
 
-| 风险 | 影响 | 缓解措施 |
-| --- | --- | --- |
-| 把自然语言工作流误当成安全策略 | 不同模型行为不一致，权限漂移 | 用 Rust 状态机、Schema 和工具注册表执行权限与门禁 |
-| DeepSeek 与 OpenAI 能力不同 | 切换后结果格式或质量变化 | 最小公共契约、Adapter 测试、显式能力降级和清晰错误 |
-| 固定模型被厂商弃用 | 新安装或连接测试失败 | Provider Preset 版本化、应用升级迁移、发布前 Live Smoke Test |
-| 原生重写范围被低估 | 首版延误或缺少关键行为 | 先固化产品行为清单和 Golden Test，再按垂直切片实现 |
-| 长篇小说超过 Context | 连续性或文风质量下降 | 有限确定性上下文、Story Ledger、带来源检索、保守预算 |
-| 并发或过期编辑 | Canon 被覆盖 | Project Lock、File Hash、Diff 确认和原子写入 |
-| 手稿隐私泄漏 | 内容发给非预期 Provider 或日志 | Context Manifest、显式 Provider、加密密钥、日志脱敏、禁止 Fallback |
-| 离线状态表达不清 | 用户误以为修改未保存或 AI 可用 | 独立显示本地保存状态和 AI 连接状态；离线编辑进入 E2E 验收 |
-| 用户把 EPUB 构建误认为外部出版 | 发生非预期外部动作 | Export 只在本地，分发不属于第一版 |
+| 风险                           | 影响                           | 缓解措施                                                                 |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------------------ |
+| 把自然语言工作流误当成安全策略 | 不同模型行为不一致，权限漂移   | 用 Rust 状态机、Schema 和工具注册表执行权限与门禁                        |
+| DeepSeek 与 OpenAI 能力不同    | 切换后结果格式或质量变化       | 最小公共契约、Adapter 测试、显式能力降级和清晰错误                       |
+| 固定模型被厂商弃用             | 新安装或连接测试失败           | Provider Preset 版本化、应用升级迁移、发布前 Live Smoke Test             |
+| Skill 兼容语义漂移或许可不清   | 发行行为不可复现或无法合法分发 | 固定版本、来源与许可清单、构建期 Hash、Golden Test 和显式升级 Gate       |
+| 长篇小说超过 Context           | 连续性或文风质量下降           | 有限确定性上下文、Story Ledger、带来源检索、保守预算                     |
+| 会话授权下的自动写入范围过宽   | Agent 意外改动 Canon           | 路径/Schema/Hash 门禁、风险矩阵、Turn 上限、逐轮 Diff、事务和撤销        |
+| 并发或过期编辑                 | Canon 被覆盖                   | Project Lock、Turn 级 File Hash、唯一 Writer、原子事务和撤销前 Hash 校验 |
+| 手稿隐私泄漏                   | 内容发给非预期 Provider 或日志 | Context Manifest、显式 Provider、加密密钥、日志脱敏、禁止 Fallback       |
+| 离线状态表达不清               | 用户误以为修改未保存或 AI 可用 | 独立显示本地保存状态和 AI 连接状态；离线编辑进入 E2E 验收                |
+| 用户把 EPUB 构建误认为外部出版 | 发生非预期外部动作             | Export 只在本地，分发不属于第一版                                        |
 
 ## 23. 已确认产品决策
 
 ### 23.1 已确认（Q-001 至 Q-017）
 
-| ID | 已确认决策 | 架构结果 |
-| --- | --- | --- |
-| Q-001 | 第一版只支持 Windows 11 x64 | 其他桌面平台不进入首版打包与 QA |
-| Q-002 | 不做远程伴侣 | 第一版无 Android；未来若立项，只评估独立 Android App |
-| Q-003 | 第一版只支持 DeepSeek 和 OpenAI | 只实现两个文本 Adapter |
-| Q-004 | 采用 BYOK | 不建设账户、代理、额度或计费后端 |
-| Q-005 | MVP 不包含云同步 | 项目只在用户选择的本地目录；外部同步由用户自行负责 |
-| Q-006 | 采用建议：所有 Canon 写入先预览/确认 | 不提供 Auto-apply |
-| Q-007 | 强制严格 Markdown 契约 | 确定性校验是写入和出版门禁 |
-| Q-008 | Git 不属于产品功能 | 用户自行创建、提交和管理仓库 |
-| Q-009 | UI 与默认写作语言为简体中文 | 不加入原插件中的韩语专用内容 |
-| Q-010 | 不允许自动 Provider Fallback | 失败后只能由用户显式切换并重新发送 |
-| Q-011 | 不需要 Multi-agent | 第一版只有一个确定性 Manager |
-| Q-012 | 工作流内置固定，后续由项目自己维护，从一开始与 Novelist 无关 | 原生 Workflow Pack + Rust Core；无插件、Sidecar 或上游兼容依赖 |
-| Q-013 | “ChatGPT API”只指 OpenAI Platform API Key | 不接入 ChatGPT Plus/Pro 登录或消费者订阅 |
-| Q-014 | 接受首版内置模型：DeepSeek `deepseek-v4-pro`、OpenAI `gpt-5.6-terra` | 模型随 App 的 Provider Preset 版本更新，用户不填写 Model ID |
-| Q-015 | 右栏不使用“预览 / 编辑”两个标签，直接手动编辑 Markdown | 右栏以可编辑 Markdown 源文本作为当前文件视图；离线时同样可保存 |
-| Q-016 | 接受 Tauri 2 + React/TypeScript + Rust 作为第一版技术栈 | 技术栈冻结；后续实现按 Tauri 权限、Rust Core 和 React 三栏 UI 拆分 |
-| Q-017 | 当前只交付 Windows 内部测试包，暂不处理安装器、签名、自动更新和公开分发 | 测试包必须明确标识；正式发布能力以后另开评审 |
+| ID    | 已确认决策                                                              | 架构结果                                                                                                  |
+| ----- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Q-001 | 第一版只支持 Windows 11 x64                                             | 其他桌面平台不进入首版打包与 QA                                                                           |
+| Q-002 | 不做远程伴侣                                                            | 第一版无 Android；未来若立项，只评估独立 Android App                                                      |
+| Q-003 | 第一版只支持 DeepSeek 和 OpenAI                                         | 只实现两个文本 Adapter                                                                                    |
+| Q-004 | 采用 BYOK                                                               | 不建设账户、代理、额度或计费后端                                                                          |
+| Q-005 | MVP 不包含云同步                                                        | 项目只在用户选择的本地目录；外部同步由用户自行负责                                                        |
+| Q-006 | 原决策：所有 Canon 写入先预览/确认                                      | 已由 Amendment A-001 / AR-Q003 取代；保留 `review-every-write`，默认改为 `auto-apply-safe`                |
+| Q-007 | 强制严格 Markdown 契约                                                  | 确定性校验是写入和出版门禁                                                                                |
+| Q-008 | Git 不属于产品功能                                                      | 用户自行创建、提交和管理仓库                                                                              |
+| Q-009 | UI 与默认写作语言为简体中文                                             | 不加入原插件中的韩语专用内容                                                                              |
+| Q-010 | 不允许自动 Provider Fallback                                            | 失败后只能由用户显式切换并重新发送                                                                        |
+| Q-011 | 不需要 Multi-agent                                                      | 继续有效；第一版只有一个项目 Agent、多个 Skill 和唯一 Writer                                              |
+| Q-012 | 原决策：工作流从一开始与 Novelist 无关                                  | 已由 Amendment A-001 / AR-Q001～Q002 取代；改为内置 Novelist-compatible Skill Pack，但不依赖外部插件 Host |
+| Q-013 | “ChatGPT API”只指 OpenAI Platform API Key                               | 不接入 ChatGPT Plus/Pro 登录或消费者订阅                                                                  |
+| Q-014 | 接受首版内置模型：DeepSeek `deepseek-v4-pro`、OpenAI `gpt-5.6-terra`    | 模型随 App 的 Provider Preset 版本更新，用户不填写 Model ID                                               |
+| Q-015 | 右栏不使用“预览 / 编辑”两个标签，直接手动编辑 Markdown                  | 右栏以可编辑 Markdown 源文本作为当前文件视图；离线时同样可保存                                            |
+| Q-016 | 接受 Tauri 2 + React/TypeScript + Rust 作为第一版技术栈                 | 技术栈冻结；后续实现按 Tauri 权限、Rust Core 和 React 三栏 UI 拆分                                        |
+| Q-017 | 当前只交付 Windows 内部测试包，暂不处理安装器、签名、自动更新和公开分发 | 测试包必须明确标识；正式发布能力以后另开评审                                                              |
+
+### 23.2 Amendment A-001 已确认（AR-Q001 至 AR-Q006）
+
+| ID      | 已确认决策                                                               | 架构结果                                                                       |
+| ------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| AR-Q001 | 删除“普通 AI 对话”产品概念，项目消息全部进入统一 Agent 会话              | 中栏只有一个 `ProjectAgentSession`；Skill/工作流是会话背后的能力，不是独立入口 |
+| AR-Q002 | 选择内置、版本锁定、经许可审查的兼容 Skill Pack                          | NovelGainker 自持 Agent Host，不依赖用户安装 Codex/Novelist                    |
+| AR-Q003 | 默认授权策略为 `auto-apply-safe`，高风险动作始终单独确认                 | 常规安全 Markdown 更新可自动提交；逐轮 Diff、事务与撤销强制保留                |
+| AR-Q004 | 一个 Turn 可顺序修改多个 Markdown，仍保持唯一 Writer                     | Turn 事务绑定全部源/结果 Hash、校验与恢复信息，禁止并行 Apply                  |
+| AR-Q005 | 持久化有界会话摘要、消息索引与 Turn/Skill/Tool 元数据                    | 完整聊天正文只在用户明确选择时保存                                             |
+| AR-Q006 | 保留现有安全 Core 与 Provider/Vault，迁移会话、Router、Manager 和确认 UI | 不从零重写；只有获批迁移 Story Packet 可重构或移除 as-built 能力               |
 
 ## 24. 架构评审门
 
-**Review Gate 结论：通过。**
+**Review Gate 结论：原始架构与 Amendment A-001 均已通过。**
 
-Q-001 至 Q-017 已全部闭环。产品负责人已批准权威数据边界、Windows 内部测试包、Tauri 2 + React/TypeScript + Rust、DeepSeek/OpenAI 固定 Provider、BYOK、禁止自动 Fallback、单 Manager、直接 Markdown 编辑、NovelGainker 原生 Workflow Pack 与 Rust Core、无云同步和无远程伴侣。
+Q-001 至 Q-017 的历史决策已闭环；其中 Q-006 与 Q-012 已由 Amendment A-001 明确取代，Q-011 按“单项目 Agent、多 Skill、唯一 Writer”重新确认。AR-Q001～AR-Q006 已于 2026-08-28 全部接受。
 
-架构已进入执行阶段。执行规划已批准：[sprint-plan.zh-CN.md](./sprint-plan.zh-CN.md)；Sprint 0 已通过 G0，Sprint 1 的 NG-101～NG-107 和 G1 技术验收也已全部完成。
+### 24.1 G0～G5 as-built 历史
 
-G1 已由产品负责人批准，[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) Review Gate 也已通过，S2-Q001～Q004 全部按建议接受。NG-201～NG-207 已按依赖顺序完成技术实现、通过统一质量门并获得产品验收；产品负责人已按 S2-Q004 明确记录 G2 Live Waiver，未执行真实 Provider 请求。产品负责人已批准 G2 并关闭 Sprint 2；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306、通过 G3 并关闭 Sprint 3；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭；[Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) 已完成 NG-501～NG-507、通过 G5 并关闭。当前 [Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 已创建，等待 S6-Q001～Q007 与 Story Packet Review Gate；NG-601 尚未授权。
+原执行规划见 [sprint-plan.zh-CN.md](./sprint-plan.zh-CN.md)。Sprint 0 已通过 G0，Sprint 1 的 NG-101～NG-107 和 G1 技术验收也已全部完成。
+
+G1 已由产品负责人批准，[Sprint 2 Story Packet](./stories/sprint-2-story-packet.zh-CN.md) Review Gate 也已通过，S2-Q001～Q004 全部按建议接受。NG-201～NG-207 已按依赖顺序完成技术实现、通过统一质量门并获得产品验收；产品负责人已按 S2-Q004 明确记录 G2 Live Waiver，未执行真实 Provider 请求。产品负责人已批准 G2 并关闭 Sprint 2；[Sprint 3 Story Packet](./stories/sprint-3-story-packet.zh-CN.md) 已完成 NG-301～NG-306、通过 G3 并关闭 Sprint 3；[Sprint 4 Story Packet](./stories/sprint-4-story-packet.zh-CN.md) 已完成 NG-401～NG-407、通过 G4 并关闭；[Sprint 5 Story Packet](./stories/sprint-5-story-packet.zh-CN.md) 已完成 NG-501～NG-507、通过 G5 并关闭。G5 关闭时曾创建 [Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md)，但未通过 Review Gate，也未授权 NG-601；该历史状态现已由 Amendment A-001 的暂停决定取代。
 
 NG-403 将实体工作流扩展到 `novelgainker.material-create` v1：Provider 只返回严格 `MaterialProposalV1` 领域数据，Rust 独占 ID、路径、Frontmatter、Markdown 与写入决定；Context 只接受用户显式选择的 `world/`、`characters/`、`plot/` Canon 来源。未接受素材仅存在于进程内，App State v5 继续只保存有界元数据；`materials/000.story-ledger.md` 和全部 `000.*` 目标在 Core、Tauri、前端三层不可写。create/replace 共用 G3 Hash、确认和可恢复 Apply，且禁止跨 Provider Fallback。
 
@@ -846,12 +873,23 @@ NG-506 将章节 Patch、状态迁移和 Ledger 更新冻结为三个互不合�
 
 NG-507 不增加运行时能力，只建立跨 Provider Storytelling 完整证据层并修复演示链上的 Continuity 决策死锁。DeepSeek/OpenAI Loopback 共享 Context、Proposal、Continuity、章节 create/revise、accepted 与 Ledger Apply 状态机；取消、截断、解析失败、Provider 错误和 source-stale 都证明零项目写入，手动 Markdown 编辑使旧 Proposal 的源 Hash 失效并拒绝覆盖。G5 证据使用高熵 Canary、固定文件名与 SHA-256 Manifest，包含双 Provider、章节/Ledger 事务、取消/恢复、Review Report 和真实桌面 PNG；Live Smoke 未获本次授权，记录为非阻断且请求数为 0。NG-507 已获产品验收，G5 已获产品批准，Sprint 5 已关闭。
 
-Sprint 6 当前只有已创建、待 Review Gate 的执行 Packet。它建议依次交付只读 analytical-review、文字视觉 Prompt 与受控本地图片导入、确定性 EPUB 预检/构建/验证，并继续限定 DeepSeek/OpenAI 文本 Provider、显式工作流入口、项目相对路径和用户确认写入。该建议在 S6-Q001～Q007 获确认前不是运行时授权，NG-601 尚未启动。
+以上 NG-403～NG-507 段落仅记录 G4～G5 的已实现基线，不再定义新目标架构。NG-406 的“普通对话 + 独立 Router + 空表单”产品入口已被统一 Agent Timeline 替换；NG-A206 的边界门固定 App 中栏只挂载该 Timeline，旧 Workflow/Router/Provider 后端只作为未挂载的回归基线保留。
 
-执行规划必须保持本架构范围，不得顺带加入 Android、macOS/Linux、第三家 Provider、任意 Model ID、图片生成 API、Multi-agent、云同步或产品内 Git 管理。
+迁移兼容层不得让未挂载的旧入口永久占用统一 Agent 通道。Agent Start 必须先保护真实 Provider Run；仅当 Provider 通道空闲且旧 Workflow Manager 的精确活动记录仍是 `Generating` 时，才把该孤儿记录终止为 `Cancelled` 并持久化，随后继续 Agent Turn。该对账不写 Canon、不猜测或取消真实 Provider Run。若重启已把旧状态归类为 `RecoveryRequired`，该记录作为惰性兼容历史继续保留，但不阻塞项目扫描、创建、打开、关闭或 Provider 设置，也不在启动页和统一 Agent 中展示；兼容层不得自动 abandon、删除记录或写 Canon。真实 Provider Run 与仍在执行的旧 Workflow 状态继续阻断。若真实启动仍被拒绝，Timeline 必须撤销未发送的乐观消息、保留输入，并提供与输入框关联的可访问错误和恢复路径。
+
+### 24.2 当前授权状态
+
+Sprint 6 已暂停，现有 [Sprint 6 Story Packet](./stories/sprint-6-story-packet.zh-CN.md) 不再进入 Review Gate，也不授权 NG-601。[Agent Migration AM0 Story Packet](./stories/agent-migration-am0-story-packet.zh-CN.md) 与 GA0 已关闭；四组不可变 Contract/Pack Hash 分别为 `0ad3906792d9f2afcfab5f9e4206cd1285aeed07a640599dea4c1928fc57ba72`、`3cbbc2bb99ccab33299880249b0f72a24acc84e2eb051ad99416864374f03ef8`、`d4015ded6735e1a1612d02b411e7d4e51c4ffd08347a3cfe9a0013e7a9b6856c` 与 `a60b41ee0d16be3e035509076c7bdf110a506fb5d8c8203f1b0f948b72450f38`。
+
+[Agent Migration AM1 Story Packet](./stories/agent-migration-am1-story-packet.zh-CN.md) 与 GA1 已关闭。[Agent Migration AM2 Story Packet](./stories/agent-migration-am2-story-packet.zh-CN.md) 的 AM2-Q001～Q007、Review Gate 与 NG-A201～NG-A206 已按统一授权完成。当前生产路径挂载一个项目隔离 Agent Timeline、9 项 Skill、4 个读取工具、2 个受治理写工具与 9 条 Agent IPC，总命令数为 60；App State 为 v10，完整聊天与 Pending 正文持久化关闭，Undo 正文使用 Windows 当前用户 DPAPI 保护。DeepSeek/OpenAI 共用严格 Action Schema、同 Provider 单次修复、固定预算、统一事务路径与禁止跨 Provider Fallback 的停止边界。GA2-R001 的孤儿旧 Workflow 通道占用与失败输入丢失已在 revision 2 修复；GA2-R002 在 revision 3 消除原项目恢复死锁；GA2-R003 按产品授权在 revision 4 将 `RecoveryRequired` 改为保留但不阻塞、不展示、不自动删除且零 Canon 写入的惰性兼容历史；GA2-R004 在 revision 5 向 JSON-object Provider 明示精确 `AgentActionPayloadV1` 字段形状，并确保异步失败、稳定错误代码与原输入不会被 Session Reload 吞掉。revision 5 完整质量门与 GA2 技术提交均已通过；`ga2Approved=false`、`sprint6Authorized=false` 保持不变。
+
+后续执行规划必须保持本架构范围，不得顺带加入 Android、macOS/Linux、第三家 Provider、任意 Model ID、图片生成 API、Multi-agent、云同步或产品内 Git 管理。
 
 ## 25. 参考资料
 
+- [统一 Novelist Agent 会话架构重审](./architecture-unified-novelist-agent-review.zh-CN.md)
+- [Agent Migration AM0 Story Packet](./stories/agent-migration-am0-story-packet.zh-CN.md)
+- [Agent Migration AM1 Story Packet](./stories/agent-migration-am1-story-packet.zh-CN.md)
 - [DeepSeek API 快速开始与定价](https://api-docs.deepseek.com/quick_start/pricing-details-cny/)
 - [DeepSeek API 更新记录](https://api-docs.deepseek.com/updates/)
 - [OpenAI API 模型目录](https://developers.openai.com/api/docs/models)

@@ -1,6 +1,6 @@
 # NovelGainker Sprint 5 Story Packet
 
-> 状态：NG-501～NG-507 均已获产品验收；G5 已由产品负责人批准，Sprint 5 已关闭；Sprint 6 Story Packet 已创建
+> 状态：NG-501～NG-507 均已获产品验收；G5 已由产品负责人批准，Sprint 5 已关闭；后续 Sprint 6 Story Packet 已由 Agent Migration Program 暂停
 >
 > 日期：2026-08-26
 >
@@ -1056,4 +1056,4 @@ Review Gate 当前结论：**已通过（2026-08-26）**。
 - Sprint 4 已关闭。
 - Sprint 5 Story Packet 已创建。
 - Sprint 5 Review Gate 已通过；NG-501～NG-507 均已获产品验收；G5 已于 2026-08-27 获得产品批准。
-- Sprint 5 已关闭；Sprint 6 Story Packet 已创建并等待 Review Gate，NG-601 尚未授权。
+- Sprint 5 已关闭；Sprint 6 Story Packet 随后被 Agent Migration Program 暂停。AM2 已完成 GA2 技术提交，但 GA2 尚未获产品批准，NG-601 仍未授权。

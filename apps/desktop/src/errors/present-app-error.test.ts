@@ -83,6 +83,18 @@ describe("NG-005 AppError 中文映射", () => {
     expect(JSON.stringify(presented)).not.toContain("synthetic-input");
   });
 
+  it("保留安全的 Agent 子错误码并提供可操作恢复提示", () => {
+    const presented = presentAppError({
+      code: "agent-action.repair-exhausted",
+      messageKey: "errors.agentContract",
+    });
+    expect(presented).toMatchObject({
+      code: "agent-action.repair-exhausted",
+      title: "Agent 操作格式未通过校验",
+      recovery: "原输入已恢复，可直接重试；若再次失败，请保留错误代码以便定位。",
+    });
+  });
+
   it("呈现 NG-402 的设定来源边界且不回显路径或正文", () => {
     const disallowed = presentAppError({
       code: "workflow.source_not_allowed",

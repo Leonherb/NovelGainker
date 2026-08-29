@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-write-reject"
+description = "Enables the agent_write_reject command without any pre-configured scope."
+commands.allow = ["agent_write_reject"]
+
+[[permission]]
+identifier = "deny-agent-write-reject"
+description = "Denies the agent_write_reject command without any pre-configured scope."
+commands.deny = ["agent_write_reject"]

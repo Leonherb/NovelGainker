@@ -2,6 +2,13 @@ use crate::credential_vault::ProviderId;
 use crate::project::ProjectHandle;
 use crate::provider_core::Usage;
 use crate::AppError;
+use novelgainker_agent::action_contracts::RegisteredToolIdV1;
+use novelgainker_agent::contracts::{ContentHashV1, ProjectIdV1, SessionIdV1, TurnIdV1};
+use novelgainker_agent::persistence_contracts::{
+    reject_sensitive_text, UndoRecordStatusV1, UndoRecordV1, MAX_UNDO_BYTES_PER_PROJECT,
+    UNDO_RECORD_LIMIT,
+};
+use novelgainker_agent::runtime_registry::{is_am2_tool, runtime_skill};
 use novelgainker_workflows::manager::{WorkflowRunRecord, WorkflowRunState};
 use novelgainker_workflows::registry;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -11,11 +18,167 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use uuid::{Uuid, Version};
 
-pub const APP_STATE_SCHEMA_VERSION: u16 = 8;
+pub const APP_STATE_SCHEMA_VERSION: u16 = 10;
 pub const APP_STATE_DATABASE_NAME: &str = "app-state-v1.sqlite3";
 pub const MAX_RECENT_PROJECTS: usize = 12;
 pub const MIN_RIGHT_PANEL_WIDTH: u16 = 278;
 pub const MAX_RIGHT_PANEL_WIDTH: u16 = 1_600;
+pub const MAX_AGENT_TURN_METADATA: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSessionStateRecord {
+    pub project_id: String,
+    pub agent_session_id: String,
+    pub provider_id: ProviderId,
+    pub preset_version: u16,
+    pub model: String,
+    pub skill_pack_hash: String,
+    pub policy: String,
+    pub summary_text: Option<String>,
+    pub summary_hash: Option<String>,
+    pub summary_version: u32,
+    pub clear_generation: u32,
+    pub updated_at_ms: u64,
+}
+
+impl AgentSessionStateRecord {
+    fn validate(&self) -> Result<(), ()> {
+        validate_uuid(&self.project_id)?;
+        let project_id = format!("prj_{}", self.project_id.replace('-', ""));
+        ProjectIdV1::parse(project_id).map_err(|_| ())?;
+        SessionIdV1::parse(self.agent_session_id.clone()).map_err(|_| ())?;
+        if self.preset_version != 1
+            || self.model != crate::provider_core::preset(self.provider_id).model
+            || self.skill_pack_hash.len() != 64
+            || !self
+                .skill_pack_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || !matches!(
+                self.policy.as_str(),
+                "plan_only" | "review_every_write" | "auto_apply_safe"
+            )
+            || self.updated_at_ms == 0
+        {
+            return Err(());
+        }
+        match (&self.summary_text, &self.summary_hash) {
+            (None, None) if self.summary_version == 0 => Ok(()),
+            (Some(text), Some(hash))
+                if self.summary_version > 0
+                    && !text.is_empty()
+                    && text.len()
+                        <= novelgainker_agent::contracts::SESSION_SUMMARY_MAX_UTF8_BYTES
+                            as usize
+                    && reject_sensitive_text(text).is_ok()
+                    && ContentHashV1::digest(text.as_bytes()).as_str() == hash =>
+            {
+                Ok(())
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTurnMetadataRecord {
+    pub project_id: String,
+    pub agent_session_id: String,
+    pub turn_id: String,
+    pub terminal_state: String,
+    pub skill_ids: Vec<String>,
+    pub tool_ids: Vec<String>,
+    pub action_count: u16,
+    pub tool_call_count: u16,
+    pub action_plan_hash: String,
+    pub updated_at_ms: u64,
+}
+
+impl AgentTurnMetadataRecord {
+    fn validate(&self) -> Result<(), ()> {
+        validate_uuid(&self.project_id)?;
+        SessionIdV1::parse(self.agent_session_id.clone()).map_err(|_| ())?;
+        TurnIdV1::parse(self.turn_id.clone()).map_err(|_| ())?;
+        if !matches!(
+            self.terminal_state.as_str(),
+            "completed" | "cancelled" | "failed"
+        ) || self.skill_ids.is_empty()
+            || self.skill_ids.len() > novelgainker_agent::SKILL_IDS.len()
+            || self
+                .skill_ids
+                .iter()
+                .any(|skill| runtime_skill(skill).is_none())
+            || self.tool_ids.len() > novelgainker_agent::contracts::MAX_TOOL_CALLS_PER_TURN as usize
+            || self.tool_ids.iter().any(|tool| {
+                RegisteredToolIdV1::parse(tool)
+                    .map(|tool| !is_am2_tool(tool))
+                    .unwrap_or(true)
+            })
+            || self.action_count > novelgainker_agent::contracts::MAX_AGENT_STEPS_PER_TURN
+            || self.tool_call_count > novelgainker_agent::contracts::MAX_TOOL_CALLS_PER_TURN
+            || usize::from(self.tool_call_count) != self.tool_ids.len()
+            || self.action_plan_hash.len() != 64
+            || !self
+                .action_plan_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || self.updated_at_ms == 0
+        {
+            return Err(());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentMessageIndexRecord {
+    pub project_id: String,
+    pub agent_session_id: String,
+    pub message_id: String,
+    pub turn_id: String,
+    pub ordinal: u32,
+    pub role: String,
+    pub body_hash: String,
+    pub utf8_bytes: u32,
+    pub created_at_ms: u64,
+}
+
+impl AgentMessageIndexRecord {
+    fn validate(&self) -> Result<(), ()> {
+        validate_uuid(&self.project_id)?;
+        SessionIdV1::parse(self.agent_session_id.clone()).map_err(|_| ())?;
+        TurnIdV1::parse(self.turn_id.clone()).map_err(|_| ())?;
+        if !self.message_id.starts_with("msg_")
+            || self.message_id.len() < 12
+            || !matches!(self.role.as_str(), "user" | "assistant" | "tool")
+            || self.ordinal == 0
+            || self.utf8_bytes == 0
+            || self.body_hash.len() != 64
+            || !self.body_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || self.created_at_ms == 0
+        {
+            return Err(());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCheckpointRecord {
+    pub session: AgentSessionStateRecord,
+    pub turn: AgentTurnMetadataRecord,
+    pub messages: Vec<AgentMessageIndexRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentClearCounts {
+    pub sessions_removed: u16,
+    pub turns_removed: u16,
+    pub message_indexes_removed: u16,
+    pub undo_records_removed: u16,
+    pub canon_write_count: u16,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouterRunStatus {
@@ -642,6 +805,381 @@ impl AppStateRepository {
             .map_err(|_| AppError::app_state_unavailable())
     }
 
+    pub fn agent_session(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<AgentSessionStateRecord>, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT project_id, agent_session_id, provider_id, preset_version, model,
+                            skill_pack_hash, policy, summary_text, summary_hash, summary_version,
+                            clear_generation, updated_at_ms
+                     FROM agent_sessions WHERE project_id = ?1",
+                    [project_id],
+                    |row| {
+                        let provider = row.get::<_, String>(2)?;
+                        let provider_id = ProviderId::try_from(provider.as_str())
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                        let record = AgentSessionStateRecord {
+                            project_id: row.get(0)?,
+                            agent_session_id: row.get(1)?,
+                            provider_id,
+                            preset_version: row.get(3)?,
+                            model: row.get(4)?,
+                            skill_pack_hash: row.get(5)?,
+                            policy: row.get(6)?,
+                            summary_text: row.get(7)?,
+                            summary_hash: row.get(8)?,
+                            summary_version: row.get(9)?,
+                            clear_generation: row.get(10)?,
+                            updated_at_ms: row.get(11)?,
+                        };
+                        record
+                            .validate()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                        Ok(record)
+                    },
+                )
+                .optional()
+        })
+    }
+
+    pub fn agent_turns(&self, project_id: &str) -> Result<Vec<AgentTurnMetadataRecord>, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT project_id, agent_session_id, turn_id, terminal_state, skill_ids_json,
+                        tool_ids_json, action_count, tool_call_count, action_plan_hash, updated_at_ms
+                 FROM agent_turns WHERE project_id = ?1
+                 ORDER BY updated_at_ms DESC, turn_id DESC LIMIT 100",
+            )?;
+            let records = statement
+                .query_map([project_id], |row| {
+                    let skill_ids_json = row.get::<_, String>(4)?;
+                    let tool_ids_json = row.get::<_, String>(5)?;
+                    let record = AgentTurnMetadataRecord {
+                        project_id: row.get(0)?,
+                        agent_session_id: row.get(1)?,
+                        turn_id: row.get(2)?,
+                        terminal_state: row.get(3)?,
+                        skill_ids: serde_json::from_str(&skill_ids_json)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        tool_ids: serde_json::from_str(&tool_ids_json)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        action_count: row.get(6)?,
+                        tool_call_count: row.get(7)?,
+                        action_plan_hash: row.get(8)?,
+                        updated_at_ms: row.get(9)?,
+                    };
+                    record
+                        .validate()
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    Ok(record)
+                })?
+                .collect();
+            records
+        })
+    }
+
+    pub fn agent_message_indexes(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<AgentMessageIndexRecord>, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT project_id, agent_session_id, message_id, turn_id, ordinal, role,
+                        body_hash, utf8_bytes, created_at_ms
+                 FROM agent_msg_index WHERE project_id = ?1
+                 ORDER BY ordinal ASC LIMIT 200",
+            )?;
+            let records = statement
+                .query_map([project_id], |row| {
+                    let record = AgentMessageIndexRecord {
+                        project_id: row.get(0)?,
+                        agent_session_id: row.get(1)?,
+                        message_id: row.get(2)?,
+                        turn_id: row.get(3)?,
+                        ordinal: row.get(4)?,
+                        role: row.get(5)?,
+                        body_hash: row.get(6)?,
+                        utf8_bytes: row.get(7)?,
+                        created_at_ms: row.get(8)?,
+                    };
+                    record
+                        .validate()
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    Ok(record)
+                })?
+                .collect();
+            records
+        })
+    }
+
+    pub fn save_agent_session(&self, record: &AgentSessionStateRecord) -> Result<(), AppError> {
+        record
+            .validate()
+            .map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            save_agent_session_row(connection, record)?;
+            Ok(())
+        })
+    }
+
+    pub fn save_agent_checkpoint(
+        &self,
+        checkpoint: &AgentCheckpointRecord,
+    ) -> Result<(), AppError> {
+        checkpoint
+            .session
+            .validate()
+            .map_err(|_| AppError::app_state_unavailable())?;
+        checkpoint
+            .turn
+            .validate()
+            .map_err(|_| AppError::app_state_unavailable())?;
+        if checkpoint.turn.project_id != checkpoint.session.project_id
+            || checkpoint.turn.agent_session_id != checkpoint.session.agent_session_id
+            || checkpoint.messages.is_empty()
+            || checkpoint.messages.iter().any(|message| {
+                message.validate().is_err()
+                    || message.project_id != checkpoint.session.project_id
+                    || message.agent_session_id != checkpoint.session.agent_session_id
+                    || message.turn_id != checkpoint.turn.turn_id
+            })
+        {
+            return Err(AppError::app_state_unavailable());
+        }
+        self.with_connection(|connection| {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            save_agent_session_row(&transaction, &checkpoint.session)?;
+            let skill_ids = serde_json::to_string(&checkpoint.turn.skill_ids)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let tool_ids = serde_json::to_string(&checkpoint.turn.tool_ids)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            transaction.execute(
+                "INSERT INTO agent_turns (
+                    project_id, agent_session_id, turn_id, terminal_state, skill_ids_json,
+                    tool_ids_json, action_count, tool_call_count, action_plan_hash, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    checkpoint.turn.project_id,
+                    checkpoint.turn.agent_session_id,
+                    checkpoint.turn.turn_id,
+                    checkpoint.turn.terminal_state,
+                    skill_ids,
+                    tool_ids,
+                    checkpoint.turn.action_count,
+                    checkpoint.turn.tool_call_count,
+                    checkpoint.turn.action_plan_hash,
+                    checkpoint.turn.updated_at_ms,
+                ],
+            )?;
+            for message in &checkpoint.messages {
+                transaction.execute(
+                    "INSERT INTO agent_msg_index (
+                        project_id, agent_session_id, message_id, turn_id, ordinal, role,
+                        body_hash, utf8_bytes, created_at_ms
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        message.project_id,
+                        message.agent_session_id,
+                        message.message_id,
+                        message.turn_id,
+                        message.ordinal,
+                        message.role,
+                        message.body_hash,
+                        message.utf8_bytes,
+                        message.created_at_ms,
+                    ],
+                )?;
+            }
+            transaction.execute(
+                "DELETE FROM agent_turns WHERE turn_id IN (
+                    SELECT turn_id FROM agent_turns WHERE project_id = ?1
+                    ORDER BY updated_at_ms DESC, turn_id DESC LIMIT -1 OFFSET 100
+                 )",
+                [&checkpoint.session.project_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM agent_msg_index WHERE message_id IN (
+                    SELECT message_id FROM agent_msg_index WHERE project_id = ?1
+                    ORDER BY ordinal DESC, message_id DESC LIMIT -1 OFFSET 200
+                 )",
+                [&checkpoint.session.project_id],
+            )?;
+            transaction.commit()
+        })
+    }
+
+    pub fn agent_undo_records(&self, project_id: &str) -> Result<Vec<UndoRecordV1>, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        let expected_project_id = agent_project_id(project_id)?;
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT record_json FROM agent_undo_records
+                 WHERE project_id = ?1 ORDER BY created_at_ms DESC, transaction_hash DESC",
+            )?;
+            let records = statement
+                .query_map([project_id], |row| {
+                    let json = row.get::<_, String>(0)?;
+                    let record: UndoRecordV1 =
+                        serde_json::from_str(&json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    record
+                        .validate()
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    if record.project_id.as_str() != expected_project_id {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    Ok(record)
+                })?
+                .collect();
+            records
+        })
+    }
+
+    pub fn save_agent_undo_record(
+        &self,
+        project_id: &str,
+        record: &UndoRecordV1,
+    ) -> Result<(), AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        record
+            .validate()
+            .map_err(|_| AppError::app_state_unavailable())?;
+        if record.project_id.as_str() != agent_project_id(project_id)?
+            || record.status != UndoRecordStatusV1::Ready
+        {
+            return Err(AppError::app_state_unavailable());
+        }
+        let json = serde_json::to_string(record).map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute(
+                "DELETE FROM agent_undo_records
+                 WHERE project_id = ?1 AND status != 'ready'",
+                [project_id],
+            )?;
+            let (count, total): (u32, u32) = transaction.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(encrypted_bytes), 0)
+                 FROM agent_undo_records WHERE project_id = ?1 AND status = 'ready'",
+                [project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if count >= UNDO_RECORD_LIMIT as u32
+                || total
+                    .checked_add(record.encrypted_bytes)
+                    .is_none_or(|value| value > MAX_UNDO_BYTES_PER_PROJECT)
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            transaction.execute(
+                "INSERT INTO agent_undo_records (
+                    transaction_hash, project_id, turn_id, blob_id, status, encrypted_bytes,
+                    created_at_ms, expires_at_ms, clear_generation, record_json
+                 ) VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    record.transaction_hash.as_str(),
+                    project_id,
+                    record.turn_id.as_str(),
+                    record.blob_id.as_str(),
+                    record.encrypted_bytes,
+                    record.created_at_ms.0,
+                    record.expires_at_ms.0,
+                    record.clear_generation,
+                    json,
+                ],
+            )?;
+            transaction.commit()
+        })
+    }
+
+    pub fn set_agent_undo_status(
+        &self,
+        project_id: &str,
+        transaction_hash: &str,
+        status: UndoRecordStatusV1,
+    ) -> Result<UndoRecordV1, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        if transaction_hash.len() != 64
+            || !transaction_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || status == UndoRecordStatusV1::Ready
+        {
+            return Err(AppError::app_state_unavailable());
+        }
+        self.with_connection(|connection| {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let json: String = transaction.query_row(
+                "SELECT record_json FROM agent_undo_records
+                 WHERE project_id = ?1 AND transaction_hash = ?2 AND status = 'ready'",
+                params![project_id, transaction_hash],
+                |row| row.get(0),
+            )?;
+            let mut record: UndoRecordV1 =
+                serde_json::from_str(&json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            record.status = status;
+            record
+                .validate()
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let updated_json =
+                serde_json::to_string(&record).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let changed = transaction.execute(
+                "UPDATE agent_undo_records SET status = ?3, record_json = ?4
+                 WHERE project_id = ?1 AND transaction_hash = ?2 AND status = 'ready'",
+                params![
+                    project_id,
+                    transaction_hash,
+                    undo_status(status),
+                    updated_json
+                ],
+            )?;
+            if changed != 1 {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            transaction.commit()?;
+            Ok(record)
+        })
+    }
+
+    pub fn clear_agent_state(&self, project_id: &str) -> Result<AgentClearCounts, AppError> {
+        validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+        self.with_connection(|connection| {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let undo_records_removed = transaction.execute(
+                "DELETE FROM agent_undo_records WHERE project_id = ?1",
+                [project_id],
+            )?;
+            let message_indexes_removed = transaction.execute(
+                "DELETE FROM agent_msg_index WHERE project_id = ?1",
+                [project_id],
+            )?;
+            let turns_removed = transaction.execute(
+                "DELETE FROM agent_turns WHERE project_id = ?1",
+                [project_id],
+            )?;
+            let sessions_removed = transaction.execute(
+                "DELETE FROM agent_sessions WHERE project_id = ?1",
+                [project_id],
+            )?;
+            transaction.commit()?;
+            Ok(AgentClearCounts {
+                sessions_removed: u16::try_from(sessions_removed).unwrap_or(u16::MAX),
+                turns_removed: u16::try_from(turns_removed).unwrap_or(u16::MAX),
+                message_indexes_removed: u16::try_from(message_indexes_removed).unwrap_or(u16::MAX),
+                undo_records_removed: u16::try_from(undo_records_removed).unwrap_or(u16::MAX),
+                canon_write_count: 0,
+            })
+        })
+    }
+
     fn query_optional_string(&self, sql: &str, parameter: &str) -> Option<String> {
         let mut backend = self.backend.lock().ok()?;
         let AppStateBackend::Ready(connection) = &mut *backend else {
@@ -680,6 +1218,72 @@ impl AppStateRepository {
     }
 }
 
+fn validate_uuid(value: &str) -> Result<(), ()> {
+    let parsed = Uuid::parse_str(value).map_err(|_| ())?;
+    if parsed.get_version() != Some(Version::Random) {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn undo_status(status: UndoRecordStatusV1) -> &'static str {
+    match status {
+        UndoRecordStatusV1::Ready => "ready",
+        UndoRecordStatusV1::Consumed => "consumed",
+        UndoRecordStatusV1::Expired => "expired",
+        UndoRecordStatusV1::HashConflict => "hash_conflict",
+        UndoRecordStatusV1::DecryptFailed => "decrypt_failed",
+        UndoRecordStatusV1::Cleared => "cleared",
+    }
+}
+
+pub fn agent_project_id(project_id: &str) -> Result<String, AppError> {
+    validate_uuid(project_id).map_err(|_| AppError::app_state_unavailable())?;
+    Ok(format!("prj_{}", project_id.replace('-', "")))
+}
+
+fn save_agent_session_row(
+    connection: &Connection,
+    record: &AgentSessionStateRecord,
+) -> rusqlite::Result<()> {
+    let changed = connection.execute(
+        "INSERT INTO agent_sessions (
+            project_id, agent_session_id, provider_id, preset_version, model, skill_pack_hash,
+            policy, summary_text, summary_hash, summary_version, clear_generation, updated_at_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(project_id) DO UPDATE SET
+            agent_session_id = excluded.agent_session_id,
+            provider_id = excluded.provider_id,
+            preset_version = excluded.preset_version,
+            model = excluded.model,
+            skill_pack_hash = excluded.skill_pack_hash,
+            policy = excluded.policy,
+            summary_text = excluded.summary_text,
+            summary_hash = excluded.summary_hash,
+            summary_version = excluded.summary_version,
+            clear_generation = excluded.clear_generation,
+            updated_at_ms = excluded.updated_at_ms",
+        params![
+            record.project_id,
+            record.agent_session_id,
+            record.provider_id.as_str(),
+            record.preset_version,
+            record.model,
+            record.skill_pack_hash,
+            record.policy,
+            record.summary_text,
+            record.summary_hash,
+            record.summary_version,
+            record.clear_generation,
+            record.updated_at_ms,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
 fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connection> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let schema_version: u16 =
@@ -713,6 +1317,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
             create_provider_settings(&transaction)?;
             create_workflow_runs(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -722,6 +1327,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
             create_provider_settings(&transaction)?;
             create_workflow_runs(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -730,6 +1336,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             create_workflow_runs(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -738,6 +1345,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             migrate_workflow_runs_v4(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -746,6 +1354,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             migrate_workflow_runs_v5(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -754,6 +1363,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             migrate_workflow_runs_v6(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -762,6 +1372,7 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             migrate_workflow_runs_v7(&transaction)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -769,6 +1380,21 @@ fn initialize_connection(mut connection: Connection) -> rusqlite::Result<Connect
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             create_router_runs(&transaction)?;
+            create_agent_state(&transaction)?;
+            transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
+            transaction.commit()?;
+        }
+        8 => {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            create_agent_state(&transaction)?;
+            transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
+            transaction.commit()?;
+        }
+        9 => {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            migrate_agent_state_v10(&transaction)?;
             transaction.pragma_update(None, "user_version", APP_STATE_SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -871,6 +1497,105 @@ fn create_router_runs(connection: &Connection) -> rusqlite::Result<()> {
                 OR (input_tokens IS NOT NULL AND output_tokens IS NOT NULL AND total_tokens IS NOT NULL)
             )
         );",
+    )
+}
+
+fn create_agent_state(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_sessions (
+            project_id TEXT PRIMARY KEY NOT NULL CHECK (length(project_id) = 36),
+            agent_session_id TEXT UNIQUE NOT NULL CHECK (
+                length(agent_session_id) BETWEEN 12 AND 96 AND agent_session_id LIKE 'ses_%'
+            ),
+            provider_id TEXT NOT NULL CHECK (provider_id IN ('deepseek', 'openai')),
+            preset_version INTEGER NOT NULL CHECK (preset_version = 1),
+            model TEXT NOT NULL CHECK (model IN ('deepseek-v4-pro', 'gpt-5.6-terra')),
+            skill_pack_hash TEXT NOT NULL CHECK (length(skill_pack_hash) = 64),
+            policy TEXT NOT NULL CHECK (
+                policy IN ('plan_only', 'review_every_write', 'auto_apply_safe')
+            ),
+            summary_text TEXT NULL CHECK (
+                summary_text IS NULL OR length(CAST(summary_text AS BLOB)) BETWEEN 1 AND 32768
+            ),
+            summary_hash TEXT NULL CHECK (summary_hash IS NULL OR length(summary_hash) = 64),
+            summary_version INTEGER NOT NULL CHECK (summary_version >= 0),
+            clear_generation INTEGER NOT NULL CHECK (clear_generation >= 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms > 0),
+            CHECK (
+                (summary_text IS NULL AND summary_hash IS NULL AND summary_version = 0)
+                OR (summary_text IS NOT NULL AND summary_hash IS NOT NULL AND summary_version > 0)
+            ),
+            CHECK (
+                (provider_id = 'deepseek' AND model = 'deepseek-v4-pro')
+                OR (provider_id = 'openai' AND model = 'gpt-5.6-terra')
+            ),
+            FOREIGN KEY (project_id) REFERENCES recent_projects(project_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS agent_turns (
+            turn_id TEXT PRIMARY KEY NOT NULL CHECK (
+                length(turn_id) BETWEEN 12 AND 96 AND turn_id LIKE 'trn_%'
+            ),
+            project_id TEXT NOT NULL CHECK (length(project_id) = 36),
+            agent_session_id TEXT NOT NULL CHECK (agent_session_id LIKE 'ses_%'),
+            terminal_state TEXT NOT NULL CHECK (
+                terminal_state IN ('completed', 'cancelled', 'failed')
+            ),
+            skill_ids_json TEXT NOT NULL CHECK (length(skill_ids_json) BETWEEN 3 AND 1024),
+            tool_ids_json TEXT NOT NULL CHECK (length(tool_ids_json) BETWEEN 2 AND 4096),
+            action_count INTEGER NOT NULL CHECK (action_count BETWEEN 0 AND 8),
+            tool_call_count INTEGER NOT NULL CHECK (tool_call_count BETWEEN 0 AND 16),
+            action_plan_hash TEXT NOT NULL CHECK (length(action_plan_hash) = 64),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms > 0),
+            FOREIGN KEY (project_id) REFERENCES recent_projects(project_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS agent_turns_project_updated
+            ON agent_turns(project_id, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS agent_msg_index (
+            message_id TEXT PRIMARY KEY NOT NULL CHECK (
+                length(message_id) BETWEEN 12 AND 96 AND message_id LIKE 'msg_%'
+            ),
+            project_id TEXT NOT NULL CHECK (length(project_id) = 36),
+            agent_session_id TEXT NOT NULL CHECK (agent_session_id LIKE 'ses_%'),
+            turn_id TEXT NOT NULL CHECK (turn_id LIKE 'trn_%'),
+            ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+            body_hash TEXT NOT NULL CHECK (length(body_hash) = 64),
+            utf8_bytes INTEGER NOT NULL CHECK (utf8_bytes > 0),
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms > 0),
+            UNIQUE(project_id, ordinal),
+            FOREIGN KEY (project_id) REFERENCES recent_projects(project_id) ON DELETE CASCADE,
+            FOREIGN KEY (turn_id) REFERENCES agent_turns(turn_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS agent_undo_records (
+            transaction_hash TEXT PRIMARY KEY NOT NULL CHECK (length(transaction_hash) = 64),
+            project_id TEXT NOT NULL CHECK (length(project_id) = 36),
+            turn_id TEXT UNIQUE NOT NULL CHECK (turn_id LIKE 'trn_%'),
+            blob_id TEXT UNIQUE NOT NULL CHECK (blob_id LIKE 'ubl_%'),
+            status TEXT NOT NULL CHECK (status IN (
+                'ready', 'consumed', 'expired', 'hash_conflict', 'decrypt_failed', 'cleared'
+            )),
+            encrypted_bytes INTEGER NOT NULL CHECK (encrypted_bytes BETWEEN 1 AND 2097152),
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms > 0),
+            expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > created_at_ms),
+            clear_generation INTEGER NOT NULL CHECK (clear_generation >= 0),
+            record_json TEXT NOT NULL CHECK (length(record_json) BETWEEN 64 AND 16384),
+            FOREIGN KEY (project_id) REFERENCES recent_projects(project_id) ON DELETE CASCADE
+        );",
+    )
+}
+
+fn migrate_agent_state_v10(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch("ALTER TABLE agent_sessions RENAME TO agent_sessions_v9_archive;")?;
+    create_agent_state(connection)?;
+    connection.execute_batch(
+        "INSERT INTO agent_sessions (
+            project_id, agent_session_id, provider_id, preset_version, model, skill_pack_hash,
+            policy, summary_text, summary_hash, summary_version, clear_generation, updated_at_ms
+         )
+         SELECT project_id, agent_session_id, provider_id, preset_version, model, skill_pack_hash,
+                policy, summary_text, summary_hash, summary_version, clear_generation, updated_at_ms
+         FROM agent_sessions_v9_archive;
+         DROP TABLE agent_sessions_v9_archive;",
     )
 }
 fn migrate_workflow_runs_v4(connection: &Connection) -> rusqlite::Result<()> {
@@ -1097,8 +1822,10 @@ fn is_available_directory(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_provider_settings, AppStateRepository, RouterRunMetadata, RouterRunStatus,
-        UiPreferences, APP_STATE_DATABASE_NAME, APP_STATE_SCHEMA_VERSION, MAX_RECENT_PROJECTS,
+        create_provider_settings, AgentCheckpointRecord, AgentMessageIndexRecord,
+        AgentSessionStateRecord, AgentTurnMetadataRecord, AppStateRepository, RouterRunMetadata,
+        RouterRunStatus, UiPreferences, APP_STATE_DATABASE_NAME, APP_STATE_SCHEMA_VERSION,
+        MAX_RECENT_PROJECTS,
     };
     use crate::credential_vault::ProviderId;
     use crate::project::{create_project, inspect_project_root, ProjectHandle, ProjectScanMode};
@@ -1707,7 +2434,7 @@ writingLanguage: zh-CN
     }
 
     #[test]
-    fn migrates_v7_to_v8_without_touching_v1_or_v2_workflow_history() {
+    fn migrates_v7_to_v9_without_touching_v1_or_v2_workflow_history() {
         let (root, app_state, handle) = fixture();
         let repository = AppStateRepository::open(&app_state);
         let current = workflow_record(handle.project_id());
@@ -1721,7 +2448,7 @@ writingLanguage: zh-CN
         drop(connection);
 
         let migrated = AppStateRepository::open(&app_state);
-        assert_eq!(migrated.snapshot().schema_version, 8);
+        assert_eq!(migrated.snapshot().schema_version, APP_STATE_SCHEMA_VERSION);
         assert!(migrated.router_runs().unwrap().is_empty());
         let records = migrated.workflow_runs().unwrap();
         assert_eq!(records.len(), 1);
@@ -1791,7 +2518,7 @@ writingLanguage: zh-CN
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn schema_v8_contains_only_approved_checkpoint_metadata_and_never_secrets_or_canon() {
+    fn schema_v10_contains_only_bounded_agent_indexes_and_never_secrets_or_canon() {
         let (root, app_state, handle) = fixture();
         let repository = AppStateRepository::open(&app_state);
         repository
@@ -1831,6 +2558,10 @@ writingLanguage: zh-CN
         assert_eq!(
             tables,
             [
+                "agent_msg_index",
+                "agent_sessions",
+                "agent_turns",
+                "agent_undo_records",
                 "project_files",
                 "provider_settings",
                 "recent_projects",
@@ -1845,11 +2576,13 @@ writingLanguage: zh-CN
             "secret",
             "prompt",
             "query",
-            "content",
             "api_token",
             "conversation",
             "authorization",
-            "response",
+            "provider_response",
+            "raw_response",
+            "message_body",
+            "full_chat",
             "credential_blob",
         ] {
             assert!(
@@ -1921,8 +2654,256 @@ writingLanguage: zh-CN
 
         assert!(normalized.contains("provider_settings"));
         assert!(normalized.contains("credential_ref"));
+        let agent_session_columns = table_columns(&connection, "agent_sessions");
+        assert_eq!(
+            agent_session_columns,
+            [
+                "project_id",
+                "agent_session_id",
+                "provider_id",
+                "preset_version",
+                "model",
+                "skill_pack_hash",
+                "policy",
+                "summary_text",
+                "summary_hash",
+                "summary_version",
+                "clear_generation",
+                "updated_at_ms"
+            ]
+        );
+        assert_eq!(
+            table_columns(&connection, "agent_msg_index"),
+            [
+                "message_id",
+                "project_id",
+                "agent_session_id",
+                "turn_id",
+                "ordinal",
+                "role",
+                "body_hash",
+                "utf8_bytes",
+                "created_at_ms"
+            ]
+        );
+        assert_eq!(
+            table_columns(&connection, "agent_undo_records"),
+            [
+                "transaction_hash",
+                "project_id",
+                "turn_id",
+                "blob_id",
+                "status",
+                "encrypted_bytes",
+                "created_at_ms",
+                "expires_at_ms",
+                "clear_generation",
+                "record_json"
+            ]
+        );
         drop(connection);
         fs::remove_dir_all(app_state).expect("state fixture must remove");
         fs::remove_dir_all(root).expect("project fixture must remove");
+    }
+
+    #[test]
+    fn migrates_v8_to_v9_and_preserves_prior_checkpoint_history() {
+        let (root, app_state, handle) = fixture();
+        let repository = AppStateRepository::open(&app_state);
+        repository.record_project(&handle).unwrap();
+        let workflow = workflow_record(handle.project_id());
+        repository.save_workflow_run(&workflow).unwrap();
+        drop(repository);
+
+        let database_path = app_state.join(APP_STATE_DATABASE_NAME);
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE agent_msg_index; DROP TABLE agent_turns; DROP TABLE agent_sessions;",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 8).unwrap();
+        drop(connection);
+
+        let migrated = AppStateRepository::open(&app_state);
+        assert_eq!(migrated.snapshot().schema_version, APP_STATE_SCHEMA_VERSION);
+        assert_eq!(migrated.workflow_runs().unwrap()[0].run_id, workflow.run_id);
+        assert!(migrated
+            .agent_session(handle.project_id())
+            .unwrap()
+            .is_none());
+        drop(migrated);
+        fs::remove_dir_all(app_state).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_v9_to_v10_preserves_session_and_enables_review_policy() {
+        let (root, app_state, handle) = fixture();
+        let repository = AppStateRepository::open(&app_state);
+        repository.record_project(&handle).unwrap();
+        let session_id = format!("ses_{}", Uuid::new_v4().simple());
+        repository
+            .save_agent_session(&AgentSessionStateRecord {
+                project_id: handle.project_id().to_owned(),
+                agent_session_id: session_id.clone(),
+                provider_id: ProviderId::Openai,
+                preset_version: 1,
+                model: "gpt-5.6-terra".to_owned(),
+                skill_pack_hash: novelgainker_agent::SKILL_PACK_SHA256.to_owned(),
+                policy: "auto_apply_safe".to_owned(),
+                summary_text: None,
+                summary_hash: None,
+                summary_version: 0,
+                clear_generation: 0,
+                updated_at_ms: 1_800_000_000_000,
+            })
+            .unwrap();
+        drop(repository);
+
+        let database_path = app_state.join(APP_STATE_DATABASE_NAME);
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch("DROP TABLE agent_undo_records;")
+            .unwrap();
+        connection.pragma_update(None, "user_version", 9).unwrap();
+        drop(connection);
+
+        let migrated = AppStateRepository::open(&app_state);
+        assert_eq!(migrated.snapshot().schema_version, APP_STATE_SCHEMA_VERSION);
+        assert!(migrated
+            .agent_undo_records(handle.project_id())
+            .unwrap()
+            .is_empty());
+        let mut session = migrated
+            .agent_session(handle.project_id())
+            .unwrap()
+            .expect("v9 Agent session must survive migration");
+        assert_eq!(session.agent_session_id, session_id);
+        assert_eq!(session.policy, "auto_apply_safe");
+        session.policy = "review_every_write".to_owned();
+        session.updated_at_ms += 1;
+        migrated.save_agent_session(&session).unwrap();
+        assert_eq!(
+            migrated
+                .agent_session(handle.project_id())
+                .unwrap()
+                .unwrap()
+                .policy,
+            "review_every_write"
+        );
+        drop(migrated);
+        fs::remove_dir_all(app_state).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agent_checkpoint_reopens_without_chat_bodies_and_clear_never_writes_canon() {
+        let (root, app_state, handle) = fixture();
+        let repository = AppStateRepository::open(&app_state);
+        repository.record_project(&handle).unwrap();
+        let session_id = format!("ses_{}", Uuid::new_v4().simple());
+        let turn_id = format!("trn_{}", Uuid::new_v4().simple());
+        let summary = "人物与世界规则需要继续核对。".to_owned();
+        let now = 1_800_000_000_000u64;
+        let session = AgentSessionStateRecord {
+            project_id: handle.project_id().to_owned(),
+            agent_session_id: session_id.clone(),
+            provider_id: ProviderId::Openai,
+            preset_version: 1,
+            model: "gpt-5.6-terra".to_owned(),
+            skill_pack_hash: novelgainker_agent::SKILL_PACK_SHA256.to_owned(),
+            policy: "auto_apply_safe".to_owned(),
+            summary_hash: Some(
+                novelgainker_agent::contracts::ContentHashV1::digest(summary.as_bytes())
+                    .as_str()
+                    .to_owned(),
+            ),
+            summary_text: Some(summary.clone()),
+            summary_version: 1,
+            clear_generation: 0,
+            updated_at_ms: now,
+        };
+        let private_body = "AM1_PRIVATE_CHAT_CANARY_2B17";
+        repository
+            .save_agent_checkpoint(&AgentCheckpointRecord {
+                session,
+                turn: AgentTurnMetadataRecord {
+                    project_id: handle.project_id().to_owned(),
+                    agent_session_id: session_id.clone(),
+                    turn_id: turn_id.clone(),
+                    terminal_state: "completed".to_owned(),
+                    skill_ids: vec!["create-character".to_owned()],
+                    tool_ids: vec!["project.read_markdown".to_owned()],
+                    action_count: 2,
+                    tool_call_count: 1,
+                    action_plan_hash: novelgainker_agent::contracts::ContentHashV1::digest(b"plan")
+                        .as_str()
+                        .to_owned(),
+                    updated_at_ms: now,
+                },
+                messages: vec![AgentMessageIndexRecord {
+                    project_id: handle.project_id().to_owned(),
+                    agent_session_id: session_id,
+                    message_id: format!("msg_{}", Uuid::new_v4().simple()),
+                    turn_id,
+                    ordinal: 1,
+                    role: "user".to_owned(),
+                    body_hash: novelgainker_agent::contracts::ContentHashV1::digest(
+                        private_body.as_bytes(),
+                    )
+                    .as_str()
+                    .to_owned(),
+                    utf8_bytes: private_body.len() as u32,
+                    created_at_ms: now,
+                }],
+            })
+            .unwrap();
+        let canon_before = read_project_file(&handle, "project.md")
+            .unwrap()
+            .content_hash;
+        drop(repository);
+
+        let reopened = AppStateRepository::open(&app_state);
+        assert_eq!(
+            reopened
+                .agent_session(handle.project_id())
+                .unwrap()
+                .unwrap()
+                .summary_text,
+            Some(summary)
+        );
+        assert_eq!(reopened.agent_turns(handle.project_id()).unwrap().len(), 1);
+        assert_eq!(
+            reopened
+                .agent_message_indexes(handle.project_id())
+                .unwrap()
+                .len(),
+            1
+        );
+        let database = fs::read(reopened.database_path()).unwrap();
+        assert!(!String::from_utf8_lossy(&database).contains(private_body));
+        let cleared = reopened.clear_agent_state(handle.project_id()).unwrap();
+        assert_eq!(cleared.canon_write_count, 0);
+        assert_eq!(cleared.sessions_removed, 1);
+        assert_eq!(
+            read_project_file(&handle, "project.md")
+                .unwrap()
+                .content_hash,
+            canon_before
+        );
+        drop(reopened);
+        fs::remove_dir_all(app_state).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let sql = format!("SELECT name FROM pragma_table_info('{table}') ORDER BY cid");
+        let mut statement = connection.prepare(&sql).unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
     }
 }

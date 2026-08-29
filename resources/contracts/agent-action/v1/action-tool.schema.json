@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novelgainker.local/schemas/agent/action-tool-v1.json",
+  "title": "NovelGainker Agent Action, Tool and Provider Contract V1",
+  "oneOf": [
+    { "$ref": "#/$defs/AgentActionPayloadV1" },
+    { "$ref": "#/$defs/AgentActionRecordV1" },
+    { "$ref": "#/$defs/ToolRequestV1" },
+    { "$ref": "#/$defs/ToolResultV1" }
+  ],
+  "$defs": {
+    "ContentHashV1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ProjectRelativePathV1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(?:/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "SkillIdV1": {
+      "enum": [
+        "create-novel-project",
+        "create-setting",
+        "create-character",
+        "create-material",
+        "create-plot",
+        "novel-story-telling",
+        "analytical-review",
+        "create-visual-asset",
+        "publish-novel"
+      ]
+    },
+    "RegisteredToolIdV1": {
+      "enum": [
+        "project.list_markdown",
+        "project.read_markdown",
+        "project.search_markdown",
+        "project.validate_markdown",
+        "project.create_markdown",
+        "project.patch_markdown"
+      ]
+    },
+    "ToolArgumentsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "#/$defs/ProjectRelativePathV1" },
+        "directory": { "$ref": "#/$defs/ProjectRelativePathV1" },
+        "query": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "patch": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "expectedSourceHash": { "$ref": "#/$defs/ContentHashV1" }
+      }
+    },
+    "ModelToolRequestV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "toolId", "arguments", "purpose"],
+      "properties": {
+        "callId": {
+          "type": "string",
+          "pattern": "^call_[A-Za-z0-9_-]{8,91}$"
+        },
+        "toolId": { "$ref": "#/$defs/RegisteredToolIdV1" },
+        "arguments": { "$ref": "#/$defs/ToolArgumentsV1" },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "AgentActionPayloadV1": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "action", "skillIds", "visibleText"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "action": { "const": "respond" },
+            "skillIds": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 9,
+              "items": { "$ref": "#/$defs/SkillIdV1" }
+            },
+            "visibleText": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "action", "skillIds", "toolRequests"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "action": { "const": "request_tools" },
+            "skillIds": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 9,
+              "items": { "$ref": "#/$defs/SkillIdV1" }
+            },
+            "toolRequests": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": { "$ref": "#/$defs/ModelToolRequestV1" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "action", "skillIds", "visibleSummary"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "action": { "const": "complete" },
+            "skillIds": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 9,
+              "items": { "$ref": "#/$defs/SkillIdV1" }
+            },
+            "visibleSummary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            }
+          }
+        }
+      ]
+    },
+    "ProjectToolBindingV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "sessionId", "turnId"],
+      "properties": {
+        "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{8,92}$" },
+        "sessionId": { "type": "string", "pattern": "^ses_[A-Za-z0-9_-]{8,92}$" },
+        "turnId": { "type": "string", "pattern": "^trn_[A-Za-z0-9_-]{8,92}$" }
+      }
+    },
+    "ToolRequestV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "binding",
+        "serialOrdinal",
+        "callId",
+        "toolId",
+        "arguments",
+        "purpose"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "binding": { "$ref": "#/$defs/ProjectToolBindingV1" },
+        "serialOrdinal": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "callId": { "type": "string", "pattern": "^call_[A-Za-z0-9_-]{8,91}$" },
+        "toolId": { "$ref": "#/$defs/RegisteredToolIdV1" },
+        "arguments": { "$ref": "#/$defs/ToolArgumentsV1" },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "ToolResultDataV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["itemCount", "contentHash", "affectedPaths"],
+      "properties": {
+        "itemCount": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "contentHash": { "$ref": "#/$defs/ContentHashV1" },
+        "affectedPaths": {
+          "type": "array",
+          "maxItems": 24,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ProjectRelativePathV1" }
+        }
+      }
+    },
+    "ToolResultV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "binding",
+        "callId",
+        "toolId",
+        "status",
+        "errorCode",
+        "data",
+        "resultHash",
+        "truncated",
+        "truncationReason",
+        "trust"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "binding": { "$ref": "#/$defs/ProjectToolBindingV1" },
+        "callId": { "type": "string", "pattern": "^call_[A-Za-z0-9_-]{8,91}$" },
+        "toolId": { "$ref": "#/$defs/RegisteredToolIdV1" },
+        "status": { "enum": ["succeeded", "failed", "cancelled"] },
+        "errorCode": {
+          "type": ["string", "null"],
+          "enum": [
+            "not-found",
+            "hash-conflict",
+            "invalid-markdown",
+            "policy-blocked",
+            "cancelled",
+            "internal-redacted",
+            null
+          ]
+        },
+        "data": {
+          "oneOf": [{ "$ref": "#/$defs/ToolResultDataV1" }, { "type": "null" }]
+        },
+        "resultHash": { "$ref": "#/$defs/ContentHashV1" },
+        "truncated": { "type": "boolean" },
+        "truncationReason": {
+          "type": ["string", "null"],
+          "enum": ["item_limit", "byte_limit", null]
+        },
+        "trust": { "const": "untrusted_tool_data" }
+      }
+    },
+    "ProviderSnapshotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerId", "presetVersion", "modelId"],
+      "properties": {
+        "providerId": { "type": "string" },
+        "presetVersion": { "type": "string" },
+        "modelId": { "type": "string" }
+      }
+    },
+    "SkillPackSnapshotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "hash"],
+      "properties": {
+        "version": { "type": "string" },
+        "hash": { "$ref": "#/$defs/ContentHashV1" }
+      }
+    },
+    "AgentActionRecordContextV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actionId",
+        "projectId",
+        "sessionId",
+        "turnId",
+        "sequence",
+        "provider",
+        "skillPack",
+        "effectiveSkillIds",
+        "policyDisposition",
+        "createdAtMs"
+      ],
+      "properties": {
+        "actionId": { "type": "string", "pattern": "^act_[A-Za-z0-9_-]{8,92}$" },
+        "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{8,92}$" },
+        "sessionId": { "type": "string", "pattern": "^ses_[A-Za-z0-9_-]{8,92}$" },
+        "turnId": { "type": "string", "pattern": "^trn_[A-Za-z0-9_-]{8,92}$" },
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "provider": { "$ref": "#/$defs/ProviderSnapshotV1" },
+        "skillPack": { "$ref": "#/$defs/SkillPackSnapshotV1" },
+        "effectiveSkillIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/SkillIdV1" }
+        },
+        "policyDisposition": { "enum": ["allowed", "blocked"] },
+        "createdAtMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "AgentActionRecordV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "context",
+        "payload",
+        "payloadHash",
+        "previousActionHash",
+        "actionHash",
+        "redactionState"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "context": { "$ref": "#/$defs/AgentActionRecordContextV1" },
+        "payload": { "$ref": "#/$defs/AgentActionPayloadV1" },
+        "payloadHash": { "$ref": "#/$defs/ContentHashV1" },
+        "previousActionHash": {
+          "oneOf": [{ "$ref": "#/$defs/ContentHashV1" }, { "type": "null" }]
+        },
+        "actionHash": { "$ref": "#/$defs/ContentHashV1" },
+        "redactionState": { "const": "redacted" }
+      }
+    }
+  }
+}
