@@ -75,7 +75,6 @@ struct StoryCatalogMaterial {
     source_byte_count: u64,
 }
 
-#[tauri::command]
 pub fn story_context_catalog(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -83,7 +82,6 @@ pub fn story_context_catalog(
     load_story_context_catalog(&state, &session_id)
 }
 
-#[tauri::command]
 pub fn story_context_build(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -92,7 +90,6 @@ pub fn story_context_build(
     build_registered_story_context(&state, &session_id, input)
 }
 
-#[tauri::command]
 pub fn story_context_request_preview(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -663,6 +660,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let inspection = inspect_project_root(&root, ProjectScanMode::Create).unwrap();
         let handle = create_project(&inspection).unwrap();
+        crate::commands::install_legacy_story_ledger_fixture(&root);
         fs::write(root.join("plot/main.md"), "# 主线\n\nPRIVATE_PLOT_CANARY\n").unwrap();
         fs::write(root.join("outlines/main.md"), "# 大纲\n\n第二章转折\n").unwrap();
         fs::write(root.join("style/main.md"), "# 风格\n\n克制、冷静\n").unwrap();

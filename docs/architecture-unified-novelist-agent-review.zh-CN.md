@@ -1,6 +1,6 @@
 # NovelGainker 统一 Novelist Agent 会话——架构重审
 
-> 状态：统一 Novelist Agent 架构、GA0 与 GA1 已获产品批准；AM2 已完成 GA2 技术提交，等待 GA2 独立产品验收；Sprint 6 未授权
+> 状态：已由 2026-08-30 RB0 与 Agent Protocol V2 取代；仅作为 as-built 迁移参考，不是当前产品 Gate
 >
 > 日期：2026-08-29
 >

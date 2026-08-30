@@ -1,23 +1,23 @@
 project:
   name: "NovelGainker"
-  level: 2
+  level: 4
   initialized: "2026-08-29T18:12:34Z"
-  last_updated: "2026-08-29T18:12:34Z"
+  last_updated: "2026-08-31T00:14:00+08:00"
 
-current_phase: 1
-current_workflow: null
-baseline_note: "本状态从 2026-08-30 的启动链路审计开始追踪；既有历史工作流未验证，不标记为已完成。"
+current_phase: 4
+current_workflow: "AM-R2"
+baseline_note: "NG-R201～NG-R208 已技术完成并生成 GAR2 技术提交；已在强制停止点停止，gar2Approved=false，等待独立产品评审。"
 
 phases:
   phase_1_analysis:
     name: "分析"
-    status: "not_started"
+    status: "completed"
     workflows:
       product_brief:
-        status: "required"
-        completed: false
-        output_file: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        output_file: "docs/stories/agent-conversation-authoring-rebaseline-plan.zh-CN.md"
+        completed_at: "2026-08-30"
       research:
         status: "optional"
         completed: false
@@ -30,57 +30,102 @@ phases:
         completed_at: null
   phase_2_planning:
     name: "规划"
-    status: "not_started"
+    status: "completed"
     workflows:
       prd:
-        status: "required"
-        completed: false
-        output_file: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        output_file: "docs/stories/agent-conversation-authoring-rebaseline-plan.zh-CN.md"
+        completed_at: "2026-08-30"
       tech_spec:
-        status: "optional"
-        completed: false
-        output_file: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        output_file: "docs/stories/agent-protocol-v2-context-mark-review.zh-CN.md"
+        completed_at: "2026-08-30"
       ux_design:
-        status: "recommended"
-        completed: false
-        output_file: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        output_file: "docs/stories/agent-conversation-authoring-rebaseline-plan.zh-CN.md"
+        completed_at: "2026-08-30"
   phase_3_solutioning:
     name: "方案设计"
-    status: "not_started"
+    status: "completed"
     workflows:
       architecture:
-        status: "required"
-        completed: false
-        output_file: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        output_file: "docs/architecture.zh-CN.md"
+        completed_at: "2026-08-30"
       gate_check:
-        status: "recommended"
-        completed: false
-        passed: null
-        completed_at: null
+        status: "completed"
+        completed: true
+        passed: true
+        output_file: "docs/stories/agent-protocol-v2-context-mark-review.zh-CN.md"
+        completed_at: "2026-08-30"
   phase_4_implementation:
     name: "实现"
-    status: "paused"
+    status: "technical_submitted"
     workflows:
       sprint_planning:
         status: "required"
-        completed: false
-        output_file: null
-        completed_at: null
+        completed: true
+        output_file: "docs/stories/agent-conversation-authoring-am-r2-story-packet.zh-CN.md"
+        completed_at: "2026-08-30T21:24:21+08:00"
       stories:
-        total: 2
-        completed: 0
+        total: 8
+        completed: 8
         in_progress: 0
         story_list:
-          - "STORY-STARTUP-001"
-          - "STORY-STARTUP-002"
+          - "NG-R201"
+          - "NG-R202"
+          - "NG-R203"
+          - "NG-R204"
+          - "NG-R205"
+          - "NG-R206"
+          - "NG-R207"
+          - "NG-R208"
 
 metrics:
+  progress_scope: "AM-R2_technical_delivery"
   total_workflows: 8
-  completed_workflows: 0
-  progress_percentage: 0
-  estimated_stories: 2
-  completed_stories: 0
+  completed_workflows: 7
+  progress_percentage: 100
+  estimated_stories: 8
+  completed_stories: 8
+
+previous_gate:
+  id: "GAR1"
+  status: "technical_submitted"
+  technical_submission_ready: true
+  product_approved: false
+  review_artifacts:
+    - "target/qa/gar1/gar1-review-report.md"
+    - "target/qa/gar1/gar1-manifest.json"
+
+candidate_packet:
+  id: "AM-R2"
+  title: "Conversation → Anchor → Canon/Chapter Commit"
+  status: "technical_submitted"
+  output_file: "docs/stories/agent-conversation-authoring-am-r2-story-packet.zh-CN.md"
+  created_at: "2026-08-30T21:06:58+08:00"
+  creation_authorized: true
+  approved_at: "2026-08-30T21:24:21+08:00"
+  implementation_authorized: true
+  continuous_story_authorization: true
+  mandatory_stop: "GAR2-technical-submission"
+  note: "NG-R201～NG-R208 已按授权连续完成；完整 pnpm quality 通过，GAR2 技术提交已生成并停止，不授权 AM-R3、Sprint 6 或真实 Provider Live Smoke。"
+
+gate:
+  id: "GAR2"
+  status: "technical_submitted"
+  technical_submission_ready: true
+  product_approved: false
+  review_artifacts:
+    - "target/qa/gar2/gar2-review-report.md"
+    - "target/qa/gar2/gar2-manifest.json"
+
+next_action:
+  type: "review_gate"
+  id: "GAR2"
+  instruction: "独立评审 GAR2 Manifest 与 Review Report；未经明确授权不进入 AM-R3、Sprint 6 或真实 Provider Live Smoke"
+  stop_at: "GAR2-product-decision"

@@ -49,12 +49,7 @@ const SOURCE_DIRECTORIES: &[&str] = &[
     "style",
     "chapters",
 ];
-const PROJECT_FILES: &[&str] = &[
-    "project.md",
-    "AGENTS.md",
-    "materials/000.story-ledger.md",
-    ".novelgainker/project.json",
-];
+const PROJECT_FILES: &[&str] = &["project.md", "AGENTS.md", ".novelgainker/project.json"];
 const AGENTS_MD: &str = r#"# NovelGainker 项目约定
 
 - 默认写作语言为简体中文（zh-CN）。
@@ -62,17 +57,6 @@ const AGENTS_MD: &str = r#"# NovelGainker 项目约定
 - 修改已有正文前先确认作者意图，不静默覆盖文件。
 - `published/` 用于生成物，不作为可编辑源目录。
 "#;
-const STORY_LEDGER_MD: &str = r#"---
-title: 故事状态账本
-writingLanguage: zh-CN
-status: active
----
-
-# 故事状态账本
-
-在这里记录时间线、角色状态、线索、承诺与回收等连续性事实。
-"#;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectCreateInputV1 {
@@ -431,10 +415,6 @@ pub fn prepare_project_create(
         PreparedProjectFile {
             relative_path: "AGENTS.md",
             content: AGENTS_MD.to_owned(),
-        },
-        PreparedProjectFile {
-            relative_path: "materials/000.story-ledger.md",
-            content: STORY_LEDGER_MD.to_owned(),
         },
         PreparedProjectFile {
             relative_path: ".novelgainker/project.json",
@@ -1049,7 +1029,7 @@ mod tests {
     use super::{
         create_prepared_project, create_prepared_project_impl, create_project,
         inspect_project_root, open_project, prepare_project_create, ProjectCreateInputV1,
-        ProjectScanMode, AGENTS_MD, STORY_LEDGER_MD,
+        ProjectScanMode, AGENTS_MD,
     };
     use novelgainker_domain::ProjectMetadata;
     use std::fs;
@@ -1087,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_the_complete_v1_scaffold_with_lf_and_no_bom() {
+    fn creates_the_minimal_v1_scaffold_without_canon_anchors() {
         let root = TestRoot::new("scaffold");
         let inspection = inspect_project_root(root.path(), ProjectScanMode::Create)
             .expect("empty root must scan");
@@ -1113,11 +1093,15 @@ mod tests {
             fs::read_to_string(root.path().join("AGENTS.md")).expect("AGENTS.md must read"),
             AGENTS_MD
         );
-        assert_eq!(
-            fs::read_to_string(root.path().join("materials/000.story-ledger.md"))
-                .expect("ledger must read"),
-            STORY_LEDGER_MD
-        );
+        assert!(!root.path().join("materials/000.story-ledger.md").exists());
+        assert!(fs::read_dir(root.path().join("characters"))
+            .expect("characters directory must read")
+            .next()
+            .is_none());
+        assert!(fs::read_dir(root.path().join("world"))
+            .expect("world directory must read")
+            .next()
+            .is_none());
         let metadata_bytes =
             fs::read(root.path().join(".novelgainker/project.json")).expect("metadata must read");
         assert!(!metadata_bytes.starts_with(&[0xef, 0xbb, 0xbf]));
@@ -1151,7 +1135,7 @@ mod tests {
 
         assert_eq!(preview.schema_version, 1);
         assert_eq!(preview.directories.len(), 11);
-        assert_eq!(preview.files.len(), 4);
+        assert_eq!(preview.files.len(), 3);
         assert_eq!(preview.existing_unrelated_entry_count, 1);
         assert_eq!(preview.preview_hash.len(), 64);
         assert!(Uuid::parse_str(&preview.project_id).is_ok());

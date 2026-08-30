@@ -385,6 +385,7 @@ fn apply_patch_envelope(
             if edits.is_empty() || edits.len() > MAX_EXACT_EDITS {
                 return Err(write_error("agent-write.patch-edit-count"));
             }
+            let replaces_whole_document = edits.len() == 1 && edits[0].find == source;
             let mut output = source.to_owned();
             for edit in edits {
                 if edit.find.is_empty() || edit.find == edit.replace {
@@ -395,7 +396,18 @@ fn apply_patch_envelope(
                 }
                 output = output.replacen(&edit.find, &edit.replace, 1);
             }
-            Ok((output, ValidatedMutationShapeV1::PatchHunks))
+            Ok((
+                output,
+                if replaces_whole_document {
+                    if path.starts_with("chapters/") {
+                        ValidatedMutationShapeV1::ReplaceWholeChapter
+                    } else {
+                        ValidatedMutationShapeV1::ReplaceWholeFile
+                    }
+                } else {
+                    ValidatedMutationShapeV1::PatchHunks
+                },
+            ))
         }
         PatchOperationKindV1::ReplaceWhole if envelope.edits.is_none() => Ok((
             envelope

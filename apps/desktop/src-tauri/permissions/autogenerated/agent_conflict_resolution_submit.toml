@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-conflict-resolution-submit"
+description = "Enables the agent_conflict_resolution_submit command without any pre-configured scope."
+commands.allow = ["agent_conflict_resolution_submit"]
+
+[[permission]]
+identifier = "deny-agent-conflict-resolution-submit"
+description = "Denies the agent_conflict_resolution_submit command without any pre-configured scope."
+commands.deny = ["agent_conflict_resolution_submit"]

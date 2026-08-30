@@ -27,7 +27,6 @@ const candidate: projectApi.ProjectCandidate = {
 const scaffoldContents = [
   ["project.md", '---\ntitle: "雾港来信"\nwritingLanguage: zh-CN\n---\n\n# 雾港来信\n'],
   ["AGENTS.md", "# 项目约定\n"],
-  ["materials/000.story-ledger.md", "# 故事状态账本\n"],
   [
     ".novelgainker/project.json",
     '{\n  "schemaVersion": 1,\n  "projectId": "30000000-0000-4000-8000-000000000003"\n}\n',
@@ -178,7 +177,7 @@ function createWindowCloseHarness() {
       handler = nextHandler;
       return dispose;
     }),
-    close: vi.fn(async () => undefined),
+    destroy: vi.fn(async () => undefined),
   };
   return {
     port,
@@ -327,16 +326,24 @@ describe("NG-105 project workspace", () => {
   it("confirms project creation, indexes the whitelist and edits a real source buffer", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();
+    const onFileOpenRequested = vi.fn();
     const read = vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue(draftDocument);
     const getItem = vi.spyOn(Storage.prototype, "getItem");
     const setItem = vi.spyOn(Storage.prototype, "setItem");
-    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    render(
+      <ProjectWorkspace
+        desktopRuntime
+        onFileOpenRequested={onFileOpenRequested}
+        windowClosePort={harness.port}
+      />,
+    );
 
     await createProject(user);
     expect(screen.getByRole("button", { name: "draft.md" })).toBeInTheDocument();
     expect(screen.queryByText("published")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "draft.md" }));
+    expect(onFileOpenRequested).toHaveBeenCalledOnce();
     const editor = await screen.findByRole("textbox", { name: "项目 Markdown 编辑器" });
     expect(editor).toHaveValue(draftDocument.content);
     expect(screen.getByText("已保存")).toBeInTheDocument();
@@ -666,6 +673,7 @@ describe("NG-105 project workspace", () => {
   it("prevents a window close until the user explicitly discards dirty edits", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();
+    const close = vi.spyOn(projectApi, "requestProjectClose").mockResolvedValue({ closed: true });
     vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue(draftDocument);
     render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
     await createProject(user);
@@ -679,9 +687,58 @@ describe("NG-105 project workspace", () => {
     expect(
       screen.getByText("继续关闭 NovelGainker 会丢弃当前编辑缓冲区中的修改。"),
     ).toBeInTheDocument();
-    expect(harness.port.close).not.toHaveBeenCalled();
+    expect(harness.port.destroy).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "放弃修改并继续" }));
-    expect(harness.port.close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledWith(session.sessionId);
+    expect(harness.port.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("closes the active project automatically before closing a clean window", async () => {
+    const user = userEvent.setup();
+    const harness = createWindowCloseHarness();
+    const close = vi.spyOn(projectApi, "requestProjectClose").mockResolvedValue({ closed: true });
+    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    await createProject(user);
+    await waitFor(() => expect(harness.port.onCloseRequested).toHaveBeenCalledOnce());
+
+    const closeEvent = await harness.requestClose();
+
+    expect(closeEvent.preventDefault).toHaveBeenCalledOnce();
+    await waitFor(() => expect(close).toHaveBeenCalledWith(session.sessionId));
+    expect(harness.port.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("still closes the app when best-effort project cleanup fails", async () => {
+    const user = userEvent.setup();
+    const harness = createWindowCloseHarness();
+    vi.spyOn(projectApi, "requestProjectClose").mockRejectedValue({
+      code: "workflow.run_active",
+      messageKey: "errors.workflowRunActive",
+    });
+    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    await createProject(user);
+    await waitFor(() => expect(harness.port.onCloseRequested).toHaveBeenCalledOnce());
+
+    const closeEvent = await harness.requestClose();
+
+    expect(closeEvent.preventDefault).toHaveBeenCalledOnce();
+    await waitFor(() => expect(harness.port.destroy).toHaveBeenCalledOnce());
+  });
+
+  it("shows a stable runtime error when native window destruction is rejected", async () => {
+    const user = userEvent.setup();
+    const harness = createWindowCloseHarness();
+    vi.spyOn(projectApi, "requestProjectClose").mockResolvedValue({ closed: true });
+    vi.mocked(harness.port.destroy).mockRejectedValue(new Error("native destroy rejected"));
+    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    await createProject(user);
+    await waitFor(() => expect(harness.port.onCloseRequested).toHaveBeenCalledOnce());
+
+    await harness.requestClose();
+
+    expect(await screen.findByText("本地核心暂时不可用")).toBeInTheDocument();
+    expect(screen.getByText(/runtime\.unavailable/u)).toBeInTheDocument();
+    expect(screen.queryByText(/runtime\.unknown/u)).not.toBeInTheDocument();
   });
 
   it("shows controlled read failures and keeps metadata read-only", async () => {

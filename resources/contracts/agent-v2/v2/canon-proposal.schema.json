@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "novelgainker://contracts/agent-v2/v2/canon-proposal.schema.json",
+  "title": "CanonProposalV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "proposalId",
+    "targetKind",
+    "displayName",
+    "operation",
+    "facts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "requestId": { "type": "string", "pattern": "^req_[A-Za-z0-9_-]{8,80}$" },
+    "proposalId": { "type": "string", "pattern": "^prop_[A-Za-z0-9_-]{8,80}$" },
+    "targetKind": { "enum": ["character", "setting", "material", "plot", "chapter"] },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "operation": { "enum": ["create", "extend", "append_chapter"] },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "value", "sources"],
+        "properties": {
+          "field": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 65536 },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "sourceId", "sourceHash"],
+              "properties": {
+                "kind": { "enum": ["visible_message", "draft_artifact", "canon_source"] },
+                "sourceId": { "type": "string", "pattern": "^(msg|art|src)_[A-Za-z0-9_-]{8,80}$" },
+                "sourceHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

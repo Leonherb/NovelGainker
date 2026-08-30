@@ -40,12 +40,10 @@ pub struct RouterRunEvent {
     pub event: RouterRunEventBody,
 }
 
-#[tauri::command]
 pub fn router_resolve_local(text: String) -> Result<LocalRouterDecisionV1, AppError> {
     resolve_local_router(&text).map_err(router_input_error)
 }
 
-#[tauri::command]
 pub fn router_run_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectRegistry>,
@@ -111,7 +109,6 @@ pub fn router_run_start(
     })
 }
 
-#[tauri::command]
 pub fn router_run_cancel(
     state: tauri::State<'_, ProjectRegistry>,
     run_id: String,

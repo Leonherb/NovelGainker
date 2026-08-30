@@ -11,9 +11,11 @@ pub mod contracts;
 pub mod persistence_contracts;
 pub mod provider_adapter;
 pub mod runtime_registry;
+pub mod runtime_registry_v2;
 pub mod session_machine;
 pub mod transaction_contracts;
 pub mod turn_budget;
+pub mod v2;
 
 pub const SKILL_PACK_SCHEMA_VERSION: u16 = 1;
 pub const SKILL_PACK_VERSION: &str = "1.0.0";
@@ -25,12 +27,14 @@ pub const SKILL_PACK_ENABLED_AT_RUNTIME: bool = false;
 pub const AM1_READ_ONLY_RUNTIME_ENABLED: bool = true;
 /// GA1-approved AM2 view: four read tools plus the two frozen governed Markdown write tools.
 pub const AM2_GOVERNED_WRITE_RUNTIME_ENABLED: bool = true;
+pub const AM_R1_V2_RUNTIME_ENABLED: bool = true;
 pub const SKILL_PACK_SHA256: &str = env!("NOVELGAINKER_SKILL_PACK_SHA256");
 pub const AGENT_CONTRACT_SET_SHA256: &str = env!("NOVELGAINKER_AGENT_CONTRACT_SET_SHA256");
 pub const AGENT_ACTION_CONTRACT_SET_SHA256: &str =
     env!("NOVELGAINKER_AGENT_ACTION_CONTRACT_SET_SHA256");
 pub const AGENT_GOVERNANCE_CONTRACT_SET_SHA256: &str =
     env!("NOVELGAINKER_AGENT_GOVERNANCE_CONTRACT_SET_SHA256");
+pub const AGENT_V2_CONTRACT_SET_SHA256: &str = env!("NOVELGAINKER_AGENT_V2_CONTRACT_SET_SHA256");
 
 pub const SKILL_IDS: [&str; 9] = [
     "create-novel-project",
@@ -151,17 +155,38 @@ pub fn risk_matrix_source() -> &'static str {
     ))
 }
 
-pub fn agent_read_action_schema_source() -> &'static str {
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/contracts/agent-runtime/v1/agent-read-action.schema.json"
-    ))
-}
-
 pub fn agent_write_action_schema_source() -> &'static str {
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../resources/contracts/agent-runtime/v2/agent-write-action.schema.json"
+    ))
+}
+
+pub fn skill_selection_v2_schema_source() -> &'static str {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/contracts/agent-v2/v2/skill-selection.schema.json"
+    ))
+}
+
+pub fn agent_control_action_v2_schema_source() -> &'static str {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/contracts/agent-v2/v2/agent-control-action.schema.json"
+    ))
+}
+
+pub fn memory_compaction_v1_schema_source() -> &'static str {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/contracts/agent-v2/v2/memory-compaction.schema.json"
+    ))
+}
+
+pub fn canon_proposal_v1_schema_source() -> &'static str {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/contracts/agent-v2/v2/canon-proposal.schema.json"
     ))
 }
 

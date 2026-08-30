@@ -41,7 +41,6 @@ pub struct StoryContinuityStatusV1 {
     report: Option<StoryContinuityReportV1>,
 }
 
-#[tauri::command]
 pub fn story_continuity_check(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -145,7 +144,6 @@ pub(super) fn rebuild_registered_story_continuity(
     }))
 }
 
-#[tauri::command]
 pub fn story_continuity_status_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -163,7 +161,6 @@ pub fn story_continuity_status_load(
     })
 }
 
-#[tauri::command]
 pub fn story_continuity_warning_confirm(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,

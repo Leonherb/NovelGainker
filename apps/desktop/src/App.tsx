@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
-import { AgentTimelinePanel } from "./components/AgentTimelinePanel";
+import { AgentConversation } from "./components/AgentConversation";
 import { HealthRuntimeSummary, HealthStatusCard } from "./components/HealthStatus";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { DEFAULT_PROVIDER_STATE } from "./components/provider-settings-model";
@@ -75,6 +75,9 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   });
   const [providerState, setProviderState] = useState(DEFAULT_PROVIDER_STATE);
   const [providerRunActive, setProviderRunActive] = useState(false);
+  const [projectNavigatorHost, setProjectNavigatorHost] = useState<HTMLElement | null>(null);
+  const [startupNavigatorHost, setStartupNavigatorHost] = useState<HTMLElement | null>(null);
+  const [agentActivityHost, setAgentActivityHost] = useState<HTMLElement | null>(null);
   const healthCheckStarted = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLElement>(null);
@@ -188,15 +191,12 @@ function App({ diagnosticsEnabled = false }: AppProps) {
     setRightCollapsed((current) => !current);
   };
 
-  const revealProjectCreation = () => {
+  const revealFileReview = useCallback(() => {
     setRightCollapsed(false);
     if (isNarrow) {
       setNarrowPanel("right");
     }
-    window.requestAnimationFrame(() => {
-      document.getElementById("project-create-action")?.focus();
-    });
-  };
+  }, [isNarrow]);
 
   const clampRightPanelWidth = useCallback(
     (requestedWidth: number) => {
@@ -382,6 +382,8 @@ function App({ diagnosticsEnabled = false }: AppProps) {
             </header>
 
             <div className="panel-scroll">
+              <div className="project-navigator-host" ref={setProjectNavigatorHost} />
+
               <ProviderSettings
                 desktopRuntime={desktopRuntime}
                 expanded={apiCardExpanded}
@@ -401,11 +403,12 @@ function App({ diagnosticsEnabled = false }: AppProps) {
         ) : null}
 
         <main aria-label={ZH_CN.conversation.ariaLabel} className="conversation-panel">
-          <AgentTimelinePanel
+          <AgentConversation
+            activityHost={agentActivityHost}
             desktopRuntime={desktopRuntime}
+            key={projectSessionId ?? "no-project"}
             projectSessionId={projectSessionId}
             onRunActiveChange={setProviderRunActive}
-            onProjectCreateRequested={revealProjectCreation}
             providerState={providerState}
           />
         </main>
@@ -458,17 +461,40 @@ function App({ diagnosticsEnabled = false }: AppProps) {
           </header>
 
           <div className="right-content">
-            <ProjectWorkspace
-              desktopRuntime={desktopRuntime}
-              externalOpenPath={workspaceOpenPath}
-              externalRefreshToken={workspaceRefreshToken}
-              onAppStateChanged={() => void loadAppState(false)}
-              recentProjects={recentProjects}
-              onSessionChange={handleProjectSessionChange}
-            />
+            <div className="agent-activity-host" ref={setAgentActivityHost} />
+            <div className="project-editor-region">
+              <ProjectWorkspace
+                desktopRuntime={desktopRuntime}
+                externalOpenPath={workspaceOpenPath}
+                externalRefreshToken={workspaceRefreshToken}
+                navigatorHost={projectSessionId ? projectNavigatorHost : startupNavigatorHost}
+                onAppStateChanged={() => void loadAppState(false)}
+                onFileOpenRequested={revealFileReview}
+                recentProjects={recentProjects}
+                onSessionChange={handleProjectSessionChange}
+              />
+            </div>
           </div>
         </aside>
       </div>
+
+      {projectSessionId === null ? (
+        <div className="startup-project-backdrop">
+          <section
+            aria-labelledby="startup-project-title"
+            aria-modal="true"
+            className="startup-project-dialog"
+            role="dialog"
+          >
+            <header>
+              <p className="section-kicker">{ZH_CN.files.project.startupKicker}</p>
+              <h1 id="startup-project-title">{ZH_CN.files.project.startupTitle}</h1>
+              <p>{ZH_CN.files.project.startupBody}</p>
+            </header>
+            <div className="startup-project-host" ref={setStartupNavigatorHost} />
+          </section>
+        </div>
+      ) : null}
 
       <footer className="statusbar">
         <span>{ZH_CN.footer.workspace}</span>

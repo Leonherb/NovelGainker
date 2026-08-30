@@ -1,7 +1,7 @@
 project:
   name: "NovelGainker"
   type: "other"
-  level: 2
+  level: 4
   description: "Windows 桌面小说创作与工作流应用"
 
 paths:
@@ -33,5 +33,5 @@ workflow:
 metadata:
   created: "2026-08-29T18:12:34Z"
   bmad_version: "6.0.0"
-  last_updated: "2026-08-29T18:12:34Z"
-  baseline_note: "既有项目在本次建立 BMAD 状态；历史阶段未回填为已完成。"
+  last_updated: "2026-08-30T21:24:21+08:00"
+  baseline_note: "AM-R2 Draft 1 已无修改批准，授权 NG-R201～NG-R208 连续实施并在 GAR2 技术提交停止；GAR1/GAR2 均未获产品批准。"

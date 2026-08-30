@@ -1,6 +1,12 @@
+pub mod agent_anchor;
+pub mod agent_canon;
+pub mod agent_conflict;
+pub mod agent_marks;
 pub mod agent_runtime;
 pub mod agent_transaction;
+pub mod agent_v2;
 pub mod agent_write;
+pub mod agent_write_plan_v2;
 pub mod app_state;
 pub mod canon_apply;
 pub mod coordination;

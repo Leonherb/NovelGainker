@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -40,14 +40,32 @@ describe("NovelGainker Sprint 0 工作台", () => {
   it("默认显示 API、对话和文件三栏", () => {
     render(<App />);
 
-    expect(screen.getByRole("complementary", { name: "AI Provider 设置" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("main", { name: "对话工作区" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "文件预览与编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel })).toBeInTheDocument();
     expect(screen.getAllByText("DeepSeek").length).toBeGreaterThan(0);
     expect(screen.getAllByText("OpenAI").length).toBeGreaterThan(0);
     expect(document.querySelector(".story-badge")).toHaveTextContent(
       "当前 Provider · OpenAI · gpt-5.6-terra",
     );
+  });
+
+  it("未打开工程时阻塞显示项目选择弹窗，并让右栏只承载文件内容", () => {
+    render(<App />);
+
+    const left = screen.getByRole("complementary", { name: ZH_CN.providers.ariaLabel });
+    const right = screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel });
+    const dialog = screen.getByRole("dialog", { name: ZH_CN.files.project.startupTitle });
+    const projectTree = within(dialog).getByRole("region", { name: ZH_CN.files.projectFiles });
+
+    expect(projectTree).toBeInTheDocument();
+    expect(within(left).queryByRole("region", { name: ZH_CN.files.projectFiles })).toBeNull();
+    expect(within(right).queryByRole("region", { name: ZH_CN.files.projectFiles })).toBeNull();
+    expect(
+      within(right).getByRole("region", { name: ZH_CN.files.editor.heading }),
+    ).toBeInTheDocument();
   });
 
   it("可以独立折叠 API 卡、左栏和右栏并恢复", async () => {
@@ -59,18 +77,22 @@ describe("NovelGainker Sprint 0 工作台", () => {
     await user.click(screen.getByRole("button", { name: "展开 OpenAI API Key 填写" }));
     expect(screen.getByLabelText("OpenAI API Key")).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "收起左侧 API 栏" }));
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.collapseApi }));
     expect(
-      screen.queryByRole("complementary", { name: "AI Provider 设置" }),
+      screen.queryByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("main", { name: "对话工作区" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "展开左侧 API 栏" }));
-    expect(screen.getByRole("complementary", { name: "AI Provider 设置" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandApi }));
+    expect(
+      screen.getByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "收起右侧文件栏" }));
-    expect(screen.queryByRole("complementary", { name: "文件预览与编辑" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "展开右侧文件栏" }));
-    expect(screen.getByRole("complementary", { name: "文件预览与编辑" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.collapseFiles }));
+    expect(
+      screen.queryByRole("complementary", { name: ZH_CN.files.ariaLabel }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandFiles }));
+    expect(screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel })).toBeInTheDocument();
   });
 
   it("折叠右栏时保持项目工作区挂载且不使用浏览器存储", async () => {
@@ -83,9 +105,9 @@ describe("NovelGainker Sprint 0 工作台", () => {
     expect(sidebar).not.toBeNull();
     expect(sidebar).not.toHaveAttribute("hidden");
 
-    await user.click(screen.getByRole("button", { name: "收起右侧文件栏" }));
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.collapseFiles }));
     expect(sidebar).toHaveAttribute("hidden");
-    await user.click(screen.getByRole("button", { name: "展开右侧文件栏" }));
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandFiles }));
     expect(sidebar).not.toHaveAttribute("hidden");
     expect(document.querySelector("#file-sidebar")).toBe(sidebar);
     expect(getItem).not.toHaveBeenCalled();
@@ -98,7 +120,7 @@ describe("NovelGainker Sprint 0 工作台", () => {
 
     const shell = document.querySelector<HTMLElement>(".app-shell");
     const workspace = document.querySelector<HTMLElement>(".workspace");
-    const separator = screen.getByRole("separator", { name: "调整右侧文件栏宽度" });
+    const separator = screen.getByRole("separator", { name: ZH_CN.panels.resizeFiles });
     expect(shell).not.toBeNull();
     expect(workspace).not.toBeNull();
     expect(shell?.style.getPropertyValue("--right-panel-width")).toBe("");
@@ -131,6 +153,7 @@ describe("NovelGainker Sprint 0 工作台", () => {
     expect(shell).toHaveAttribute("data-right-resizing", "false");
   });
   it("从本机״̬恢复布局、最近项Ŀ并继续持久化界面ƫ好", async () => {
+    const user = userEvent.setup();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_920 });
     vi.mocked(healthApi.isTauriRuntime).mockReturnValue(true);
     vi.spyOn(healthApi, "requestHealthStatus").mockReturnValue(new Promise(() => undefined));
@@ -177,6 +200,10 @@ describe("NovelGainker Sprint 0 工作台", () => {
         rightPanelWidth: 920,
       }),
     );
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandApi }));
+    expect(
+      screen.getByRole("dialog", { name: ZH_CN.files.project.startupTitle }),
+    ).toBeInTheDocument();
   });
 
   it("本机״̬损坏ʱ显ʾ安ȫĬ认提ʾ且ֹͣƫ好д入", async () => {
@@ -210,24 +237,28 @@ describe("NovelGainker Sprint 0 工作台", () => {
 
     const shell = document.querySelector(".app-shell");
     expect(shell).toHaveAttribute("data-layout", "narrow");
-    expect(screen.queryByRole("separator", { name: "调整右侧文件栏宽度" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("separator", { name: ZH_CN.panels.resizeFiles }),
+    ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(
-        screen.queryByRole("complementary", { name: "AI Provider 设置" }),
+        screen.queryByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("complementary", { name: "文件预览与编辑" }),
+        screen.queryByRole("complementary", { name: ZH_CN.files.ariaLabel }),
       ).not.toBeInTheDocument();
     });
     expect(screen.getByRole("main", { name: "对话工作区" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "展开左侧 API 栏" }));
-    expect(screen.getByRole("complementary", { name: "AI Provider 设置" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "展开右侧文件栏" }));
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandApi }));
     expect(
-      screen.queryByRole("complementary", { name: "AI Provider 设置" }),
+      screen.getByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandFiles }));
+    expect(
+      screen.queryByRole("complementary", { name: ZH_CN.providers.ariaLabel }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "文件预览与编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel })).toBeInTheDocument();
   });
 
   it("折叠按钮支持键盘操作，未配置 Provider 时禁用发送且不会发起网络请求", async () => {
@@ -236,9 +267,9 @@ describe("NovelGainker Sprint 0 工作台", () => {
     render(<App />);
 
     await user.tab();
-    expect(screen.getByRole("button", { name: "收起左侧 API 栏" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: ZH_CN.panels.collapseApi })).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "展开左侧 API 栏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: ZH_CN.panels.expandApi })).toBeInTheDocument();
 
     const sendButton = screen.getByRole("button", { name: "发送" });
     expect(sendButton).toBeDisabled();

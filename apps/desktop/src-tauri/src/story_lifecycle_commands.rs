@@ -75,7 +75,6 @@ pub struct StoryChapterLifecycleStatusV1 {
     ledger_applied: Option<ChapterFileApplyResult>,
 }
 
-#[tauri::command]
 pub fn story_chapter_state_preview(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -84,7 +83,6 @@ pub fn story_chapter_state_preview(
     preview_registered_chapter_state(&state, &session_id, input)
 }
 
-#[tauri::command]
 pub fn story_chapter_lifecycle_status_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -125,7 +123,6 @@ pub fn story_chapter_lifecycle_status_load(
     })
 }
 
-#[tauri::command]
 pub fn story_chapter_state_apply(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -134,7 +131,6 @@ pub fn story_chapter_state_apply(
     apply_registered_chapter_state(&state, &session_id, input)
 }
 
-#[tauri::command]
 pub fn story_ledger_update_preview(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -143,7 +139,6 @@ pub fn story_ledger_update_preview(
     preview_registered_ledger_update(&state, &session_id, input)
 }
 
-#[tauri::command]
 pub fn story_ledger_update_apply(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,

@@ -8,10 +8,10 @@ export type WindowClosePort = {
   onCloseRequested: (
     handler: (event: CloseRequestEvent) => void | Promise<void>,
   ) => Promise<() => void>;
-  close: () => Promise<void>;
+  destroy: () => Promise<void>;
 };
 
 export const desktopWindowClosePort: WindowClosePort = {
   onCloseRequested: (handler) => getCurrentWindow().onCloseRequested(handler),
-  close: () => getCurrentWindow().close(),
+  destroy: () => getCurrentWindow().destroy(),
 };

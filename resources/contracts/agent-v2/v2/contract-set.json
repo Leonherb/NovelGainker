@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "contractSetId": "novelgainker.agent-v2",
+  "contractSetVersion": "2.0.0",
+  "runtimeEnabled": true,
+  "resources": [
+    {
+      "path": "agent-control-action.schema.json",
+      "bytes": 5223,
+      "sha256": "e655a9b1f6f4adb7b3cc3381a216b84e2fd6e3e41f9b61b90f501d7c46306d1f"
+    },
+    {
+      "path": "canon-proposal.schema.json",
+      "bytes": 1842,
+      "sha256": "f1dd1bd4b4878ae2415974a4eceea3cd069b0c514939a1cdc3bbe0904e737886"
+    },
+    {
+      "path": "contract-types.ts",
+      "bytes": 2747,
+      "sha256": "4f2b7700b5078a01504dbfbd9b31f16b04a3830ec2847128ddc9bba9df2aa260"
+    },
+    {
+      "path": "memory-compaction.schema.json",
+      "bytes": 755,
+      "sha256": "96b369146472c3a749fe52dbdc70f4ee500038b518e38db3054f3c8176fc91f6"
+    },
+    {
+      "path": "persistence.schema.json",
+      "bytes": 3987,
+      "sha256": "d7846c4b508985f7871efd1e90e13aba0a8e378503fd4935ee4eaf636dd90f0d"
+    },
+    {
+      "path": "skill-selection.schema.json",
+      "bytes": 1213,
+      "sha256": "c93473d13bf0f7e79454fee339d2fc231367936a79dc11f125edca4cb41e4d23"
+    }
+  ],
+  "contractSetSha256": "ed103c9d61495d6cb921995ad9c07f8886cc949839594598a219adfc4054cbb7"
+}

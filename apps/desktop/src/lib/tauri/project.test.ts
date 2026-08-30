@@ -30,7 +30,6 @@ const candidate = {
 const previewContents = [
   ["project.md", "# 项目\n"],
   ["AGENTS.md", "# 约定\n"],
-  ["materials/000.story-ledger.md", "# 账本\n"],
   [".novelgainker/project.json", "{}\n"],
 ] as const;
 
@@ -117,7 +116,7 @@ describe("NG-104 project IPC contract", () => {
     expect(() =>
       parseProjectCreatePreview({
         ...createPreview,
-        files: createPreview.files.slice(0, 3),
+        files: createPreview.files.slice(0, 2),
       }),
     ).toThrow();
     expect(() =>

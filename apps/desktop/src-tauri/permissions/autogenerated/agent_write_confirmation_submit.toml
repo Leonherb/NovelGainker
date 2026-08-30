@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-write-confirmation-submit"
+description = "Enables the agent_write_confirmation_submit command without any pre-configured scope."
+commands.allow = ["agent_write_confirmation_submit"]
+
+[[permission]]
+identifier = "deny-agent-write-confirmation-submit"
+description = "Denies the agent_write_confirmation_submit command without any pre-configured scope."
+commands.deny = ["agent_write_confirmation_submit"]

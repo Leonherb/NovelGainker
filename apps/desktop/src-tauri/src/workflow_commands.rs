@@ -143,7 +143,6 @@ pub struct WorkflowSourceCatalogSnapshotV1 {
     replace_targets: Vec<WorkflowSourceCatalogEntryV1>,
 }
 
-#[tauri::command]
 pub fn workflow_source_catalog(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -152,7 +151,6 @@ pub fn workflow_source_catalog(
     load_workflow_source_catalog(&state, &session_id, &workflow_id)
 }
 
-#[tauri::command]
 pub fn workflow_run_prepare(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -334,7 +332,6 @@ fn prepare_registered_workflow_run(
     Ok(workflow_status_snapshot(Some(manager), handle.project_id()))
 }
 
-#[tauri::command]
 pub fn workflow_run_generate(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectRegistry>,
@@ -2265,6 +2262,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let inspection = inspect_project_root(&root, ProjectScanMode::Create).unwrap();
         let handle = create_project(&inspection).unwrap();
+        crate::commands::install_legacy_story_ledger_fixture(&root);
         let source_document = |title: &str, canary: &str| {
             format!("---\ntitle: {title}\nwritingLanguage: zh-CN\n---\n\n# {title}\n\n{canary}\n")
         };
@@ -2462,6 +2460,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let inspection = inspect_project_root(&root, ProjectScanMode::Create).unwrap();
         let handle = create_project(&inspection).unwrap();
+        crate::commands::install_legacy_story_ledger_fixture(&root);
         let source_document = |title: &str, canary: &str| {
             format!("---\ntitle: {title}\nwritingLanguage: zh-CN\n---\n\n# {title}\n\n{canary}\n")
         };

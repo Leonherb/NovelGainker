@@ -116,7 +116,6 @@ struct StoryChapterGenerationTask {
     completion: StoryChapterCompletionContext,
 }
 
-#[tauri::command]
 pub fn story_chapter_generate_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectRegistry>,
@@ -232,7 +231,6 @@ pub fn story_chapter_generate_start(
     Ok(snapshot)
 }
 
-#[tauri::command]
 pub fn story_chapter_status_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -250,7 +248,6 @@ pub fn story_chapter_status_load(
     })
 }
 
-#[tauri::command]
 pub fn story_chapter_generate_cancel(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,

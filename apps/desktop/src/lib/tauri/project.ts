@@ -152,12 +152,7 @@ const CREATE_DIRECTORY_PATHS = [
   "published",
   ".novelgainker",
 ] as const;
-const CREATE_FILE_PATHS = [
-  "project.md",
-  "AGENTS.md",
-  "materials/000.story-ledger.md",
-  ".novelgainker/project.json",
-] as const;
+const CREATE_FILE_PATHS = ["project.md", "AGENTS.md", ".novelgainker/project.json"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

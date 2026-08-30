@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-context-mark-remove"
+description = "Enables the agent_context_mark_remove command without any pre-configured scope."
+commands.allow = ["agent_context_mark_remove"]
+
+[[permission]]
+identifier = "deny-agent-context-mark-remove"
+description = "Denies the agent_context_mark_remove command without any pre-configured scope."
+commands.deny = ["agent_context_mark_remove"]

@@ -5,6 +5,11 @@ use crate::canon_apply::{
 use crate::project::{create_project, inspect_project_root, ProjectScanMode};
 use crate::recovery::RecoveryStore;
 use crate::workspace::{LineEnding, Utf8Bom};
+use novelgainker_agent::v2::{AgentControlActionV2, CanonProposalV1, SkillSelectionV2};
+use novelgainker_agent::{
+    agent_control_action_v2_schema_source, canon_proposal_v1_schema_source,
+    skill_selection_v2_schema_source,
+};
 use novelgainker_workflows::chapter::{build_chapter_proposal, parse_chapter_payload};
 use novelgainker_workflows::chapter_lifecycle::{
     build_chapter_status_transition, build_ledger_update, BuildChapterStatusInputV1,
@@ -45,6 +50,16 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+const LEGACY_STORY_LEDGER_FIXTURE: &str = "---\ntitle: 故事状态账本\nwritingLanguage: zh-CN\nstatus: active\n---\n\n# 故事状态账本\n\n在这里记录时间线、角色状态、线索、承诺与回收等连续性事实。\n";
+
+fn install_legacy_story_ledger_fixture(project_root: &std::path::Path) {
+    fs::write(
+        project_root.join(STORY_LEDGER_RELATIVE_PATH),
+        LEGACY_STORY_LEDGER_FIXTURE.as_bytes(),
+    )
+    .expect("legacy Story Ledger kernel fixture must be installed explicitly");
+}
 
 struct RecordedRequest {
     target: String,
@@ -382,6 +397,184 @@ fn fragmented_utf8(payload: String) -> Vec<Vec<u8>> {
 
 fn request() -> NormalizedRequest {
     NormalizedRequest::user_text("固定 Mock 请求".to_owned(), 32).unwrap()
+}
+
+#[test]
+fn gar1_v2_dual_provider_loopback_separates_skill_control_and_conversation() {
+    let selection_text = json!({
+        "schemaVersion": 2,
+        "requestId": "req_gar1selection00000001",
+        "selectedSkillIds": ["novel-story-telling"],
+        "intentClass": "project_discussion",
+        "visibleReason": "需要读取当前人物设定。"
+    })
+    .to_string();
+    let action_text = json!({
+        "schemaVersion": 2,
+        "requestId": "req_gar1control000000001",
+        "action": "start_response",
+        "selectedSkillIds": ["novel-story-telling"],
+        "visibleReason": "已有足够来源，可以回复。",
+        "responseBrief": "回答作者关于林遥身份的问题。",
+        "sourceIds": ["src_gar1source0000000001"],
+        "markSuggestions": []
+    })
+    .to_string();
+    let conversation_text = "林遥是潮汐记录员，她负责追踪雾港的异常退潮。";
+    for provider in ProviderId::ALL {
+        let server = MockServer::spawn(vec![
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, &selection_text, true),
+            ),
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, &action_text, true),
+            ),
+            ResponsePlan::json(
+                "200 OK",
+                success_body_with_text(provider, conversation_text, true),
+            ),
+        ]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let cancellation = CancellationToken::default();
+        let key = b"gar1-loopback-key-canary";
+
+        let selection_request = NormalizedRequest::agent_v2_skill_selection(
+            "林遥是谁？".to_owned(),
+            "novel-story-telling：整部小说叙事与连续性".to_owned(),
+            "req_gar1selection00000001",
+            512,
+            skill_selection_v2_schema_source(),
+        )
+        .unwrap();
+        let selection_response = client
+            .complete(provider, key, &selection_request, &cancellation)
+            .unwrap();
+        let selection: SkillSelectionV2 = serde_json::from_str(&selection_response.text).unwrap();
+        selection.validate("req_gar1selection00000001").unwrap();
+
+        let control_request = NormalizedRequest::agent_v2_control(
+            "林遥是谁？".to_owned(),
+            "完整 Skill instruction/template/reference".to_owned(),
+            "sourceIds=[src_gar1source0000000001]".to_owned(),
+            "req_gar1control000000001",
+            768,
+            agent_control_action_v2_schema_source(),
+        )
+        .unwrap();
+        let control_response = client
+            .complete(provider, key, &control_request, &cancellation)
+            .unwrap();
+        let action: AgentControlActionV2 = serde_json::from_str(&control_response.text).unwrap();
+        action
+            .validate(
+                "req_gar1control000000001",
+                &["novel-story-telling".to_owned()],
+            )
+            .unwrap();
+
+        let conversation_request = NormalizedRequest::agent_v2_conversation(
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "林遥是谁？".to_owned(),
+            }],
+            "完整 Skill instruction/template/reference".to_owned(),
+            "characters/林遥.md 的 Hash 绑定片段".to_owned(),
+            1_024,
+        )
+        .unwrap();
+        let conversation_response = client
+            .complete(provider, key, &conversation_request, &cancellation)
+            .unwrap();
+        assert_eq!(conversation_response.text, conversation_text);
+
+        let recorded = server.finish();
+        assert_eq!(recorded.len(), 3);
+        let bodies = recorded
+            .iter()
+            .map(|request| String::from_utf8_lossy(&request.body).to_string())
+            .collect::<Vec<_>>();
+        assert!(bodies
+            .iter()
+            .all(|body| !body.contains("gar1-loopback-key-canary")));
+        assert!(!bodies[1].contains(conversation_text));
+        assert!(!bodies[2].contains("\"action\":\"start_response\""));
+        match provider {
+            ProviderId::Deepseek => {
+                assert!(bodies[0].contains("json_object"));
+                assert!(bodies[1].contains("json_object"));
+                assert!(!bodies[2].contains("json_object"));
+            }
+            ProviderId::Openai => {
+                assert!(bodies[0].contains("skill_selection_v2"));
+                assert!(bodies[1].contains("agent_control_action_v2"));
+                assert!(!bodies[2].contains("json_schema"));
+            }
+        }
+    }
+}
+
+#[test]
+fn gar2_dual_provider_loopback_uses_one_source_bound_canon_reconciliation_contract() {
+    let request_id = "req_gar2reconcile0000001";
+    let source_id = "art_gar2artifact00000001";
+    let source_hash = "a".repeat(64);
+    let proposal_text = json!({
+        "schemaVersion": 1,
+        "requestId": request_id,
+        "proposalId": "prop_gar2proposal0000001",
+        "targetKind": "character",
+        "displayName": "林舟",
+        "operation": "create",
+        "facts": [{
+            "field": "身份",
+            "value": "守灯人",
+            "sources": [{
+                "kind": "draft_artifact",
+                "sourceId": source_id,
+                "sourceHash": source_hash
+            }]
+        }]
+    })
+    .to_string();
+    for provider in ProviderId::ALL {
+        let server = MockServer::spawn(vec![ResponsePlan::json(
+            "200 OK",
+            success_body_with_text(provider, &proposal_text, true),
+        )]);
+        let client = ProviderHttpClient::for_test(provider, server.endpoint.clone()).unwrap();
+        let request = NormalizedRequest::agent_v2_reconciliation(
+            "作者已确认：主角就叫林舟。".to_owned(),
+            "create-character 完整资源".to_owned(),
+            format!("sourceId={source_id}; sourceHash={source_hash}"),
+            request_id,
+            1_024,
+            canon_proposal_v1_schema_source(),
+        )
+        .unwrap();
+        let response = client
+            .complete(
+                provider,
+                b"gar2-reconciliation-loopback-canary",
+                &request,
+                &CancellationToken::default(),
+            )
+            .unwrap();
+        let proposal: CanonProposalV1 = serde_json::from_str(&response.text).unwrap();
+        proposal
+            .validate(request_id, &[(source_id.to_owned(), source_hash.clone())])
+            .unwrap();
+        let recorded = server.finish();
+        assert_eq!(recorded.len(), 1);
+        let body = String::from_utf8_lossy(&recorded[0].body);
+        assert!(!body.contains("gar2-reconciliation-loopback-canary"));
+        assert!(!body.contains("characters/林舟.md"));
+        match provider {
+            ProviderId::Deepseek => assert!(body.contains("json_object")),
+            ProviderId::Openai => assert!(body.contains("canon_proposal_v1")),
+        }
+    }
 }
 
 #[test]
@@ -1521,6 +1714,7 @@ fn ng_507_both_loopback_providers_complete_the_storytelling_transaction_state_ma
         fs::create_dir(&project_root).unwrap();
         let inspection = inspect_project_root(&project_root, ProjectScanMode::Create).unwrap();
         let handle = create_project(&inspection).unwrap();
+        install_legacy_story_ledger_fixture(&project_root);
         let recovery = RecoveryStore::new(fixture.root.join("app-state")).unwrap();
 
         let (create_snapshot, create_sources, create_allowed_ids) =
@@ -1779,6 +1973,7 @@ fn ng_507_both_loopback_providers_cancel_truncate_error_and_stale_sources_withou
         fs::create_dir(&project_root).unwrap();
         let inspection = inspect_project_root(&project_root, ProjectScanMode::Create).unwrap();
         let _handle = create_project(&inspection).unwrap();
+        install_legacy_story_ledger_fixture(&project_root);
         let chapter_path = project_root.join("chapters/001.md");
         let ledger_path = project_root.join(STORY_LEDGER_RELATIVE_PATH);
         let ledger_before = fs::read(&ledger_path).unwrap();

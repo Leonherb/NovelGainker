@@ -1,6 +1,6 @@
 # NovelGainker Agent Migration AM0 Story Packet
 
-> 状态：AM0、GA0、AM1 与 GA1 均已关闭；后续 AM2 已完成 GA2 技术提交，正在等待 GA2 独立产品验收
+> 状态：已由 2026-08-30 RB0/AM-R1 路线取代；仅作为安全契约迁移证据，不是当前产品 Gate
 >
 > 日期：2026-08-28
 >

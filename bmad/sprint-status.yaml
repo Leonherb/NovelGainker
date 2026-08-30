@@ -1,47 +1,98 @@
 project:
   name: "NovelGainker"
-  level: 2
+  level: 4
 
 sprint:
-  number: 6
-  start_date: "not_recorded"
-  end_date: "paused"
-  goal: "登记并消除启动链路的已确认阻塞项"
-  capacity_points: 0
-  committed_points: 0
-  status: "paused"
+  number: "AM-R2"
+  start_date: "2026-08-30"
+  end_date: "GAR2-technical-submission"
+  goal: "交付 Conversation → Anchor → Canon/Chapter Commit、Context Mark、Conflict、WritePlan/Commit/Undo 与 GAR2 单路径"
+  capacity_points: 144
+  committed_points: 144
+  status: "technical_submitted"
 
 velocity:
-  current_sprint: 0
-  rolling_average: 0
-  history: []
+  current_sprint: 144
+  rolling_average: 114
+  history:
+    - sprint: "AM-R1"
+      completed_points: 84
+      status: "technical_submitted"
+    - sprint: "AM-R2"
+      completed_points: 144
+      status: "technical_submitted"
 
 epics:
-  - id: "EPIC-STARTUP-RELIABILITY"
-    title: "启动可靠性"
-    status: "blocked"
+  - id: "AGENT-REBASELINE-AM-R2"
+    title: "Conversation → Anchor → Canon/Chapter Commit"
+    status: "completed"
 
 stories:
-  - id: "STORY-STARTUP-001"
-    title: "让本机状态库故障可诊断且可安全恢复"
-    points: 5
-    status: "not_started"
-    blocker: "Sprint 6 已暂停；需要用户授权后进入实现。"
-  - id: "STORY-STARTUP-002"
-    title: "防止 Git 行尾转换破坏受锁定资源"
-    points: 3
-    status: "not_started"
-    blocker: "Sprint 6 已暂停；需要用户授权后进入实现。"
+  - id: "NG-R201"
+    title: "Conversation Anchor Orchestrator"
+    points: 21
+    status: "done"
+    blocker: null
+  - id: "NG-R202"
+    title: "Draft Artifact、Canon Proposal 与实体归一"
+    points: 21
+    status: "done"
+    blocker: null
+  - id: "NG-R203"
+    title: "Context Mark 产品挂载"
+    points: 13
+    status: "done"
+    blocker: null
+  - id: "NG-R204"
+    title: "Conflict Engine 与作者决议"
+    points: 21
+    status: "done"
+    blocker: null
+  - id: "NG-R205"
+    title: "Host WritePlanV2、Commit、Recovery 与 Undo"
+    points: 21
+    status: "done"
+    blocker: null
+  - id: "NG-R206"
+    title: "人物/世界/素材/剧情 Conversation-to-Canon E2E"
+    points: 13
+    status: "done"
+    blocker: null
+  - id: "NG-R207"
+    title: "Conversation-to-Chapter Anchor E2E"
+    points: 13
+    status: "done"
+    blocker: null
+  - id: "NG-R208"
+    title: "GAR2 单路径生产切换、规模门与技术提交"
+    points: 21
+    status: "done"
+    blocker: null
 
 burndown: []
 
 metrics:
-  total_stories: 2
-  completed_stories: 0
+  total_stories: 8
+  completed_stories: 8
   in_progress_stories: 0
-  blocked_stories: 2
-  total_points: 8
-  completed_points: 0
-  completion_percentage: 0
+  blocked_stories: 0
+  total_points: 144
+  completed_points: 144
+  completion_percentage: 100
 
-last_updated: "2026-08-29T18:12:34Z"
+gate:
+  id: "GAR2"
+  status: "technical_submitted"
+  technical_submission_ready: true
+  product_approved: false
+  review_artifacts:
+    - "target/qa/gar2/gar2-review-report.md"
+    - "target/qa/gar2/gar2-manifest.json"
+
+next_action:
+  type: "review_gate"
+  id: "GAR2"
+  instruction: "独立评审 GAR2 Manifest 与 Review Report；未经明确授权不进入 AM-R3、Sprint 6 或真实 Provider Live Smoke"
+  stop_at: "GAR2-product-decision"
+
+last_updated: "2026-08-31T00:14:00+08:00"

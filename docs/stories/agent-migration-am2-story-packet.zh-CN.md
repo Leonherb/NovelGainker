@@ -1,6 +1,6 @@
 # NovelGainker Agent Migration AM2 Story Packet
 
-> 状态：NG-A201～NG-A206 已通过；GA2-R001～GA2-R005 已修复，revision 6 完整质量门与 GA2 技术提交均已通过，等待 GA2 独立产品验收
+> 状态：已由 2026-08-30 RB0/AM-R1 路线取代；仅作为 V1 写入 Kernel 与回归迁移证据，等待对应 Gate 按清单移除
 >
 > 日期：2026-08-29
 >

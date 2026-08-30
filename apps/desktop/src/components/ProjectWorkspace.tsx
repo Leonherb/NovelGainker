@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ProjectSearch } from "./ProjectSearch";
 import { SourceDiagnostics } from "./SourceDiagnostics";
 import { presentAppError, type PresentedAppError } from "../errors/present-app-error";
@@ -41,7 +42,9 @@ export type ProjectWorkspaceProps = {
   desktopRuntime: boolean;
   externalOpenPath?: string | null;
   externalRefreshToken?: number;
+  navigatorHost?: HTMLElement | null;
   onAppStateChanged?: () => void;
+  onFileOpenRequested?: () => void;
   recentProjects?: RecentProject[];
   onSessionChange?: (session: ProjectSession | null) => void;
   windowClosePort?: WindowClosePort;
@@ -76,6 +79,13 @@ function invalidResponseError(): AppError {
   return {
     code: "contract.invalid_response",
     messageKey: "errors.invalidRuntimeResponse",
+  };
+}
+
+function windowCloseError(): AppError {
+  return {
+    code: "runtime.unavailable",
+    messageKey: "errors.runtimeUnavailable",
   };
 }
 
@@ -133,7 +143,9 @@ export function ProjectWorkspace({
   desktopRuntime,
   externalOpenPath = null,
   externalRefreshToken = 0,
+  navigatorHost,
   onAppStateChanged = () => undefined,
+  onFileOpenRequested = () => undefined,
   recentProjects = [],
   onSessionChange = () => undefined,
   windowClosePort = desktopWindowClosePort,
@@ -173,7 +185,7 @@ export function ProjectWorkspace({
   const dirtyRef = useRef(false);
   const saveInFlightRef = useRef(false);
   const watchInFlightRef = useRef(false);
-  const allowWindowCloseRef = useRef(false);
+  const windowCloseInFlightRef = useRef(false);
   const requestFileSelectionRef = useRef<(relativePath: string, line?: number) => void>(
     () => undefined,
   );
@@ -185,6 +197,31 @@ export function ProjectWorkspace({
   useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+
+  const exitProjectAndCloseWindow = useCallback(
+    async (sessionId: string | null) => {
+      if (windowCloseInFlightRef.current) {
+        return;
+      }
+      windowCloseInFlightRef.current = true;
+
+      if (sessionId) {
+        try {
+          await requestProjectClose(sessionId);
+        } catch {
+          // App shutdown must not be blocked by best-effort in-memory project cleanup.
+        }
+      }
+
+      try {
+        await windowClosePort.destroy();
+      } catch {
+        windowCloseInFlightRef.current = false;
+        setError(presentProjectError(windowCloseError()));
+      }
+    },
+    [windowClosePort],
+  );
 
   useEffect(() => {
     if (!watchedSessionId || !watchedRelativePath || !watchedContentHash) {
@@ -238,14 +275,12 @@ export function ProjectWorkspace({
     let unlisten: (() => void) | undefined;
     void windowClosePort
       .onCloseRequested((event) => {
-        if (allowWindowCloseRef.current) {
-          allowWindowCloseRef.current = false;
+        event.preventDefault();
+        if (dirtyRef.current) {
+          setPendingAction({ kind: "closeWindow" });
           return;
         }
-        if (dirtyRef.current) {
-          event.preventDefault();
-          setPendingAction({ kind: "closeWindow" });
-        }
+        void exitProjectAndCloseWindow(session.sessionId);
       })
       .then((dispose) => {
         if (active) {
@@ -264,7 +299,7 @@ export function ProjectWorkspace({
       active = false;
       unlisten?.();
     };
-  }, [desktopRuntime, session, windowClosePort]);
+  }, [desktopRuntime, exitProjectAndCloseWindow, session, windowClosePort]);
 
   const resetDocument = () => {
     setDocument(null);
@@ -614,6 +649,7 @@ export function ProjectWorkspace({
   };
 
   const requestFileSelection = (relativePath: string, line?: number) => {
+    onFileOpenRequested();
     if (relativePath === selectedPath) {
       if (line) {
         focusEditorAtLine(draft, line);
@@ -653,13 +689,7 @@ export function ProjectWorkspace({
       return;
     }
 
-    allowWindowCloseRef.current = true;
-    try {
-      await windowClosePort.close();
-    } catch (closeError: unknown) {
-      allowWindowCloseRef.current = false;
-      setError(presentProjectError(closeError));
-    }
+    await exitProjectAndCloseWindow(session?.sessionId ?? null);
   };
 
   const copyDraftToClipboard = async () => {
@@ -727,564 +757,576 @@ export function ProjectWorkspace({
         ? editorCopy.discardProjectBody
         : editorCopy.discardWindowBody;
 
-  return (
-    <div className="project-workspace-shell">
-      <section aria-labelledby="file-tree-title" className="file-tree-card project-workspace">
-        <div className="section-title-row">
-          <h2 id="file-tree-title">{ZH_CN.files.projectFiles}</h2>
-          <span className="quiet-pill">{statusLabel}</span>
+  const projectNavigator = (
+    <section aria-labelledby="file-tree-title" className="file-tree-card project-workspace">
+      <div className="section-title-row">
+        <h2 id="file-tree-title">{ZH_CN.files.projectFiles}</h2>
+        <span className="quiet-pill">{statusLabel}</span>
+      </div>
+
+      {busyLabel ? (
+        <div aria-live="polite" className="project-progress">
+          <span aria-hidden="true">◌</span>
+          <p>{busyLabel}</p>
         </div>
+      ) : null}
 
-        {busyLabel ? (
-          <div aria-live="polite" className="project-progress">
-            <span aria-hidden="true">◌</span>
-            <p>{busyLabel}</p>
+      {!desktopRuntime && !session && !candidate && !busy ? (
+        <p className="project-runtime-note">{copy.desktopOnly}</p>
+      ) : null}
+
+      {!session && !candidate && !busy ? (
+        <div className="project-actions">
+          <button
+            disabled={!desktopRuntime}
+            id="project-create-action"
+            onClick={() => void scan("create")}
+            type="button"
+          >
+            {copy.create}
+          </button>
+          <button disabled={!desktopRuntime} onClick={() => void scan("open")} type="button">
+            {copy.open}
+          </button>
+        </div>
+      ) : null}
+
+      {!session && !candidate && !busy && desktopRuntime ? (
+        <section aria-label={copy.recentHeading} className="recent-projects">
+          <h3>{copy.recentHeading}</h3>
+          {recentProjects.length > 0 ? (
+            <ul>
+              {recentProjects.map((project) => (
+                <li key={project.projectId}>
+                  <span>{project.displayName}</span>
+                  <button
+                    aria-label={`${copy.openRecent} ${project.displayName}`}
+                    onClick={() => void openRecentProject(project.projectId)}
+                    type="button"
+                  >
+                    {copy.openRecent}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>{copy.noRecent}</p>
+          )}
+        </section>
+      ) : null}
+
+      {notice ? (
+        <p aria-live="polite" className="project-notice">
+          {notice}
+        </p>
+      ) : null}
+
+      {candidate ? (
+        <div className="project-preview">
+          <div className="project-summary">
+            <strong>{candidate.displayName}</strong>
+            <dl>
+              <div>
+                <dt>{copy.existingEntries}</dt>
+                <dd>{candidate.existingEntryCount}</dd>
+              </div>
+              <div>
+                <dt>{copy.markdownFiles}</dt>
+                <dd>{candidate.markdownFileCount}</dd>
+              </div>
+            </dl>
+            <span className="metadata-state">
+              {candidate.hasProjectMetadata ? copy.metadataReady : copy.metadataMissing}
+            </span>
           </div>
-        ) : null}
 
-        {!desktopRuntime && !session && !candidate && !busy ? (
-          <p className="project-runtime-note">{copy.desktopOnly}</p>
-        ) : null}
+          {candidate.requiresMetadataConfirmation ? (
+            <p className="project-warning">{copy.importWarning}</p>
+          ) : null}
 
-        {!session && !candidate && !busy ? (
-          <div className="project-actions">
-            <button
-              disabled={!desktopRuntime}
-              id="project-create-action"
-              onClick={() => void scan("create")}
-              type="button"
-            >
-              {copy.create}
-            </button>
-            <button disabled={!desktopRuntime} onClick={() => void scan("open")} type="button">
-              {copy.open}
-            </button>
-          </div>
-        ) : null}
-
-        {!session && !candidate && !busy && desktopRuntime ? (
-          <section aria-label={copy.recentHeading} className="recent-projects">
-            <h3>{copy.recentHeading}</h3>
-            {recentProjects.length > 0 ? (
-              <ul>
-                {recentProjects.map((project) => (
-                  <li key={project.projectId}>
-                    <span>{project.displayName}</span>
-                    <button
-                      aria-label={`${copy.openRecent} ${project.displayName}`}
-                      onClick={() => void openRecentProject(project.projectId)}
-                      type="button"
-                    >
-                      {copy.openRecent}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>{copy.noRecent}</p>
-            )}
-          </section>
-        ) : null}
-
-        {notice ? (
-          <p aria-live="polite" className="project-notice">
-            {notice}
-          </p>
-        ) : null}
-
-        {candidate ? (
-          <div className="project-preview">
-            <div className="project-summary">
-              <strong>{candidate.displayName}</strong>
-              <dl>
+          {candidate.mode === "create" ? (
+            <section aria-label={copy.createFormAriaLabel} className="project-create-form">
+              <div className="project-create-heading">
                 <div>
-                  <dt>{copy.existingEntries}</dt>
-                  <dd>{candidate.existingEntryCount}</dd>
+                  <span>{copy.createStepMetadata}</span>
+                  <h3>{copy.createFormTitle}</h3>
                 </div>
-                <div>
-                  <dt>{copy.markdownFiles}</dt>
-                  <dd>{candidate.markdownFileCount}</dd>
-                </div>
-              </dl>
-              <span className="metadata-state">
-                {candidate.hasProjectMetadata ? copy.metadataReady : copy.metadataMissing}
-              </span>
-            </div>
-
-            {candidate.requiresMetadataConfirmation ? (
-              <p className="project-warning">{copy.importWarning}</p>
-            ) : null}
-
-            {candidate.mode === "create" ? (
-              <section aria-label={copy.createFormAriaLabel} className="project-create-form">
-                <div className="project-create-heading">
-                  <div>
-                    <span>{copy.createStepMetadata}</span>
-                    <h3>{copy.createFormTitle}</h3>
-                  </div>
-                  <small>{copy.fixedWritingLanguage}</small>
-                </div>
+                <small>{copy.fixedWritingLanguage}</small>
+              </div>
+              <label>
+                <span>{copy.titleLabel}</span>
+                <input
+                  autoComplete="off"
+                  disabled={busy !== null}
+                  maxLength={120}
+                  onChange={(event) => updateCreateForm("title", event.currentTarget.value)}
+                  required
+                  value={createForm.title}
+                />
+              </label>
+              <div className="project-create-optional-grid">
                 <label>
-                  <span>{copy.titleLabel}</span>
+                  <span>{copy.authorLabel}</span>
                   <input
                     autoComplete="off"
                     disabled={busy !== null}
                     maxLength={120}
-                    onChange={(event) => updateCreateForm("title", event.currentTarget.value)}
-                    required
-                    value={createForm.title}
+                    onChange={(event) =>
+                      updateCreateForm("authorDisplayName", event.currentTarget.value)
+                    }
+                    value={createForm.authorDisplayName}
                   />
                 </label>
-                <div className="project-create-optional-grid">
-                  <label>
-                    <span>{copy.authorLabel}</span>
-                    <input
-                      autoComplete="off"
-                      disabled={busy !== null}
-                      maxLength={120}
-                      onChange={(event) =>
-                        updateCreateForm("authorDisplayName", event.currentTarget.value)
-                      }
-                      value={createForm.authorDisplayName}
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.genreLabel}</span>
-                    <input
-                      autoComplete="off"
-                      disabled={busy !== null}
-                      maxLength={80}
-                      onChange={(event) => updateCreateForm("genre", event.currentTarget.value)}
-                      value={createForm.genre}
-                    />
-                  </label>
-                </div>
                 <label>
-                  <span>{copy.premiseLabel}</span>
-                  <textarea
+                  <span>{copy.genreLabel}</span>
+                  <input
+                    autoComplete="off"
                     disabled={busy !== null}
-                    maxLength={300}
-                    onChange={(event) => updateCreateForm("premise", event.currentTarget.value)}
-                    rows={3}
-                    value={createForm.premise}
+                    maxLength={80}
+                    onChange={(event) => updateCreateForm("genre", event.currentTarget.value)}
+                    value={createForm.genre}
                   />
                 </label>
-                <p>{copy.createFormBoundary}</p>
-                <button
-                  disabled={
-                    busy !== null || !candidate.canConfirm || createForm.title.trim().length === 0
-                  }
-                  onClick={() => void prepareCreatePreview()}
-                  type="button"
-                >
-                  {createPreview ? copy.regeneratePreview : copy.generatePreview}
-                </button>
-              </section>
-            ) : null}
-
-            {candidate.mode !== "create" || createPreview === null ? (
-              <div className="project-plan">
-                <h3>{copy.planTitle}</h3>
-                {candidate.plannedEntries.length > 0 ? (
-                  <ul>
-                    {candidate.plannedEntries.map((entry) => (
-                      <li key={`${entry.kind}:${entry.relativePath}`}>
-                        <span aria-hidden="true">{entry.kind === "directory" ? "▱" : "·"}</span>
-                        <code>{entry.relativePath}</code>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>{copy.noPlan}</p>
-                )}
               </div>
-            ) : null}
+              <label>
+                <span>{copy.premiseLabel}</span>
+                <textarea
+                  disabled={busy !== null}
+                  maxLength={300}
+                  onChange={(event) => updateCreateForm("premise", event.currentTarget.value)}
+                  rows={3}
+                  value={createForm.premise}
+                />
+              </label>
+              <p>{copy.createFormBoundary}</p>
+              <button
+                disabled={
+                  busy !== null || !candidate.canConfirm || createForm.title.trim().length === 0
+                }
+                onClick={() => void prepareCreatePreview()}
+                type="button"
+              >
+                {createPreview ? copy.regeneratePreview : copy.generatePreview}
+              </button>
+            </section>
+          ) : null}
 
-            {createPreview ? (
-              <section aria-label={copy.scaffoldPreviewAriaLabel} className="scaffold-preview">
-                <div className="scaffold-preview-heading">
-                  <div>
-                    <span>{copy.createStepPreview}</span>
-                    <h3>{copy.scaffoldPreviewTitle}</h3>
-                  </div>
-                  <span className="metadata-state">{copy.zeroWritesSoFar}</span>
-                </div>
-                <dl className="scaffold-metadata">
-                  <div>
-                    <dt>{copy.projectIdLabel}</dt>
-                    <dd>
-                      <code>{createPreview.projectId}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{copy.workflowPackLabel}</dt>
-                    <dd>{createPreview.workflowPackVersion}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.language}</dt>
-                    <dd>{createPreview.writingLanguage}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.previewHashLabel}</dt>
-                    <dd>
-                      <code>{createPreview.previewHash}</code>
-                    </dd>
-                  </div>
-                </dl>
-                {createPreview.existingUnrelatedEntryCount > 0 ? (
-                  <p className="project-warning">
-                    {copy.unrelatedEntriesNotice.replace(
-                      "{count}",
-                      String(createPreview.existingUnrelatedEntryCount),
-                    )}
-                  </p>
-                ) : null}
-                <div className="scaffold-directories">
-                  <h4>{copy.directoriesTitle}</h4>
-                  <ul>
-                    {createPreview.directories.map((directory) => (
-                      <li key={directory}>
-                        <code>{directory}/</code>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="scaffold-files">
-                  <h4>{copy.filesPreviewTitle}</h4>
-                  {createPreview.files.map((file) => (
-                    <details key={file.relativePath} open={file.relativePath === "project.md"}>
-                      <summary>
-                        <code>{file.relativePath}</code>
-                        <span>{copy.bytesLabel.replace("{count}", String(file.byteLength))}</span>
-                      </summary>
-                      <pre>{file.content}</pre>
-                    </details>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            <div className="project-conflicts" data-safe={candidate.canConfirm}>
-              <h3>{copy.conflictsTitle}</h3>
-              {candidate.conflicts.length > 0 ? (
+          {candidate.mode !== "create" || createPreview === null ? (
+            <div className="project-plan">
+              <h3>{copy.planTitle}</h3>
+              {candidate.plannedEntries.length > 0 ? (
                 <ul>
-                  {candidate.conflicts.map((conflict) => (
-                    <li key={`${conflict.kind}:${conflict.relativePath}`}>
-                      <code>{conflict.relativePath}</code>
-                      <span>{conflictCopy[conflict.kind]}</span>
+                  {candidate.plannedEntries.map((entry) => (
+                    <li key={`${entry.kind}:${entry.relativePath}`}>
+                      <span aria-hidden="true">{entry.kind === "directory" ? "▱" : "·"}</span>
+                      <code>{entry.relativePath}</code>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p>{copy.noConflicts}</p>
+                <p>{copy.noPlan}</p>
               )}
             </div>
+          ) : null}
 
-            {candidate.mode === "create" ? (
-              <p className="project-safe-note">{copy.safeCreateNotice}</p>
-            ) : null}
-
-            <div className="project-confirm-actions">
-              <button
-                className="primary-project-action"
-                disabled={
-                  !candidate.canConfirm ||
-                  busy !== null ||
-                  (candidate.mode === "create" && createPreview === null)
-                }
-                onClick={() => void confirm()}
-                type="button"
-              >
-                {candidate.mode === "create"
-                  ? copy.confirmCreate
-                  : candidate.requiresMetadataConfirmation
-                    ? copy.confirmImport
-                    : copy.confirmOpen}
-              </button>
-              <button
-                disabled={busy !== null}
-                onClick={() => {
-                  setCandidate(null);
-                  setCreatePreview(null);
-                  setCreateForm(EMPTY_PROJECT_CREATE_FORM);
-                  setError(null);
-                }}
-                type="button"
-              >
-                {copy.back}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {session ? (
-          <div className="project-session">
-            <div className="project-session-heading">
-              <span aria-hidden="true">◆</span>
-              <div>
-                <strong>{session.displayName}</strong>
-                <small>
-                  {session.accessMode === "writer" ? copy.writer : copy.readOnlySession}
-                </small>
+          {createPreview ? (
+            <section aria-label={copy.scaffoldPreviewAriaLabel} className="scaffold-preview">
+              <div className="scaffold-preview-heading">
+                <div>
+                  <span>{copy.createStepPreview}</span>
+                  <h3>{copy.scaffoldPreviewTitle}</h3>
+                </div>
+                <span className="metadata-state">{copy.zeroWritesSoFar}</span>
               </div>
-            </div>
-            <dl>
-              <div>
-                <dt>{copy.schema}</dt>
-                <dd>{session.schemaVersion}</dd>
-              </div>
-              <div>
-                <dt>{copy.language}</dt>
-                <dd>{session.writingLanguage}</dd>
-              </div>
-              <div>
-                <dt>{copy.markdownFiles}</dt>
-                <dd>{session.markdownFileCount}</dd>
-              </div>
-            </dl>
-            {session.accessMode === "readOnly" ? (
-              <p className="project-warning" role="status">
-                {copy.readOnlyNotice}
-              </p>
-            ) : null}
-            {session.recoveryStatus === "recovered" ? (
-              <p className="project-safe-note" role="status">
-                {copy.recoveredNotice.replace("{count}", String(session.recoveredTransactionCount))}
-              </p>
-            ) : null}
-            {session.recoveryStatus === "required" ? (
-              <p className="project-warning" role="alert">
-                {copy.recoveryRequiredNotice}
-              </p>
-            ) : null}
-            <div className="project-session-actions">
-              <button
-                disabled={busy !== null}
-                onClick={() => void refreshIndex(session)}
-                type="button"
-              >
-                {copy.refresh}
-              </button>
-              <button disabled={busy !== null} onClick={requestProjectClosing} type="button">
-                {copy.close}
-              </button>
-            </div>
-            <ProjectSearch
-              busy={busy === "search"}
-              caseSensitive={caseSensitive}
-              error={searchError}
-              onCaseSensitiveChange={setCaseSensitive}
-              onNavigate={requestFileSelection}
-              onQueryChange={(value) => {
-                setSearchQuery(value);
-                setSearchReport(null);
-                setSearchError(null);
-              }}
-              onSearch={() => void searchProject()}
-              query={searchQuery}
-              report={searchReport}
-            />
-            <div aria-label={ZH_CN.files.tree.ariaLabel} className="project-tree">
-              {fileIndex && fileIndex.nodes.length > 0 ? (
-                <FileTree
-                  disabled={busy !== null}
-                  nodes={fileIndex.nodes}
-                  onSelect={requestFileSelection}
-                  selectedPath={selectedPath}
-                />
-              ) : busy !== "index" ? (
-                <p className="project-tree-empty">{copy.emptyProject}</p>
+              <dl className="scaffold-metadata">
+                <div>
+                  <dt>{copy.projectIdLabel}</dt>
+                  <dd>
+                    <code>{createPreview.projectId}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>{copy.workflowPackLabel}</dt>
+                  <dd>{createPreview.workflowPackVersion}</dd>
+                </div>
+                <div>
+                  <dt>{copy.language}</dt>
+                  <dd>{createPreview.writingLanguage}</dd>
+                </div>
+                <div>
+                  <dt>{copy.previewHashLabel}</dt>
+                  <dd>
+                    <code>{createPreview.previewHash}</code>
+                  </dd>
+                </div>
+              </dl>
+              {createPreview.existingUnrelatedEntryCount > 0 ? (
+                <p className="project-warning">
+                  {copy.unrelatedEntriesNotice.replace(
+                    "{count}",
+                    String(createPreview.existingUnrelatedEntryCount),
+                  )}
+                </p>
               ) : null}
-            </div>
-            <p>{copy.ng105Boundary}</p>
-          </div>
-        ) : null}
+              <div className="scaffold-directories">
+                <h4>{copy.directoriesTitle}</h4>
+                <ul>
+                  {createPreview.directories.map((directory) => (
+                    <li key={directory}>
+                      <code>{directory}/</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="scaffold-files">
+                <h4>{copy.filesPreviewTitle}</h4>
+                {createPreview.files.map((file) => (
+                  <details key={file.relativePath} open={file.relativePath === "project.md"}>
+                    <summary>
+                      <code>{file.relativePath}</code>
+                      <span>{copy.bytesLabel.replace("{count}", String(file.byteLength))}</span>
+                    </summary>
+                    <pre>{file.content}</pre>
+                  </details>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
-        {error ? (
-          <div className="project-error" role="alert">
-            <strong>{error.title}</strong>
-            <p>{error.message}</p>
-            <p>{error.recovery}</p>
-            <code>
-              {copy.errorCode}：{error.code}
-            </code>
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="editor-title" className="editor-card real-editor-card">
-        <div className="editor-heading">
-          <div>
-            <p className="section-kicker">{editorCopy.kicker}</p>
-            <h2 id="editor-title">{selectedPath ?? editorCopy.heading}</h2>
-          </div>
-          <span
-            data-state={
-              busy === "save"
-                ? "saving"
-                : saveError || externalConflict
-                  ? "error"
-                  : dirty
-                    ? "dirty"
-                    : document?.readOnly
-                      ? "readonly"
-                      : "saved"
-            }
-          >
-            {editorStatus}
-          </span>
-        </div>
-
-        {document ? (
-          <textarea
-            aria-describedby="editor-note"
-            aria-label={editorCopy.ariaLabel}
-            onChange={(event) => {
-              if (!document.readOnly) {
-                setDraft(event.target.value);
-                dirtyRef.current = event.target.value !== document.content;
-                setSaveError(null);
-                setValidationStale(true);
-                setValidationError(null);
-                setEditorNotice(null);
-              }
-            }}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-                event.preventDefault();
-                void saveCurrentFile();
-              }
-            }}
-            readOnly={document.readOnly || busy === "save"}
-            ref={editorRef}
-            spellCheck={false}
-            value={draft}
-          />
-        ) : (
-          <div className="editor-empty" role={editorError ? "alert" : undefined}>
-            <span aria-hidden="true">{editorError ? "!" : "#"}</span>
-            <strong>{editorError ? editorError.title : editorCopy.emptyTitle}</strong>
-            <p>{editorError ? editorError.message : editorCopy.emptyBody}</p>
-            {editorError ? <p>{editorError.recovery}</p> : null}
-            {selectedPath && editorError ? <code>{selectedPath}</code> : null}
-          </div>
-        )}
-
-        <SourceDiagnostics
-          error={validationError}
-          onNavigate={(line) => focusEditorAtLine(draft, line)}
-          stale={validationStale || externalConflict !== null}
-          report={validation}
-        />
-
-        {document && externalConflict ? (
-          <div className="project-error editor-save-error external-change-alert" role="alert">
-            <strong>{editorCopy.externalChange.title}</strong>
-            <p>
-              {externalConflict.state === "missing"
-                ? editorCopy.externalChange.missing
-                : editorCopy.externalChange.modified}
-            </p>
-            <p>{editorCopy.externalChange.body}</p>
-            <div className="project-confirm-actions">
-              <button onClick={() => void loadFile(document.relativePath)} type="button">
-                {editorCopy.externalChange.reload}
-              </button>
-              <button
-                onClick={() => {
-                  setEditorNotice(editorCopy.externalChange.kept);
-                  requestAnimationFrame(() => editorRef.current?.focus());
-                }}
-                type="button"
-              >
-                {editorCopy.externalChange.keep}
-              </button>
-              <button onClick={() => void copyDraftToClipboard()} type="button">
-                {editorCopy.externalChange.copy}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {document && watchError && !externalConflict ? (
-          <div className="project-error editor-save-error" role="alert">
-            <strong>{watchError.title}</strong>
-            <p>{watchError.message}</p>
-            <p>{watchError.recovery}</p>
-          </div>
-        ) : null}
-
-        {document && saveError ? (
-          <div className="project-error editor-save-error" role="alert">
-            <strong>{saveError.title}</strong>
-            <p>{saveError.message}</p>
-            <p>{saveError.recovery}</p>
-            <code>
-              {copy.errorCode}：{saveError.code}
-            </code>
-          </div>
-        ) : null}
-        <div className="editor-footer" id="editor-note">
-          <div className="editor-meta">
-            {document ? (
-              <>
-                <span>
-                  {draft.length} {ZH_CN.files.characterUnit}
-                </span>
-                <span>{editorCopy.lineEndings[document.lineEnding]}</span>
-                <span>{editorCopy.bom[document.bom]}</span>
-              </>
+          <div className="project-conflicts" data-safe={candidate.canConfirm}>
+            <h3>{copy.conflictsTitle}</h3>
+            {candidate.conflicts.length > 0 ? (
+              <ul>
+                {candidate.conflicts.map((conflict) => (
+                  <li key={`${conflict.kind}:${conflict.relativePath}`}>
+                    <code>{conflict.relativePath}</code>
+                    <span>{conflictCopy[conflict.kind]}</span>
+                  </li>
+                ))}
+              </ul>
             ) : (
-              <span>{editorCopy.processMemoryOnly}</span>
+              <p>{copy.noConflicts}</p>
             )}
           </div>
-          <button
-            disabled={
-              !document || document.readOnly || !dirty || externalConflict !== null || busy !== null
-            }
-            onClick={() => void saveCurrentFile()}
-            type="button"
-          >
-            {busy === "save" ? editorCopy.saving : editorCopy.save}
-          </button>
-        </div>
-        <p aria-live="polite" className="editor-notice">
-          {editorNotice ?? editorCopy.saveBoundary}
-        </p>
-      </section>
 
-      {pendingAction ? (
-        <div
-          aria-labelledby="discard-title"
-          aria-modal="true"
-          className="discard-backdrop"
-          role="alertdialog"
-        >
-          <div className="discard-dialog">
-            <p className="section-kicker">{editorCopy.unsaved}</p>
-            <h2 id="discard-title">{editorCopy.discardTitle}</h2>
-            <p>{discardBody}</p>
-            <div className="discard-actions">
-              <button
-                onClick={() => {
-                  setPendingAction(null);
-                  requestAnimationFrame(() => editorRef.current?.focus());
-                }}
-                type="button"
-              >
-                {editorCopy.keepEditing}
-              </button>
-              <button
-                className="discard-confirm"
-                onClick={() => void confirmDiscard()}
-                type="button"
-              >
-                {editorCopy.discard}
-              </button>
-            </div>
+          {candidate.mode === "create" ? (
+            <p className="project-safe-note">{copy.safeCreateNotice}</p>
+          ) : null}
+
+          <div className="project-confirm-actions">
+            <button
+              className="primary-project-action"
+              disabled={
+                !candidate.canConfirm ||
+                busy !== null ||
+                (candidate.mode === "create" && createPreview === null)
+              }
+              onClick={() => void confirm()}
+              type="button"
+            >
+              {candidate.mode === "create"
+                ? copy.confirmCreate
+                : candidate.requiresMetadataConfirmation
+                  ? copy.confirmImport
+                  : copy.confirmOpen}
+            </button>
+            <button
+              disabled={busy !== null}
+              onClick={() => {
+                setCandidate(null);
+                setCreatePreview(null);
+                setCreateForm(EMPTY_PROJECT_CREATE_FORM);
+                setError(null);
+              }}
+              type="button"
+            >
+              {copy.back}
+            </button>
           </div>
         </div>
       ) : null}
-    </div>
+
+      {session ? (
+        <div className="project-session">
+          <div className="project-session-heading">
+            <span aria-hidden="true">◆</span>
+            <div>
+              <strong>{session.displayName}</strong>
+              <small>{session.accessMode === "writer" ? copy.writer : copy.readOnlySession}</small>
+            </div>
+          </div>
+          <dl>
+            <div>
+              <dt>{copy.schema}</dt>
+              <dd>{session.schemaVersion}</dd>
+            </div>
+            <div>
+              <dt>{copy.language}</dt>
+              <dd>{session.writingLanguage}</dd>
+            </div>
+            <div>
+              <dt>{copy.markdownFiles}</dt>
+              <dd>{session.markdownFileCount}</dd>
+            </div>
+          </dl>
+          {session.accessMode === "readOnly" ? (
+            <p className="project-warning" role="status">
+              {copy.readOnlyNotice}
+            </p>
+          ) : null}
+          {session.recoveryStatus === "recovered" ? (
+            <p className="project-safe-note" role="status">
+              {copy.recoveredNotice.replace("{count}", String(session.recoveredTransactionCount))}
+            </p>
+          ) : null}
+          {session.recoveryStatus === "required" ? (
+            <p className="project-warning" role="alert">
+              {copy.recoveryRequiredNotice}
+            </p>
+          ) : null}
+          <div className="project-session-actions">
+            <button
+              disabled={busy !== null}
+              onClick={() => void refreshIndex(session)}
+              type="button"
+            >
+              {copy.refresh}
+            </button>
+            <button disabled={busy !== null} onClick={requestProjectClosing} type="button">
+              {copy.close}
+            </button>
+          </div>
+          <ProjectSearch
+            busy={busy === "search"}
+            caseSensitive={caseSensitive}
+            error={searchError}
+            onCaseSensitiveChange={setCaseSensitive}
+            onNavigate={requestFileSelection}
+            onQueryChange={(value) => {
+              setSearchQuery(value);
+              setSearchReport(null);
+              setSearchError(null);
+            }}
+            onSearch={() => void searchProject()}
+            query={searchQuery}
+            report={searchReport}
+          />
+          <div aria-label={ZH_CN.files.tree.ariaLabel} className="project-tree">
+            {fileIndex && fileIndex.nodes.length > 0 ? (
+              <FileTree
+                disabled={busy !== null}
+                nodes={fileIndex.nodes}
+                onSelect={requestFileSelection}
+                selectedPath={selectedPath}
+              />
+            ) : busy !== "index" ? (
+              <p className="project-tree-empty">{copy.emptyProject}</p>
+            ) : null}
+          </div>
+          <p>{copy.ng105Boundary}</p>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="project-error" role="alert">
+          <strong>{error.title}</strong>
+          <p>{error.message}</p>
+          <p>{error.recovery}</p>
+          <code>
+            {copy.errorCode}：{error.code}
+          </code>
+        </div>
+      ) : null}
+    </section>
+  );
+
+  return (
+    <>
+      {navigatorHost === undefined
+        ? projectNavigator
+        : navigatorHost
+          ? createPortal(projectNavigator, navigatorHost)
+          : null}
+
+      <div className="project-workspace-shell project-workspace-editor-only">
+        <section aria-labelledby="editor-title" className="editor-card real-editor-card">
+          <div className="editor-heading">
+            <div>
+              <p className="section-kicker">{editorCopy.kicker}</p>
+              <h2 id="editor-title">{selectedPath ?? editorCopy.heading}</h2>
+            </div>
+            <span
+              data-state={
+                busy === "save"
+                  ? "saving"
+                  : saveError || externalConflict
+                    ? "error"
+                    : dirty
+                      ? "dirty"
+                      : document?.readOnly
+                        ? "readonly"
+                        : "saved"
+              }
+            >
+              {editorStatus}
+            </span>
+          </div>
+
+          {document ? (
+            <textarea
+              aria-describedby="editor-note"
+              aria-label={editorCopy.ariaLabel}
+              onChange={(event) => {
+                if (!document.readOnly) {
+                  setDraft(event.target.value);
+                  dirtyRef.current = event.target.value !== document.content;
+                  setSaveError(null);
+                  setValidationStale(true);
+                  setValidationError(null);
+                  setEditorNotice(null);
+                }
+              }}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+                  event.preventDefault();
+                  void saveCurrentFile();
+                }
+              }}
+              readOnly={document.readOnly || busy === "save"}
+              ref={editorRef}
+              spellCheck={false}
+              value={draft}
+            />
+          ) : (
+            <div className="editor-empty" role={editorError ? "alert" : undefined}>
+              <span aria-hidden="true">{editorError ? "!" : "#"}</span>
+              <strong>{editorError ? editorError.title : editorCopy.emptyTitle}</strong>
+              <p>{editorError ? editorError.message : editorCopy.emptyBody}</p>
+              {editorError ? <p>{editorError.recovery}</p> : null}
+              {selectedPath && editorError ? <code>{selectedPath}</code> : null}
+            </div>
+          )}
+
+          <SourceDiagnostics
+            error={validationError}
+            onNavigate={(line) => focusEditorAtLine(draft, line)}
+            stale={validationStale || externalConflict !== null}
+            report={validation}
+          />
+
+          {document && externalConflict ? (
+            <div className="project-error editor-save-error external-change-alert" role="alert">
+              <strong>{editorCopy.externalChange.title}</strong>
+              <p>
+                {externalConflict.state === "missing"
+                  ? editorCopy.externalChange.missing
+                  : editorCopy.externalChange.modified}
+              </p>
+              <p>{editorCopy.externalChange.body}</p>
+              <div className="project-confirm-actions">
+                <button onClick={() => void loadFile(document.relativePath)} type="button">
+                  {editorCopy.externalChange.reload}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditorNotice(editorCopy.externalChange.kept);
+                    requestAnimationFrame(() => editorRef.current?.focus());
+                  }}
+                  type="button"
+                >
+                  {editorCopy.externalChange.keep}
+                </button>
+                <button onClick={() => void copyDraftToClipboard()} type="button">
+                  {editorCopy.externalChange.copy}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {document && watchError && !externalConflict ? (
+            <div className="project-error editor-save-error" role="alert">
+              <strong>{watchError.title}</strong>
+              <p>{watchError.message}</p>
+              <p>{watchError.recovery}</p>
+            </div>
+          ) : null}
+
+          {document && saveError ? (
+            <div className="project-error editor-save-error" role="alert">
+              <strong>{saveError.title}</strong>
+              <p>{saveError.message}</p>
+              <p>{saveError.recovery}</p>
+              <code>
+                {copy.errorCode}：{saveError.code}
+              </code>
+            </div>
+          ) : null}
+          <div className="editor-footer" id="editor-note">
+            <div className="editor-meta">
+              {document ? (
+                <>
+                  <span>
+                    {draft.length} {ZH_CN.files.characterUnit}
+                  </span>
+                  <span>{editorCopy.lineEndings[document.lineEnding]}</span>
+                  <span>{editorCopy.bom[document.bom]}</span>
+                </>
+              ) : (
+                <span>{editorCopy.processMemoryOnly}</span>
+              )}
+            </div>
+            <button
+              disabled={
+                !document ||
+                document.readOnly ||
+                !dirty ||
+                externalConflict !== null ||
+                busy !== null
+              }
+              onClick={() => void saveCurrentFile()}
+              type="button"
+            >
+              {busy === "save" ? editorCopy.saving : editorCopy.save}
+            </button>
+          </div>
+          <p aria-live="polite" className="editor-notice">
+            {editorNotice ?? editorCopy.saveBoundary}
+          </p>
+        </section>
+
+        {pendingAction ? (
+          <div
+            aria-labelledby="discard-title"
+            aria-modal="true"
+            className="discard-backdrop"
+            role="alertdialog"
+          >
+            <div className="discard-dialog">
+              <p className="section-kicker">{editorCopy.unsaved}</p>
+              <h2 id="discard-title">{editorCopy.discardTitle}</h2>
+              <p>{discardBody}</p>
+              <div className="discard-actions">
+                <button
+                  onClick={() => {
+                    setPendingAction(null);
+                    requestAnimationFrame(() => editorRef.current?.focus());
+                  }}
+                  type="button"
+                >
+                  {editorCopy.keepEditing}
+                </button>
+                <button
+                  className="discard-confirm"
+                  onClick={() => void confirmDiscard()}
+                  type="button"
+                >
+                  {editorCopy.discard}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </>
   );
 }

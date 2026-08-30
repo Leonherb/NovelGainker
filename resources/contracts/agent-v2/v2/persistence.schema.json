@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "novelgainker://contracts/agent-v2/v2/persistence.schema.json",
+  "title": "TurnRecordV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "branchId",
+    "sessionId",
+    "sequence",
+    "turnId",
+    "userMessage",
+    "assistantMessages",
+    "selectedSkillIds",
+    "sourceRefs",
+    "terminalState",
+    "createdAtMs",
+    "previousHash",
+    "recordHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "projectId": { "type": "string", "minLength": 8, "maxLength": 80 },
+    "branchId": { "type": "string", "pattern": "^brn_[A-Za-z0-9_-]{8,80}$" },
+    "sessionId": { "type": "string", "pattern": "^ses_[A-Za-z0-9_-]{8,80}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "turnId": { "type": "string", "pattern": "^trn_[A-Za-z0-9_-]{8,80}$" },
+    "userMessage": { "$ref": "#/$defs/message" },
+    "assistantMessages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/message" }
+    },
+    "selectedSkillIds": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "sourceRefs": {
+      "type": "array",
+      "maxItems": 48,
+      "items": { "$ref": "#/$defs/sourceRef" }
+    },
+    "terminalState": { "enum": ["completed", "cancelled", "failed"] },
+    "createdAtMs": { "type": "integer", "minimum": 0 },
+    "previousHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "recordHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "messageId",
+        "responseId",
+        "turnId",
+        "role",
+        "body",
+        "bodyHash",
+        "sourceIds",
+        "status",
+        "createdAtMs"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "messageId": { "type": "string", "pattern": "^msg_[A-Za-z0-9_-]{8,80}$" },
+        "responseId": {
+          "type": ["string", "null"],
+          "pattern": "^rsp_[A-Za-z0-9_-]{8,80}$"
+        },
+        "turnId": { "type": "string", "pattern": "^trn_[A-Za-z0-9_-]{8,80}$" },
+        "role": { "enum": ["user", "assistant"] },
+        "body": { "type": "string", "minLength": 1, "maxLength": 32768 },
+        "bodyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceIds": {
+          "type": "array",
+          "maxItems": 48,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^src_[A-Za-z0-9_-]{8,80}$" }
+        },
+        "status": { "enum": ["complete", "cancelled", "failed"] },
+        "createdAtMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "relativePath",
+        "entity",
+        "fieldPath",
+        "headingPath",
+        "contentHash",
+        "excerptHash",
+        "excerpt",
+        "truncated",
+        "untrusted"
+      ],
+      "properties": {
+        "sourceId": { "type": "string", "pattern": "^src_[A-Za-z0-9_-]{8,80}$" },
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "entity": { "type": ["string", "null"], "maxLength": 256 },
+        "fieldPath": { "type": ["string", "null"], "maxLength": 256 },
+        "headingPath": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "maxLength": 256 }
+        },
+        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "excerptHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "excerpt": { "type": "string", "maxLength": 16384 },
+        "truncated": { "type": "boolean" },
+        "untrusted": { "const": true }
+      }
+    }
+  }
+}
+

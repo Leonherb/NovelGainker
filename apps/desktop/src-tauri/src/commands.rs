@@ -1,6 +1,6 @@
 use app_core::agent_transaction::{recover_incomplete_agent_transactions, AgentUndoStore};
-use app_core::agent_write::PreparedAgentWriteV1;
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
+#[cfg(test)]
 use app_core::canon_apply::apply_canon_file_recoverable;
 use app_core::coordination::{try_acquire_project_write_lease, ProjectWriteLease};
 use app_core::credential_vault::{CredentialVault, ProviderId, WindowsCredentialVault};
@@ -9,24 +9,29 @@ use app_core::project::{
     PreparedProjectCreate, ProjectCreateInputV1, ProjectCreatePreview, ProjectHandle,
     ProjectInspection, ProjectScanMode, ProjectScanPreview,
 };
+use app_core::provider_core::CancellationToken;
+#[cfg(test)]
 use app_core::provider_core::{
-    preset, CancellationToken, FinishReason, MessageRole, NormalizedEvent, NormalizedMessage,
-    NormalizedRequest, ProviderError, ProviderErrorKind, ProviderHttpClient, Usage,
-    MAX_OUTPUT_TOKENS,
+    preset, FinishReason, MessageRole, NormalizedEvent, NormalizedMessage, NormalizedRequest,
+    ProviderError, ProviderErrorKind, ProviderHttpClient, Usage, MAX_OUTPUT_TOKENS,
 };
+#[cfg(test)]
+use app_core::provider_state::ProviderConnectionStatus;
 use app_core::provider_state::{
     delete_provider_key, load_provider_state, save_provider_key, select_provider,
-    test_provider_connection, ProviderConnectionStatus, ProviderStateSnapshot, ProviderStatus,
+    test_provider_connection, ProviderStateSnapshot, ProviderStatus,
 };
 use app_core::recovery::{RecoveryReport, RecoveryStatus, RecoveryStore};
 use app_core::search::{search_project_sources, SearchReport};
 use app_core::workspace::{
     check_project_file, list_project_files, read_project_file, save_project_file_recoverable,
-    validate_project_draft, ProjectFileDocument, ProjectFileIndex, ProjectFileKind,
-    ProjectFileNode, ProjectFileSaveResult, ProjectFileWatchState, ProjectFileWatchStatus,
-    ValidationReport,
+    validate_project_draft, ProjectFileDocument, ProjectFileIndex, ProjectFileSaveResult,
+    ProjectFileWatchStatus, ValidationReport,
 };
+#[cfg(test)]
+use app_core::workspace::{ProjectFileKind, ProjectFileNode, ProjectFileWatchState};
 use app_core::{health_status, AppError, HealthStatus};
+#[cfg(test)]
 use novelgainker_workflows::context::{
     prepare_character_context, prepare_material_context, prepare_plot_context,
     prepare_setting_context, CharacterBriefModeV2, CharacterBriefV2, ContextBuildError,
@@ -34,65 +39,93 @@ use novelgainker_workflows::context::{
     PrepareCharacterContextInput, PrepareMaterialContextInput, PreparePlotContextInput,
     PrepareSettingContextInput, SettingBriefV1,
 };
-use novelgainker_workflows::manager::{
-    WorkflowManager, WorkflowManagerError, WorkflowRunRecord, WorkflowRunState,
-};
+use novelgainker_workflows::manager::{WorkflowManager, WorkflowRunState};
+#[cfg(test)]
+use novelgainker_workflows::manager::{WorkflowManagerError, WorkflowRunRecord};
+#[cfg(test)]
 use novelgainker_workflows::proposal::CanonProposalViewV1;
+use novelgainker_workflows::registry as embedded_workflow_registry;
+#[cfg(test)]
 use novelgainker_workflows::{
-    registry as embedded_workflow_registry, CHARACTER_CREATE_WORKFLOW_ID,
-    MATERIAL_CREATE_WORKFLOW_ID, PLOT_CREATE_WORKFLOW_ID, SETTING_CREATE_WORKFLOW_ID,
+    CHARACTER_CREATE_WORKFLOW_ID, MATERIAL_CREATE_WORKFLOW_ID, PLOT_CREATE_WORKFLOW_ID,
+    SETTING_CREATE_WORKFLOW_ID,
 };
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{Emitter, Manager};
+#[cfg(test)]
+use tauri::Emitter;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
 #[path = "agent_commands.rs"]
 pub(crate) mod agent_commands;
+#[cfg(test)]
 #[path = "router_commands.rs"]
-pub(crate) mod router_commands;
+pub mod router_commands;
+#[cfg(test)]
 #[path = "story_chapter_commands.rs"]
-pub(crate) mod story_chapter_commands;
+pub mod story_chapter_commands;
+#[cfg(test)]
 #[path = "story_chapter_patch_commands.rs"]
-pub(crate) mod story_chapter_patch_commands;
+pub mod story_chapter_patch_commands;
+#[cfg(test)]
 #[path = "story_context_commands.rs"]
-pub(crate) mod story_context_commands;
+pub mod story_context_commands;
+#[cfg(test)]
 #[path = "story_continuity_commands.rs"]
-pub(crate) mod story_continuity_commands;
+pub mod story_continuity_commands;
+#[cfg(test)]
 #[path = "story_lifecycle_commands.rs"]
-pub(crate) mod story_lifecycle_commands;
+pub mod story_lifecycle_commands;
+#[cfg(test)]
 #[path = "workflow_commands.rs"]
-pub(crate) mod workflow_commands;
+pub mod workflow_commands;
+#[cfg(test)]
 #[path = "workflow_proposal_commands.rs"]
-pub(crate) mod workflow_proposal_commands;
+pub mod workflow_proposal_commands;
+
+#[cfg(test)]
+pub(crate) fn install_legacy_story_ledger_fixture(project_root: &std::path::Path) {
+    const CONTENT: &str = "---\ntitle: 故事状态账本\nwritingLanguage: zh-CN\nstatus: active\n---\n\n# 故事状态账本\n\n在这里记录时间线、角色状态、线索、承诺与回收等连续性事实。\n";
+    std::fs::write(
+        project_root.join("materials/000.story-ledger.md"),
+        CONTENT.as_bytes(),
+    )
+    .expect("legacy Story Ledger kernel fixture must be installed explicitly");
+}
 
 pub struct ProjectRegistry {
     inner: Mutex<ProjectRegistryInner>,
     recovery_store: RecoveryStore,
     app_state: AppStateRepository,
     agent_undo_store: AgentUndoStore,
-    agent_pending_writes: Mutex<HashMap<String, StoredAgentWriteV1>>,
     credential_vault: Arc<dyn CredentialVault>,
     provider_run: Mutex<Option<ActiveProviderRun>>,
+    agent_canon_runtime: Mutex<agent_commands::AgentCanonRuntimeV2>,
     workflow_manager: Mutex<Option<WorkflowManager>>,
+    #[cfg(test)]
     workflow_sessions: Mutex<HashMap<String, String>>,
+    #[cfg(test)]
     story_chapter_runs: Mutex<HashMap<String, story_chapter_commands::StoryChapterRunSnapshotV1>>,
+    #[cfg(test)]
     story_continuity_reports:
         Mutex<HashMap<String, novelgainker_workflows::continuity::StoryContinuityReportV1>>,
+    #[cfg(test)]
     story_target_previews: Mutex<HashMap<String, story_continuity_commands::StoryTargetPreviewV1>>,
+    #[cfg(test)]
     story_chapter_patches:
         Mutex<HashMap<String, story_chapter_patch_commands::StoredStoryChapterPatchV1>>,
+    #[cfg(test)]
     story_lifecycle:
         Mutex<HashMap<String, story_lifecycle_commands::StoredStoryChapterLifecycleV1>>,
-}
-
-struct StoredAgentWriteV1 {
-    project_session_id: String,
-    prepared: PreparedAgentWriteV1,
 }
 
 #[derive(Default)]
@@ -129,15 +162,21 @@ impl ProjectRegistry {
             recovery_store,
             app_state,
             agent_undo_store,
-            agent_pending_writes: Mutex::new(HashMap::new()),
             credential_vault: Arc::new(WindowsCredentialVault::production()),
             provider_run: Mutex::new(None),
+            agent_canon_runtime: Mutex::new(agent_commands::AgentCanonRuntimeV2::default()),
             workflow_manager: Mutex::new(workflow_manager),
+            #[cfg(test)]
             workflow_sessions: Mutex::new(HashMap::new()),
+            #[cfg(test)]
             story_chapter_runs: Mutex::new(HashMap::new()),
+            #[cfg(test)]
             story_continuity_reports: Mutex::new(HashMap::new()),
+            #[cfg(test)]
             story_target_previews: Mutex::new(HashMap::new()),
+            #[cfg(test)]
             story_chapter_patches: Mutex::new(HashMap::new()),
+            #[cfg(test)]
             story_lifecycle: Mutex::new(HashMap::new()),
         })
     }
@@ -204,6 +243,7 @@ impl ProjectRegistry {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRunStatusSnapshot {
@@ -215,6 +255,7 @@ pub struct WorkflowRunStatusSnapshot {
     pub proposal_view: Option<CanonProposalViewV1>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRunStatus {
@@ -232,6 +273,7 @@ pub struct WorkflowRunStatus {
     pub recovery_required: bool,
 }
 
+#[cfg(test)]
 impl From<WorkflowRunRecord> for WorkflowRunStatus {
     fn from(record: WorkflowRunRecord) -> Self {
         Self {
@@ -282,6 +324,7 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 fn workflow_manager_error(error: WorkflowManagerError) -> AppError {
     match error {
         WorkflowManagerError::RunConflict => AppError::workflow_run_active(),
@@ -296,6 +339,7 @@ fn workflow_manager_error(error: WorkflowManagerError) -> AppError {
     }
 }
 
+#[cfg(test)]
 fn workflow_status_snapshot(
     manager: Option<&WorkflowManager>,
     project_id: &str,
@@ -322,6 +366,7 @@ fn workflow_status_snapshot(
     }
 }
 
+#[cfg(test)]
 fn workflow_generation_active(state: &ProjectRegistry) -> Result<bool, AppError> {
     let manager = state
         .workflow_manager
@@ -332,6 +377,7 @@ fn workflow_generation_active(state: &ProjectRegistry) -> Result<bool, AppError>
         .is_some_and(|manager| manager.active_state() == Some(WorkflowRunState::Generating)))
 }
 
+#[cfg(test)]
 fn retire_orphaned_legacy_workflow_generation(state: &ProjectRegistry) -> Result<bool, AppError> {
     if state.active_provider_id().is_some() {
         return Ok(false);
@@ -375,6 +421,7 @@ fn legacy_workflow_blocks_unified_runtime(state: &ProjectRegistry) -> Result<boo
     Ok(current.is_some_and(|record| record.state != WorkflowRunState::RecoveryRequired))
 }
 
+#[cfg(test)]
 fn workflow_run_active(state: &ProjectRegistry) -> Result<bool, AppError> {
     let manager = state
         .workflow_manager
@@ -385,6 +432,7 @@ fn workflow_run_active(state: &ProjectRegistry) -> Result<bool, AppError> {
         .is_some_and(WorkflowManager::has_active_run))
 }
 
+#[cfg(test)]
 fn context_build_error(error: ContextBuildError) -> AppError {
     match error {
         ContextBuildError::InvalidBrief => AppError::workflow_input_invalid(),
@@ -447,6 +495,7 @@ pub struct AppStateWriteResult {
     pub saved: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowCatalogEntry {
@@ -459,6 +508,7 @@ pub struct WorkflowCatalogEntry {
     pub routable: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRegistrySnapshot {
@@ -466,8 +516,10 @@ pub struct WorkflowRegistrySnapshot {
     pub workflows: Vec<WorkflowCatalogEntry>,
 }
 
+#[cfg(test)]
 const PROVIDER_RUN_EVENT_CHANNEL: &str = "provider-run-event";
 
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderChatRole {
@@ -475,6 +527,7 @@ pub enum ProviderChatRole {
     Assistant,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderChatMessageInput {
@@ -482,6 +535,7 @@ pub struct ProviderChatMessageInput {
     pub content: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRunStarted {
@@ -490,12 +544,14 @@ pub struct ProviderRunStarted {
     pub model: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRunCancelResult {
     pub cancel_requested: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProviderRunEventBody {
@@ -515,6 +571,7 @@ pub enum ProviderRunEventBody {
     Cancelled,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRunEvent {
@@ -539,7 +596,7 @@ pub fn app_state_load(state: tauri::State<'_, ProjectRegistry>) -> AppStateSnaps
     state.app_state.snapshot()
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn workflow_registry_load() -> WorkflowRegistrySnapshot {
     let registry = embedded_workflow_registry();
     WorkflowRegistrySnapshot {
@@ -560,7 +617,7 @@ pub fn workflow_registry_load() -> WorkflowRegistrySnapshot {
     }
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn workflow_run_status_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -568,7 +625,7 @@ pub fn workflow_run_status_load(
     load_registered_workflow_status(&state, &session_id)
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn workflow_run_cancel(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -576,7 +633,7 @@ pub fn workflow_run_cancel(
     mutate_registered_workflow_run(&state, &session_id, WorkflowRunAction::Cancel)
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn workflow_run_abandon(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -589,6 +646,7 @@ pub fn workflow_run_abandon(
     )
 }
 
+#[cfg(test)]
 fn load_registered_workflow_status(
     state: &ProjectRegistry,
     session_id: &str,
@@ -604,11 +662,13 @@ fn load_registered_workflow_status(
     ))
 }
 
+#[cfg(test)]
 enum WorkflowRunAction {
     Cancel,
     Abandon { confirmed: bool },
 }
 
+#[cfg(test)]
 fn mutate_registered_workflow_run(
     state: &ProjectRegistry,
     session_id: &str,
@@ -754,7 +814,7 @@ pub async fn provider_connection_test(
     .map_err(|_| AppError::runtime_unavailable())?
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn provider_chat_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectRegistry>,
@@ -815,7 +875,7 @@ pub fn provider_chat_start(
     })
 }
 
-#[tauri::command]
+#[cfg(test)]
 pub fn provider_chat_cancel(
     state: tauri::State<'_, ProjectRegistry>,
     run_id: String,
@@ -826,6 +886,7 @@ pub fn provider_chat_cancel(
     })
 }
 
+#[cfg(test)]
 fn execute_provider_chat(
     app: tauri::AppHandle,
     run_id: String,
@@ -924,6 +985,7 @@ fn execute_provider_chat(
     state.finish_provider_run(&run_id);
 }
 
+#[cfg(test)]
 fn emit_provider_event(
     app: &tauri::AppHandle,
     run_id: &str,
@@ -1135,26 +1197,43 @@ pub fn project_close(
         return Err(AppError::workflow_run_active());
     }
     state.cancel_active_provider_run();
-    state
-        .story_chapter_runs
-        .lock()
-        .map_err(|_| AppError::workflow_unavailable())?
-        .remove(&session_id);
+    let project_handle = {
+        let registry = lock_registry(&state)?;
+        registry
+            .sessions
+            .get(&session_id)
+            .map(|session| session.handle.clone())
+    };
+    if let Some(handle) = project_handle.as_ref() {
+        agent_commands::clear_project_agent_runtime(&state, handle)?;
+    }
+    #[cfg(test)]
+    {
+        state
+            .story_chapter_runs
+            .lock()
+            .map_err(|_| AppError::workflow_unavailable())?
+            .remove(&session_id);
+    }
+    #[cfg(test)]
     state
         .story_continuity_reports
         .lock()
         .map_err(|_| AppError::workflow_unavailable())?
         .remove(&session_id);
+    #[cfg(test)]
     state
         .story_target_previews
         .lock()
         .map_err(|_| AppError::workflow_unavailable())?
         .remove(&session_id);
+    #[cfg(test)]
     state
         .story_chapter_patches
         .lock()
         .map_err(|_| AppError::workflow_unavailable())?
         .remove(&session_id);
+    #[cfg(test)]
     state
         .story_lifecycle
         .lock()
@@ -2007,45 +2086,20 @@ mod tests {
                 "agent_turn_start",
                 "agent_turn_cancel",
                 "agent_session_clear",
-                "agent_policy_set",
-                "agent_write_confirm",
-                "agent_write_reject",
-                "agent_undo_apply",
-                "workflow_registry_load",
-                "router_resolve_local",
-                "router_run_start",
-                "router_run_cancel",
-                "workflow_run_status_load",
-                "workflow_source_catalog",
-                "workflow_run_prepare",
-                "workflow_run_generate",
-                "workflow_proposal_apply",
-                "workflow_run_cancel",
-                "workflow_run_abandon",
-                "story_context_catalog",
-                "story_context_build",
-                "story_context_request_preview",
-                "story_chapter_generate_start",
-                "story_chapter_status_load",
-                "story_chapter_generate_cancel",
-                "story_continuity_check",
-                "story_continuity_status_load",
-                "story_continuity_warning_confirm",
-                "story_chapter_patch_preview",
-                "story_chapter_patch_status_load",
-                "story_chapter_patch_apply",
-                "story_chapter_state_preview",
-                "story_chapter_lifecycle_status_load",
-                "story_chapter_state_apply",
-                "story_ledger_update_preview",
-                "story_ledger_update_apply",
+                "agent_memory_compact",
+                "agent_history_branch_resolve",
+                "agent_write_policy_set",
+                "agent_context_mark_upsert",
+                "agent_context_mark_remove",
+                "agent_conflict_resolution_submit",
+                "agent_write_confirmation_submit",
+                "agent_write_plan_reject",
+                "agent_write_undo_apply",
                 "provider_status_load",
                 "provider_key_save",
                 "provider_key_delete",
                 "provider_select",
                 "provider_connection_test",
-                "provider_chat_start",
-                "provider_chat_cancel",
                 "project_scan",
                 "project_create_preview",
                 "project_create",
@@ -2068,47 +2122,75 @@ mod tests {
         assert!(APP_COMMANDS.contains(&"agent_turn_start"));
         assert!(APP_COMMANDS.contains(&"agent_turn_cancel"));
         assert!(APP_COMMANDS.contains(&"agent_session_clear"));
-        assert!(APP_COMMANDS.contains(&"provider_chat_start"));
-        assert!(APP_COMMANDS.contains(&"provider_chat_cancel"));
+        assert!(APP_COMMANDS.contains(&"agent_memory_compact"));
+        assert!(APP_COMMANDS.contains(&"agent_history_branch_resolve"));
+        assert!(APP_COMMANDS.contains(&"agent_write_policy_set"));
+        assert!(APP_COMMANDS.contains(&"agent_context_mark_upsert"));
+        assert!(APP_COMMANDS.contains(&"agent_context_mark_remove"));
+        assert!(APP_COMMANDS.contains(&"agent_conflict_resolution_submit"));
+        assert!(APP_COMMANDS.contains(&"agent_write_confirmation_submit"));
+        assert!(APP_COMMANDS.contains(&"agent_write_plan_reject"));
+        assert!(APP_COMMANDS.contains(&"agent_write_undo_apply"));
         assert!(APP_COMMANDS.contains(&"provider_select"));
         assert!(APP_COMMANDS.contains(&"provider_connection_test"));
         assert!(APP_COMMANDS.contains(&"project_read_file"));
         assert!(APP_COMMANDS.contains(&"project_create_preview"));
-        assert!(APP_COMMANDS.contains(&"workflow_registry_load"));
-        assert!(APP_COMMANDS.contains(&"router_resolve_local"));
-        assert!(APP_COMMANDS.contains(&"router_run_start"));
-        assert!(APP_COMMANDS.contains(&"router_run_cancel"));
         assert!(!APP_COMMANDS.contains(&"source.create_character"));
         assert!(APP_COMMANDS.contains(&"project_watch_file"));
         assert!(APP_COMMANDS.contains(&"project_save_file"));
         assert!(APP_COMMANDS.contains(&"project_validate_draft"));
-        assert!(APP_COMMANDS.contains(&"workflow_source_catalog"));
         assert!(APP_COMMANDS.contains(&"project_search"));
         assert!(APP_COMMANDS.contains(&"provider_status_load"));
         assert!(APP_COMMANDS.contains(&"provider_key_save"));
         assert!(APP_COMMANDS.contains(&"provider_key_delete"));
-        assert!(APP_COMMANDS.contains(&"workflow_run_status_load"));
-        assert!(APP_COMMANDS.contains(&"workflow_run_prepare"));
-        assert!(APP_COMMANDS.contains(&"workflow_run_generate"));
-        assert!(APP_COMMANDS.contains(&"workflow_proposal_apply"));
-        assert!(APP_COMMANDS.contains(&"workflow_run_cancel"));
-        assert!(APP_COMMANDS.contains(&"workflow_run_abandon"));
-        assert!(APP_COMMANDS.contains(&"story_context_catalog"));
-        assert!(APP_COMMANDS.contains(&"story_context_build"));
-        assert!(APP_COMMANDS.contains(&"story_context_request_preview"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_generate_start"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_status_load"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_generate_cancel"));
-        assert!(APP_COMMANDS.contains(&"story_continuity_check"));
-        assert!(APP_COMMANDS.contains(&"story_continuity_status_load"));
-        assert!(APP_COMMANDS.contains(&"story_continuity_warning_confirm"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_patch_preview"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_patch_status_load"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_patch_apply"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_state_preview"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_lifecycle_status_load"));
-        assert!(APP_COMMANDS.contains(&"story_chapter_state_apply"));
-        assert!(APP_COMMANDS.contains(&"story_ledger_update_preview"));
-        assert!(APP_COMMANDS.contains(&"story_ledger_update_apply"));
+        assert_eq!(APP_COMMANDS.len(), 35);
+        assert_eq!(
+            APP_COMMANDS
+                .iter()
+                .filter(|command| command.starts_with("agent_"))
+                .count(),
+            14
+        );
+        for removed in [
+            "agent_policy_set",
+            "agent_write_confirm",
+            "agent_write_reject",
+            "agent_undo_apply",
+            "provider_chat_start",
+            "provider_chat_cancel",
+            "router_resolve_local",
+            "router_run_start",
+            "router_run_cancel",
+            "workflow_registry_load",
+            "workflow_run_status_load",
+            "workflow_source_catalog",
+            "workflow_run_prepare",
+            "workflow_run_generate",
+            "workflow_proposal_apply",
+            "workflow_run_cancel",
+            "workflow_run_abandon",
+            "story_context_catalog",
+            "story_context_build",
+            "story_context_request_preview",
+            "story_chapter_generate_start",
+            "story_chapter_status_load",
+            "story_chapter_generate_cancel",
+            "story_continuity_check",
+            "story_continuity_status_load",
+            "story_continuity_warning_confirm",
+            "story_chapter_patch_preview",
+            "story_chapter_patch_status_load",
+            "story_chapter_patch_apply",
+            "story_chapter_state_preview",
+            "story_chapter_lifecycle_status_load",
+            "story_chapter_state_apply",
+            "story_ledger_update_preview",
+            "story_ledger_update_apply",
+        ] {
+            assert!(
+                !APP_COMMANDS.contains(&removed),
+                "{removed} must be retired"
+            );
+        }
     }
 }

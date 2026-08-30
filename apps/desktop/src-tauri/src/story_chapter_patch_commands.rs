@@ -73,7 +73,6 @@ pub struct StoryChapterPatchStatusV1 {
     applied: Option<ChapterFileApplyResult>,
 }
 
-#[tauri::command]
 pub fn story_chapter_patch_preview(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -82,7 +81,6 @@ pub fn story_chapter_patch_preview(
     preview_registered_story_chapter_patch(&state, &session_id, input)
 }
 
-#[tauri::command]
 pub fn story_chapter_patch_status_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
@@ -101,7 +99,6 @@ pub fn story_chapter_patch_status_load(
     })
 }
 
-#[tauri::command]
 pub fn story_chapter_patch_apply(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,

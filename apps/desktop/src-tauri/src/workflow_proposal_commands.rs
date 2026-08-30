@@ -1,7 +1,6 @@
 use super::*;
 use novelgainker_workflows::plot::MAIN_PLOT_RELATIVE_PATH;
 
-#[tauri::command]
 pub fn workflow_proposal_apply(
     state: tauri::State<'_, ProjectRegistry>,
     run_id: String,
@@ -518,6 +517,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let inspection = inspect_project_root(&root, ProjectScanMode::Create).unwrap();
         let handle = create_project(&inspection).unwrap();
+        crate::commands::install_legacy_story_ledger_fixture(&root);
         let app_state = root.with_extension("state");
         let registry = ProjectRegistry::new(app_state.clone()).unwrap();
         let lease = try_acquire_project_write_lease(&handle.coordination_key())

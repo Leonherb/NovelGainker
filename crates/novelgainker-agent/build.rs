@@ -10,6 +10,9 @@ mod action_contract_validation;
 #[path = "src/governance_contract_validation.rs"]
 mod governance_contract_validation;
 
+#[path = "src/v2_contract_validation.rs"]
+mod v2_contract_validation;
+
 use action_contract_validation::validate_action_contract_set;
 use contract_validation::validate_contract_set;
 use governance_contract_validation::validate_governance_contract_set;
@@ -17,6 +20,7 @@ use skill_pack_validation::validate_pack;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use v2_contract_validation::validate_v2_contract_set;
 
 fn collect_resources(
     root: &Path,
@@ -87,6 +91,27 @@ fn main() {
         .unwrap_or_else(|error| {
             panic!("NovelGainker Novelist-compatible Skill Pack v1 validation failed: {error}")
         });
+
+    let v2_contract_root = manifest_dir.join("../../resources/contracts/agent-v2/v2");
+    println!("cargo:rerun-if-changed={}", v2_contract_root.display());
+    let mut v2_contract_resources = BTreeMap::new();
+    collect_resources(
+        &v2_contract_root,
+        &v2_contract_root,
+        &mut v2_contract_resources,
+    )
+    .and_then(|_| validate_v2_contract_set(&v2_contract_resources))
+    .map(|validated| {
+        println!(
+            "cargo:rustc-env=NOVELGAINKER_AGENT_V2_CONTRACT_SET_SHA256={}",
+            validated.contract_set_hash
+        );
+        println!(
+            "cargo:rustc-env=NOVELGAINKER_AGENT_V2_CONTRACT_RESOURCE_COUNT={}",
+            validated.resource_count
+        );
+    })
+    .unwrap_or_else(|error| panic!("NovelGainker Agent Protocol V2 validation failed: {error}"));
 
     let contract_root = manifest_dir.join("../../resources/contracts/agent/v1");
     println!("cargo:rerun-if-changed={}", contract_root.display());

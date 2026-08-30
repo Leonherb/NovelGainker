@@ -2,92 +2,102 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_SESSION_LOAD_COMMAND,
   AGENT_TURN_EVENT_CHANNEL,
+  AGENT_V2_COMMANDS,
+  AGENT_WRITE_CONFIRMATION_SUBMIT_COMMAND,
   listenAgentTurnEvents,
   parseAgentSession,
   parseAgentTurnEvent,
   requestAgentSession,
+  requestAgentWriteConfirmation,
+  type AgentWritePlanV2,
 } from "./agent";
 
-const run = {
-  runId: "10000000-0000-4000-8000-000000000001",
+const session = {
+  schemaVersion: 2,
+  projectId: "10000000-0000-4000-8000-000000000001",
+  historyConsentRequired: false,
+  branchSelectionRequired: false,
+  activeBranchId: "brn_10000000000040008000000000000001",
+  sessionId: "ses_10000000000040008000000000000001",
+  branches: [
+    {
+      branchId: "brn_10000000000040008000000000000001",
+      sessionId: "ses_10000000000040008000000000000001",
+      lastTurnAtMs: 10,
+      messageCount: 0,
+      hashStatus: "empty",
+    },
+  ],
+  messages: [],
+  memory: null,
+  draftQuota: 0,
+  writePolicy: "auto_apply_safe",
+  writePolicyHash: "a".repeat(64),
+  contextMarks: {
+    schemaVersion: 1,
+    projectId: "10000000-0000-4000-8000-000000000001",
+    marks: [],
+    storeHash: "b".repeat(64),
+  },
+} as const;
+
+const baseEvent = {
+  schemaVersion: 2,
+  runId: "run_10000000000040008000000000000001",
   turnId: "trn_10000000000040008000000000000001",
-  agentSessionId: "ses_10000000000040008000000000000001",
+  projectSessionId: "desktop-session",
   providerId: "openai",
   model: "gpt-5.6-terra",
   sequence: 1,
 } as const;
 
-describe("AM2 Agent Tauri boundary", () => {
-  it("accepts bounded metadata sessions with policy, pending previews and no full chat", () => {
-    const session = parseAgentSession({
-      schemaVersion: 1,
-      projectSessionId: "desktop-session",
-      projectId: "10000000-0000-4000-8000-000000000001",
-      agentSessionId: run.agentSessionId,
-      providerId: "openai",
-      model: "gpt-5.6-terra",
-      packVersion: "1.0.0",
-      packHash: "a".repeat(64),
-      summaryText: "上次结论",
-      summaryVersion: 1,
-      policy: "review_every_write",
-      recentTurns: [],
-      undoRecords: [],
-      pendingWrites: [],
-      fullChatPersisted: false,
-      projectWriteCount: 0,
-    });
-    expect(session.fullChatPersisted).toBe(false);
-    expect(() => parseAgentSession({ ...session, fullChatPersisted: true })).toThrow();
-    expect(() => parseAgentSession({ ...session, transcript: [] })).toThrow();
+const usage = {
+  providerCalls: 3,
+  totalProviderInputBytes: 100,
+  totalProviderOutputBytes: 40,
+  accumulatedContextResultBytes: 20,
+  structuredRepairCalls: 0,
+  totalProviderInputTokens: 25,
+  totalProviderOutputTokens: 10,
+};
+
+describe("GAR2 Agent Protocol V2 Tauri boundary", () => {
+  it("accepts project-local visible history and rejects legacy metadata fields", () => {
+    expect(parseAgentSession(session).draftQuota).toBe(0);
+    expect(() => parseAgentSession({ ...session, fullChatPersisted: false })).toThrow();
+    expect(() => parseAgentSession({ ...session, draftQuota: 1 })).toThrow();
+    expect(() => parseAgentSession({ ...session, writePolicyHash: "stale" })).toThrow();
   });
 
-  it("accepts visible read traces and bounded committed write counts", () => {
-    const event = parseAgentTurnEvent({
-      ...run,
-      kind: "toolCompleted",
-      callId: "call_10000000000040008000000000000001",
-      toolId: "project.read_markdown",
-      status: "succeeded",
-      sourcePaths: ["characters/hero.md"],
-      truncated: false,
-      projectWriteCount: 0,
-    });
-    expect(event.kind).toBe("toolCompleted");
-    expect(() => parseAgentTurnEvent({ ...event, projectWriteCount: 1 })).toThrow();
-    expect(() => parseAgentTurnEvent({ ...event, toolId: "project.patch_markdown" })).toThrow();
-    const completed = parseAgentTurnEvent({
-      ...run,
-      kind: "completed",
-      summary: "已写入",
-      usage: null,
-      projectWriteCount: 2,
-    });
-    expect(completed.kind === "completed" && completed.projectWriteCount).toBe(2);
+  it("keeps Conversation deltas separate and accepts bounded Canon-write terminal counts", () => {
+    const delta = parseAgentTurnEvent({ ...baseEvent, kind: "conversationDelta", delta: "潮声" });
+    expect(delta.kind).toBe("conversationDelta");
+    expect(
+      parseAgentTurnEvent({
+        ...baseEvent,
+        kind: "cancelled",
+        message: null,
+        usage,
+        agentCanonWriteCount: 1,
+      }),
+    ).toMatchObject({ kind: "cancelled", agentCanonWriteCount: 1 });
+    expect(() =>
+      parseAgentTurnEvent({
+        ...baseEvent,
+        kind: "cancelled",
+        message: null,
+        usage,
+        agentCanonWriteCount: -1,
+      }),
+    ).toThrow();
   });
 
-  it("invokes the project-bound session command and drops malformed events", async () => {
-    const invoke = vi.fn().mockResolvedValue({
-      schemaVersion: 1,
-      projectSessionId: "desktop-session",
-      projectId: "10000000-0000-4000-8000-000000000001",
-      agentSessionId: run.agentSessionId,
-      providerId: "openai",
-      model: "gpt-5.6-terra",
-      packVersion: "1.0.0",
-      packHash: "a".repeat(64),
-      summaryText: null,
-      summaryVersion: 0,
-      policy: "auto_apply_safe",
-      recentTurns: [],
-      undoRecords: [],
-      pendingWrites: [],
-      fullChatPersisted: false,
-      projectWriteCount: 0,
-    });
-    await requestAgentSession("desktop-session", invoke);
+  it("invokes consent explicitly and drops malformed event payloads", async () => {
+    const invoke = vi.fn().mockResolvedValue(session);
+    await requestAgentSession("desktop-session", true, invoke);
     expect(invoke).toHaveBeenCalledWith(AGENT_SESSION_LOAD_COMMAND, {
       projectSessionId: "desktop-session",
+      historyConsent: true,
     });
 
     let listener: ((event: { payload: unknown }) => void) | undefined;
@@ -98,7 +108,47 @@ describe("AM2 Agent Tauri boundary", () => {
     const received = vi.fn();
     await listenAgentTurnEvents(received, listen);
     expect(listen).toHaveBeenCalledWith(AGENT_TURN_EVENT_CHANNEL, expect.any(Function));
-    listener?.({ payload: { ...run, kind: "cancelled", projectWriteCount: 9 } });
+    listener?.({ payload: { ...baseEvent, kind: "conversationDelta", delta: "" } });
     expect(received).not.toHaveBeenCalled();
+  });
+
+  it("exports exactly the fourteen approved V2 commands and keeps retired names absent", () => {
+    expect(AGENT_V2_COMMANDS).toHaveLength(14);
+    expect(AGENT_V2_COMMANDS).not.toContain("agent_policy_set");
+    expect(AGENT_V2_COMMANDS).not.toContain("agent_write_confirm");
+    expect(AGENT_V2_COMMANDS).not.toContain("agent_write_reject");
+    expect(AGENT_V2_COMMANDS).not.toContain("agent_undo_apply");
+  });
+
+  it("submits write confirmation using only Host IDs and hashes", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      schemaVersion: 2,
+      receiptId: `rcpt_${"a".repeat(64)}`,
+      transactionHash: "a".repeat(64),
+      resultHash: "b".repeat(64),
+      relativePaths: ["characters/林舟.md"],
+      committedAtMs: 10,
+      undoExpiresAtMs: 20,
+      projectWriteCount: 1,
+    });
+    const plan = {
+      pendingId: "pnd_10000000000040008000000000000001",
+      planHash: "c".repeat(64),
+      sourceBindingHash: "d".repeat(64),
+      policyHash: "e".repeat(64),
+    } as unknown as AgentWritePlanV2;
+    await requestAgentWriteConfirmation("desktop-session", plan, invoke);
+    expect(invoke).toHaveBeenCalledWith(AGENT_WRITE_CONFIRMATION_SUBMIT_COMMAND, {
+      input: {
+        schemaVersion: 2,
+        projectSessionId: "desktop-session",
+        pendingId: plan.pendingId,
+        planHash: plan.planHash,
+        sourceBindingHash: plan.sourceBindingHash,
+        policyHash: plan.policyHash,
+        confirmed: true,
+      },
+    });
+    expect(JSON.stringify(invoke.mock.calls[0])).not.toMatch(/body|content|path/u);
   });
 });

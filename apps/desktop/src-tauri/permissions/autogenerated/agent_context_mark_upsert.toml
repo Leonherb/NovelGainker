@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-context-mark-upsert"
+description = "Enables the agent_context_mark_upsert command without any pre-configured scope."
+commands.allow = ["agent_context_mark_upsert"]
+
+[[permission]]
+identifier = "deny-agent-context-mark-upsert"
+description = "Denies the agent_context_mark_upsert command without any pre-configured scope."
+commands.deny = ["agent_context_mark_upsert"]

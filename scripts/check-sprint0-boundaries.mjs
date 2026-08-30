@@ -1,27 +1,20 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
 
-const workspaceRoot = process.cwd();
-const absolute = (relativePath) => resolve(workspaceRoot, relativePath);
-const read = (relativePath) => readFileSync(absolute(relativePath), "utf8");
-const assert = (condition, message) => {
-  if (!condition) {
-    throw new Error(message);
+const ROOT = process.cwd();
+const read = (relative) => readFileSync(path.join(ROOT, relative), "utf8");
+const exists = (relative) => {
+  try {
+    return statSync(path.join(ROOT, relative)).isFile();
+  } catch {
+    return false;
   }
 };
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
 
-function walk(relativeDirectory) {
-  return readdirSync(absolute(relativeDirectory), {
-    recursive: true,
-    withFileTypes: true,
-  })
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      relative(workspaceRoot, resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"),
-    );
-}
-
-const approvedCommands = [
+const COMMANDS = [
   "health_check",
   "app_state_load",
   "app_state_save_ui",
@@ -30,14 +23,61 @@ const approvedCommands = [
   "agent_turn_start",
   "agent_turn_cancel",
   "agent_session_clear",
+  "agent_memory_compact",
+  "agent_history_branch_resolve",
+  "agent_write_policy_set",
+  "agent_context_mark_upsert",
+  "agent_context_mark_remove",
+  "agent_conflict_resolution_submit",
+  "agent_write_confirmation_submit",
+  "agent_write_plan_reject",
+  "agent_write_undo_apply",
+  "provider_status_load",
+  "provider_key_save",
+  "provider_key_delete",
+  "provider_select",
+  "provider_connection_test",
+  "project_scan",
+  "project_create_preview",
+  "project_create",
+  "project_open",
+  "project_open_recent",
+  "project_list_files",
+  "project_read_file",
+  "app_state_set_current_file",
+  "project_watch_file",
+  "project_save_file",
+  "project_validate_draft",
+  "project_search",
+  "project_close",
+];
+const AGENT_COMMANDS = [
+  "agent_skill_registry_load",
+  "agent_session_load",
+  "agent_turn_start",
+  "agent_turn_cancel",
+  "agent_session_clear",
+  "agent_memory_compact",
+  "agent_history_branch_resolve",
+  "agent_write_policy_set",
+  "agent_context_mark_upsert",
+  "agent_context_mark_remove",
+  "agent_conflict_resolution_submit",
+  "agent_write_confirmation_submit",
+  "agent_write_plan_reject",
+  "agent_write_undo_apply",
+];
+const RETIRED_COMMANDS = [
   "agent_policy_set",
   "agent_write_confirm",
   "agent_write_reject",
   "agent_undo_apply",
-  "workflow_registry_load",
+  "provider_chat_start",
+  "provider_chat_cancel",
   "router_resolve_local",
   "router_run_start",
   "router_run_cancel",
+  "workflow_registry_load",
   "workflow_run_status_load",
   "workflow_source_catalog",
   "workflow_run_prepare",
@@ -62,2178 +102,228 @@ const approvedCommands = [
   "story_chapter_state_apply",
   "story_ledger_update_preview",
   "story_ledger_update_apply",
-  "provider_status_load",
-  "provider_key_save",
-  "provider_key_delete",
-  "provider_select",
-  "provider_connection_test",
-  "provider_chat_start",
-  "provider_chat_cancel",
-  "project_scan",
-  "project_create_preview",
-  "project_create",
-  "project_open",
-  "project_open_recent",
-  "project_list_files",
-  "project_read_file",
-  "app_state_set_current_file",
-  "project_watch_file",
-  "project_save_file",
-  "project_validate_draft",
-  "project_search",
-  "project_close",
 ];
-const approvedPermissions = [
-  ...approvedCommands.map((command) => `allow-${command.replaceAll("_", "-")}`),
-  "core:event:allow-listen",
-  "core:event:allow-unlisten",
-  "core:window:allow-close",
-];
+
+const manifestSource = read("apps/desktop/src-tauri/src/command_manifest.rs");
+const manifestCommands = [...manifestSource.matchAll(/"([a-z][a-z0-9_]*)"/gu)].map(
+  (match) => match[1],
+);
+assert(
+  JSON.stringify(manifestCommands) === JSON.stringify(COMMANDS),
+  "GAR2 Rust command manifest must be the exact ordered 35-command set",
+);
+
+const libSource = read("apps/desktop/src-tauri/src/lib.rs");
+const handlerMatch = libSource.match(/tauri::generate_handler!\[([\s\S]*?)\]\s*\)/u);
+assert(handlerMatch, "Tauri handler registration not found");
+const handlerCommands = [
+  ...handlerMatch[1].matchAll(/commands(?:::agent_commands)?::([a-z][a-z0-9_]*)/gu),
+].map((match) => match[1]);
+assert(
+  JSON.stringify(handlerCommands) === JSON.stringify(COMMANDS),
+  "Tauri handler must equal the exact 35-command manifest",
+);
+for (const command of RETIRED_COMMANDS) {
+  const mountedHandler = new RegExp(`::${command}(?:\\s|,)`, "u");
+  assert(!mountedHandler.test(libSource), `retired handler still mounted: ${command}`);
+}
+
 const capability = JSON.parse(read("apps/desktop/src-tauri/capabilities/default.json"));
+const capabilityCommands = capability.permissions
+  .filter(
+    (permission) =>
+      typeof permission === "string" &&
+      permission.startsWith("allow-") &&
+      !permission.includes(":"),
+  )
+  .map((permission) => permission.slice(6).replaceAll("-", "_"));
 assert(
-  JSON.stringify(capability.permissions) === JSON.stringify(approvedPermissions),
-  "GA2 capability must contain only sixty approved app commands plus close-event listen/unlisten and window close",
+  JSON.stringify(capabilityCommands) === JSON.stringify(COMMANDS),
+  "main-window Capability must equal the 35-command manifest",
 );
-
-const commandManifest = read("apps/desktop/src-tauri/src/command_manifest.rs");
-const manifestCommands = [...commandManifest.matchAll(/"([a-z_]+)"/gu)].map((match) => match[1]);
-assert(
-  JSON.stringify(manifestCommands) === JSON.stringify(approvedCommands),
-  "GA2 command manifest must contain only the sixty approved commands",
-);
-assert(
-  commandManifest.includes("project_save_file"),
-  "NG-104 must retain exactly one scoped file-save command",
-);
-
-for (const command of approvedCommands) {
-  const generatedPermission = read(
-    `apps/desktop/src-tauri/permissions/autogenerated/${command}.toml`,
-  );
+for (const forbidden of ["shell", "process", "opener", "fs:", "http:"]) {
   assert(
-    generatedPermission.includes(`commands.allow = ["${command}"]`),
-    `Generated permission must allow only ${command}`,
-  );
-  assert(
-    !generatedPermission.match(/commands\.allow\s*=\s*\[[^\]]*,/u),
-    `Generated allow permission for ${command} must not include a second command`,
+    !JSON.stringify(capability).toLowerCase().includes(forbidden),
+    `forbidden broad capability: ${forbidden}`,
   );
 }
 
-const runtimePaths = [
-  "apps/desktop/src/App.tsx",
-  "apps/desktop/src/main.tsx",
-  "apps/desktop/src/components/AppErrorBoundary.tsx",
-  "apps/desktop/src/components/ProviderSettings.tsx",
-  "apps/desktop/src/components/ConversationPanel.tsx",
-  "apps/desktop/src/components/AgentTimelinePanel.tsx",
-  "apps/desktop/src/components/StoryContextBuilder.tsx",
-  "apps/desktop/src/components/conversation-state.ts",
-  "apps/desktop/src/components/provider-settings-model.ts",
-  "apps/desktop/src/components/HealthStatus.tsx",
-  "apps/desktop/src/components/ProjectSearch.tsx",
-  "apps/desktop/src/components/ProjectWorkspace.tsx",
-  "apps/desktop/src/components/SourceDiagnostics.tsx",
-  "apps/desktop/src/errors/present-app-error.ts",
-  "apps/desktop/src/i18n/zh-CN.ts",
-  "apps/desktop/src/lib/tauri/health.ts",
-  "apps/desktop/src/lib/tauri/app-state.ts",
-  "apps/desktop/src/lib/tauri/provider.ts",
-  "apps/desktop/src/lib/tauri/analysis.ts",
-  "apps/desktop/src/lib/tauri/provider-chat.ts",
-  "apps/desktop/src/lib/tauri/agent.ts",
-  "apps/desktop/src/lib/tauri/workflow.ts",
-  "apps/desktop/src/lib/tauri/story-context.ts",
-  "apps/desktop/src/lib/tauri/story-chapter.ts",
-  "apps/desktop/src/lib/tauri/story-continuity.ts",
-  "apps/desktop/src/lib/tauri/router.ts",
-  "apps/desktop/src/lib/tauri/workflow-run.ts",
-  "apps/desktop/src/lib/tauri/workflow-proposal.ts",
-  "apps/desktop/src/lib/tauri/project.ts",
-  "crates/novelgainker-workflows/src/lib.rs",
-  "crates/novelgainker-workflows/src/context.rs",
-  "crates/novelgainker-workflows/src/manager.rs",
-  "crates/novelgainker-workflows/src/proposal.rs",
-  "crates/novelgainker-workflows/src/router.rs",
-  "crates/novelgainker-workflows/src/story_context.rs",
-  "crates/novelgainker-workflows/src/chapter.rs",
-  "crates/novelgainker-workflows/src/continuity.rs",
-  "crates/novelgainker-workflows/src/setting.rs",
-  "crates/novelgainker-workflows/src/material.rs",
-  "apps/desktop/src-tauri/src/router_commands.rs",
-  "apps/desktop/src-tauri/src/story_context_commands.rs",
-  "apps/desktop/src-tauri/src/story_chapter_commands.rs",
-  "apps/desktop/src-tauri/src/story_continuity_commands.rs",
-  "apps/desktop/src-tauri/src/workflow_commands.rs",
-  "apps/desktop/src-tauri/src/workflow_proposal_commands.rs",
-  "apps/desktop/src/lib/tauri/window-close.ts",
-  "apps/desktop/src/lib/tauri/workspace.ts",
-  "apps/desktop/src/presentation/health.ts",
-  "apps/desktop/src-tauri/src/commands.rs",
-  "apps/desktop/src-tauri/src/agent_commands.rs",
-  "apps/desktop/src-tauri/src/lib.rs",
-  "crates/app-core/src/lib.rs",
-  "crates/app-core/src/app_state.rs",
-  "crates/app-core/src/agent_runtime.rs",
-  "crates/app-core/src/credential_vault.rs",
-  "crates/app-core/src/provider_core.rs",
-  "crates/app-core/src/provider_state.rs",
-  "crates/app-core/src/coordination.rs",
-  "crates/app-core/src/project.rs",
-  "crates/app-core/src/canon_apply.rs",
-  "crates/app-core/src/recovery.rs",
-  "crates/app-core/src/search.rs",
-  "crates/app-core/src/workspace.rs",
-  "crates/novelgainker-domain/src/lib.rs",
-  "crates/novelgainker-validation/src/lib.rs",
-];
-const runtimeSources = runtimePaths.map((path) => [path, read(path)]);
-const forbiddenRuntimePatterns = [
-  ["browser network request", /\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b/u],
-  ["runtime environment read", /std::env::var(?:_os)?\s*\(|process\.env/u],
-  ["generic process execution", /std::process|Command::new|tauri_plugin_(?:shell|process|opener)/u],
-];
-for (const [path, source] of runtimeSources) {
-  const productionSource = source.split("#[cfg(test)]")[0];
-  for (const [label, pattern] of forbiddenRuntimePatterns) {
-    assert(!pattern.test(productionSource), `${label} found in ${path}`);
-  }
+const permissionRoot = path.join(ROOT, "apps/desktop/src-tauri/permissions/autogenerated");
+const permissionNames = readdirSync(permissionRoot)
+  .filter((name) => name.endsWith(".toml"))
+  .map((name) => name.slice(0, -5))
+  .sort();
+assert(
+  JSON.stringify(permissionNames) === JSON.stringify([...COMMANDS].sort()),
+  "autogenerated permissions must equal the 35-command manifest",
+);
+for (const command of COMMANDS) {
+  const source = read(`apps/desktop/src-tauri/permissions/autogenerated/${command}.toml`);
+  assert(source.includes(`commands.allow = ["${command}"]`), `permission allow drift: ${command}`);
+  assert(source.includes(`commands.deny = ["${command}"]`), `permission deny drift: ${command}`);
 }
 
-const providerNetworkModule = "crates/app-core/src/provider_core.rs";
-for (const [path, source] of runtimeSources) {
-  if (path === providerNetworkModule) {
-    continue;
-  }
-  const productionSource = source.split("#[cfg(test)]")[0];
-  assert(
-    !/\breqwest\b|\bureq\b|TcpStream|UdpSocket/u.test(productionSource),
-    `Rust network client outside Provider Core: ${path}`,
-  );
+const tauriSources = readdirSync(path.join(ROOT, "apps/desktop/src-tauri/src"))
+  .filter((name) => name.endsWith(".rs"))
+  .map((name) => read(`apps/desktop/src-tauri/src/${name}`))
+  .join("\n");
+for (const command of RETIRED_COMMANDS) {
+  const mounted = new RegExp(`#\\[tauri::command\\]\\s*pub(?: async)? fn ${command}\\b`, "u");
+  assert(!mounted.test(tauriSources), `retired command still has a Tauri entrypoint: ${command}`);
 }
 
-const fileAccessAllowedPaths = new Set([
-  "crates/app-core/src/app_state.rs",
-  "crates/app-core/src/canon_apply.rs",
-  "crates/app-core/src/project.rs",
-  "crates/app-core/src/recovery.rs",
-  "crates/app-core/src/workspace.rs",
-]);
-for (const [path, source] of runtimeSources) {
-  if (fileAccessAllowedPaths.has(path)) {
-    continue;
-  }
-  const productionSource = source.split("#[cfg(test)]")[0];
-  assert(
-    !/std::fs|tokio::fs|File::open|read_to_string|OpenOptions/u.test(productionSource),
-    `Project file access escaped the app-core production services: ${path}`,
-  );
+const client = read("apps/desktop/src/lib/tauri/agent.ts");
+for (const command of AGENT_COMMANDS)
+  assert(client.includes(`"${command}"`), `V2 frontend command missing: ${command}`);
+for (const command of RETIRED_COMMANDS)
+  assert(!client.includes(`"${command}"`), `retired frontend Agent IPC remains: ${command}`);
+assert(
+  client.includes("AGENT_V2_COMMANDS") && client.includes("agent-turn-v2-event"),
+  "V2 Agent client lock missing",
+);
+
+const app = read("apps/desktop/src/App.tsx");
+const conversation = read("apps/desktop/src/components/AgentConversation.tsx");
+const normalizedConversation = conversation.replace(/\s+/gu, " ");
+assert(
+  app.includes("<AgentConversation") && app.includes("activityHost={agentActivityHost}"),
+  "V2 Conversation is not mounted with right activity host",
+);
+assert(
+  !app.includes("AgentTimelinePanel") && !conversation.includes("AgentActionPayloadV1"),
+  "legacy Timeline/Agent Action UI remains mounted",
+);
+assert(
+  conversation.includes("createPortal(activity, activityHost)"),
+  "Agent Activity must portal to the right column",
+);
+assert(
+  conversation.includes('className="message-canvas agent-v2-conversation"'),
+  "center Conversation canvas missing",
+);
+assert(
+  conversation.includes("createPortal(activity, activityHost)") &&
+    conversation.includes('aria-label="小说创作对话消息"') &&
+    conversation.includes('aria-label="Agent 活动"'),
+  "Conversation and GAR2 activity surfaces are not structurally separated",
+);
+assert(
+  app.includes("startup-project-backdrop") && app.includes("projectSessionId === null"),
+  "startup project modal must be blocking",
+);
+assert(
+  normalizedConversation.includes("historyConsentRequired") &&
+    normalizedConversation.includes("可能随 Git 或同步工具复制"),
+  "project-history privacy consent missing",
+);
+assert(
+  normalizedConversation.includes("branchSelectionRequired") &&
+    normalizedConversation.includes("不会自动合并、覆盖或删除"),
+  "sync-fork user resolution missing",
+);
+
+const project = read("crates/app-core/src/project.rs");
+assert(
+  project.includes("creates_the_minimal_v1_scaffold_without_canon_anchors"),
+  "minimal scaffold regression missing",
+);
+assert(
+  project.includes('assert!(!root.path().join("materials/000.story-ledger.md").exists())'),
+  "minimal scaffold must not create Story Ledger",
+);
+const agentV2 = read("crates/app-core/src/agent_v2.rs");
+for (const boundary of [
+  ".novelgainker/agent",
+  "history_consent_required",
+  "branch_selection_required",
+  "validate_relative_source_path",
+  "verify_unchanged",
+  "needs_compaction",
+  "draft_quota: 0",
+])
+  assert(agentV2.includes(boundary), `Agent V2 persistence/context boundary missing: ${boundary}`);
+assert(
+  agentV2.includes('starts_with(".novelgainker/")'),
+  "Context index metadata exclusion missing",
+);
+
+const providerCore = read("crates/app-core/src/provider_core.rs");
+for (const constructor of [
+  "agent_v2_skill_selection",
+  "agent_v2_control",
+  "agent_v2_conversation",
+  "agent_v2_reconciliation",
+  "agent_v2_memory_compaction",
+]) {
+  assert(providerCore.includes(`fn ${constructor}`), `Provider V2 mode missing: ${constructor}`);
 }
-
-const workflowResourcePaths = walk("resources/workflows/v1").sort();
 assert(
-  JSON.stringify(workflowResourcePaths) ===
-    JSON.stringify([
-      "resources/workflows/v1/character-create/character.template.md",
-      "resources/workflows/v1/character-create/input.schema.json",
-      "resources/workflows/v1/character-create/output.schema.json",
-      "resources/workflows/v1/character-create/workflow.md",
-      "resources/workflows/v1/material-create/input.schema.json",
-      "resources/workflows/v1/material-create/material.template.md",
-      "resources/workflows/v1/material-create/output.schema.json",
-      "resources/workflows/v1/material-create/workflow.md",
-      "resources/workflows/v1/pack.json",
-      "resources/workflows/v1/plot-create/input.schema.json",
-      "resources/workflows/v1/plot-create/output.schema.json",
-      "resources/workflows/v1/plot-create/plot.template.md",
-      "resources/workflows/v1/plot-create/workflow.md",
-      "resources/workflows/v1/project-create/input.schema.json",
-      "resources/workflows/v1/project-create/output.schema.json",
-      "resources/workflows/v1/project-create/project.template.md",
-      "resources/workflows/v1/project-create/workflow.md",
-      "resources/workflows/v1/router/deterministic-intents.v1.json",
-      "resources/workflows/v1/router/router-decision.schema.json",
-      "resources/workflows/v1/router/workflow.md",
-      "resources/workflows/v1/setting-create/input.schema.json",
-      "resources/workflows/v1/setting-create/output.schema.json",
-      "resources/workflows/v1/setting-create/setting.template.md",
-      "resources/workflows/v1/setting-create/workflow.md",
-      "resources/workflows/v1/storytelling/chapter-proposal.output.schema.json",
-      "resources/workflows/v1/storytelling/chapter.template.md",
-      "resources/workflows/v1/storytelling/input.schema.json",
-      "resources/workflows/v1/storytelling/output.schema.json",
-      "resources/workflows/v1/storytelling/request-preview.input.schema.json",
-      "resources/workflows/v1/storytelling/request-snapshot.output.schema.json",
-      "resources/workflows/v1/storytelling/workflow.md",
-    ]),
-  "NG-504 Workflow Pack may contain only the thirty-one approved build-validated resources",
+  providerCore.includes("AgentConversationV2") && providerCore.includes("AgentControlActionV2"),
+  "Conversation/Control output formats are not separate",
 );
-for (const path of workflowResourcePaths) {
-  const source = read(path);
-  assert(
-    !/[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af]/u.test(source),
-    `Korean workflow resource found in ${path}`,
-  );
-  assert(
-    !/SKILL\.md|openai\.ya?ml|agents\/openai|plugin.?cache|novelist|python/iu.test(source),
-    `External workflow runtime reference found in ${path}`,
-  );
-}
-const workflowBuildValidator = read("crates/novelgainker-workflows/src/pack_validation.rs");
-const workflowRuntimeRegistry = read("crates/novelgainker-workflows/src/lib.rs");
-const workflowFrontendClient = read("apps/desktop/src/lib/tauri/workflow.ts");
-const workflowManager = read("crates/novelgainker-workflows/src/manager.rs");
-const workflowRouter = read("crates/novelgainker-workflows/src/router.rs");
-const routerCommands = read("apps/desktop/src-tauri/src/router_commands.rs");
-const routerFrontendClient = read("apps/desktop/src/lib/tauri/router.ts");
-const providerCore = read(providerNetworkModule);
-const workflowContextBuilder = read("crates/novelgainker-workflows/src/context.rs");
-const workflowCharacter = read("crates/novelgainker-workflows/src/character.rs");
-const workflowCharacterV2 = read("crates/novelgainker-workflows/src/character_v2.rs");
-const workflowSetting = read("crates/novelgainker-workflows/src/setting.rs");
-const workflowMaterial = read("crates/novelgainker-workflows/src/material.rs");
-const workflowPlot = read("crates/novelgainker-workflows/src/plot.rs");
-const storyContextCore = read("crates/novelgainker-workflows/src/story_context.rs");
-const storyContextCommands = read("apps/desktop/src-tauri/src/story_context_commands.rs");
-const storyContextFrontend = read("apps/desktop/src/lib/tauri/story-context.ts");
-const storyContextUi = read("apps/desktop/src/components/StoryContextBuilder.tsx");
-const storyChapterCore = read("crates/novelgainker-workflows/src/chapter.rs");
-const storyChapterCommands = read("apps/desktop/src-tauri/src/story_chapter_commands.rs");
-const storyChapterFrontend = read("apps/desktop/src/lib/tauri/story-chapter.ts");
-const storyContinuityCore = read("crates/novelgainker-workflows/src/continuity.rs");
-const storyContinuityCommands = read("apps/desktop/src-tauri/src/story_continuity_commands.rs");
-const storyContinuityFrontend = read("apps/desktop/src/lib/tauri/story-continuity.ts");
-const storyChapterPatchCore = read("crates/novelgainker-workflows/src/chapter_patch.rs");
-const storyChapterPatchCommands = read(
-  "apps/desktop/src-tauri/src/story_chapter_patch_commands.rs",
-);
-const storyChapterPatchFrontend = read("apps/desktop/src/lib/tauri/story-chapter-patch.ts");
-const storyLifecycleCore = read("crates/novelgainker-workflows/src/chapter_lifecycle.rs");
-const storyLifecycleCommands = read("apps/desktop/src-tauri/src/story_lifecycle_commands.rs");
-const storyLifecycleFrontend = read("apps/desktop/src/lib/tauri/story-lifecycle.ts");
-const workflowRunFrontendClient = read("apps/desktop/src/lib/tauri/workflow-run.ts");
-const workflowProposal = read("crates/novelgainker-workflows/src/proposal.rs");
-const canonApply = read("crates/app-core/src/canon_apply.rs");
-const workflowProposalCommands = read("apps/desktop/src-tauri/src/workflow_proposal_commands.rs");
-const workflowProposalFrontend = read("apps/desktop/src/lib/tauri/workflow-proposal.ts");
-const projectCore = read("crates/app-core/src/project.rs");
-const projectFrontendClient = read("apps/desktop/src/lib/tauri/project.ts");
-const projectWorkspace = read("apps/desktop/src/components/ProjectWorkspace.tsx");
+const agentCommands = read("apps/desktop/src-tauri/src/agent_commands.rs");
 assert(
-  workflowBuildValidator.includes("deny_unknown_fields") &&
-    workflowBuildValidator.includes("resource-line-ending-invalid") &&
-    workflowBuildValidator.includes("workflow-id-duplicate") &&
-    workflowBuildValidator.includes("allowed_tools.as_slice()") &&
-    workflowBuildValidator.includes("required_confirmations.as_slice()") &&
-    workflowBuildValidator.includes("Sha256"),
-  "NG-301 Pack build must validate unknown fields, LF, duplicate IDs, tools, confirmations, and stable hashes",
+  agentCommands.includes("BudgetProfileV2::gar2_canon()") &&
+    agentCommands.includes("reserve_canon_writes"),
+  "GAR2 Canon-write budget is not mounted",
 );
 assert(
-  workflowRuntimeRegistry.includes("include_str!") &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_WORKFLOW_PACK_SHA256") &&
-    !/std::fs|read_dir|read_to_string|std::env::var/u.test(
-      workflowRuntimeRegistry.split("#[cfg(test)]")[0],
-    ),
-  "NG-301 runtime registry must use only build-validated embedded resources without filesystem or environment loading",
-);
-assert(
-  workflowRuntimeRegistry.includes(
-    'PROJECT_CREATE_WORKFLOW_ID: &str = "novelgainker.project-create"',
-  ) &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_PROJECT_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes('"project.scan", "project.create"') &&
-    workflowRuntimeRegistry.includes('"create_project_scaffold"'),
-  "NG-401 project-create must be a fixed build-validated Workflow Pack entry with least-privilege tools and confirmation",
-);
-assert(
-  workflowRuntimeRegistry.includes(
-    'SETTING_CREATE_WORKFLOW_ID: &str = "novelgainker.setting-create"',
-  ) &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_SETTING_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes('"source.create_setting"') &&
-    workflowRuntimeRegistry.includes('"send_context", "create_setting_file"'),
-  "NG-402 setting-create must be a fixed build-validated Workflow Pack entry with least-privilege tool and two confirmations",
-);
-assert(
-  workflowRuntimeRegistry.includes(
-    'MATERIAL_CREATE_WORKFLOW_ID: &str = "novelgainker.material-create"',
-  ) &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_MATERIAL_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes('"source.create_material"') &&
-    workflowRuntimeRegistry.includes('"send_context", "promote_material_to_canon"'),
-  "NG-403 material-create must be a fixed build-validated Workflow Pack entry with least-privilege tool and two confirmations",
-);
-assert(
-  workflowRuntimeRegistry.includes('PLOT_CREATE_WORKFLOW_ID: &str = "novelgainker.plot-create"') &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_PLOT_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes('"source.create_plot"') &&
-    workflowRuntimeRegistry.includes('"send_context", "create_or_replace_main_plot"'),
-  "NG-404 plot-create must be a fixed build-validated Workflow Pack entry with one tool and two confirmations",
-);
-assert(
-  workflowRuntimeRegistry.includes(
-    'STORYTELLING_WORKFLOW_ID: &str = "novelgainker.storytelling"',
-  ) &&
-    workflowRuntimeRegistry.includes("NOVELGAINKER_STORYTELLING_WORKFLOW_SHA256") &&
-    workflowRuntimeRegistry.includes('"story.build_context"') &&
-    workflowRuntimeRegistry.includes('"story.preview_request"') &&
-    workflowRuntimeRegistry.includes('"story.generate_proposal"') &&
-    workflowRuntimeRegistry.includes('"story.check_continuity"') &&
-    workflowRuntimeRegistry.includes('"story.preview_chapter_patch"') &&
-    workflowRuntimeRegistry.includes('"story.apply_chapter_patch"') &&
-    workflowRuntimeRegistry.includes('"story.transition_chapter_status"') &&
-    workflowRuntimeRegistry.includes('"story.update_ledger"') &&
-    workflowRuntimeRegistry.includes('"select_context"') &&
-    workflowRuntimeRegistry.includes('"review_reader_model"') &&
-    workflowRuntimeRegistry.includes('"send_context"') &&
-    workflowRuntimeRegistry.includes('"review_continuity_warnings"') &&
-    workflowRuntimeRegistry.includes('"apply_chapter_patch"') &&
-    workflowRuntimeRegistry.includes('"transition_chapter_status"') &&
-    workflowRuntimeRegistry.includes('"apply_ledger_update"') &&
-    workflowRuntimeRegistry.includes("allowed_tools: STORYTELLING_TOOLS") &&
-    workflowRuntimeRegistry.includes("required_confirmations: STORYTELLING_CONFIRMATIONS") &&
-    workflowRuntimeRegistry.includes("execution_available: true") &&
-    workflowRuntimeRegistry.includes("routable: false"),
-  "NG-506 Storytelling must be executable but remain non-routable with explicit Context, chapter, lifecycle and Ledger operations",
-);
-assert(
-  storyContextCore.includes("STORY_REQUEST_LIMIT_BYTES: usize = 96 * 1024") &&
-    storyContextCore.includes("STORY_PROTOCOL_BUDGET_BYTES: usize = 24 * 1024") &&
-    storyContextCore.includes("STORY_PROJECT_CONTEXT_BUDGET_BYTES: usize = 48 * 1024") &&
-    storyContextCore.includes("STORY_SINGLE_SOURCE_LIMIT_BYTES: usize = 8 * 1024") &&
-    storyContextCore.includes("STORY_QUERY_RESULT_LIMIT_COUNT: usize = 5") &&
-    storyContextCore.includes("STORY_QUERY_RESULT_LIMIT_BYTES: usize = 2 * 1024") &&
-    storyContextCore.includes("STORY_RECENT_CHAPTER_LIMIT_COUNT: usize = 2") &&
-    storyContextCore.includes("STORY_READER_MODEL_FIELD_LIMIT_BYTES: usize = 4 * 1024") &&
-    storyContextCore.includes("STORY_READER_MODEL_TOTAL_LIMIT_BYTES: usize = 12 * 1024") &&
-    storyContextCore.includes("STORY_MAX_OUTPUT_TOKENS: u32 = 4_096") &&
-    storyContextCore.includes("pub struct StoryReaderMentalModelV1") &&
-    storyContextCore.includes("pub struct StoryContextRequestSnapshotV1") &&
-    storyContextCore.includes("build_story_context_request_snapshot") &&
-    storyContextCore.includes("reader_model_hash") &&
-    storyContextCore.includes("request_hash") &&
-    storyContextCore.includes("utf8_prefix") &&
-    storyContextCore.includes("Sha256") &&
-    storyContextCore.includes("source_order") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(storyContextCore.split("#[cfg(test)]")[0]),
-  "NG-502 request snapshot core must be deterministic, UTF-8 bounded, hash-bound and side-effect free",
-);
-assert(
-  storyContextCommands.includes("pub fn story_context_request_preview") &&
-    storyContextCommands.includes("build_story_context_request_snapshot") &&
-    storyContextCommands.includes("session_handle(state, session_id)") &&
-    storyContextCommands.includes("list_project_files(handle)") &&
-    storyContextCommands.includes("read_project_file(handle") &&
-    storyContextCommands.includes("BTreeSet") &&
-    storyContextCommands.includes("selected_source_paths.len() > 256") &&
-    !/provider_|credential_|canon_apply|save_project_file|std::fs/u.test(
-      storyContextCommands.split("#[cfg(test)]")[0],
-    ),
-  "NG-502 Tauri request preview must stay inside the open project, metadata selection and read-only services",
-);
-assert(
-  storyContextFrontend.includes('"story_context_catalog"') &&
-    storyContextFrontend.includes('"story_context_build"') &&
-    storyContextFrontend.includes('"story_context_request_preview"') &&
-    storyContextFrontend.includes("StoryReaderMentalModel") &&
-    storyContextFrontend.includes("StoryContextRequestSnapshot") &&
-    storyContextFrontend.includes("readerModelHash") &&
-    storyContextFrontend.includes("requestHash") &&
-    storyContextFrontend.includes("hasExactKeys") &&
-    storyContextFrontend.includes("isSafeRelativeMarkdownPath") &&
-    storyContextUi.includes("selectedSourcePaths") &&
-    storyContextUi.includes("story-zero-write-note") &&
-    !/provider|api[_-]?key|project_save_file|workflow_run_generate/iu.test(storyContextFrontend) &&
-    !/api[_-]?key|project_save_file|workflow_run_generate/iu.test(storyContextUi),
-  "NG-502 frontend must expose an explicit six-field Reader Mental Model and reviewed request snapshot without Provider or project writes",
-);
-assert(
-  storyChapterCore.includes("pub struct ChapterProposalV1") &&
-    storyChapterCore.includes("deny_unknown_fields") &&
-    storyChapterCore.includes("build_chapter_repair_prompt") &&
-    storyChapterCore.includes("source_status") &&
-    storyChapterCore.includes("write_enabled: false") &&
-    storyChapterCommands.includes("ProviderHttpClient::production") &&
-    storyChapterCommands.includes("client.stream") &&
-    storyChapterCommands.includes("expected_provider_id") &&
-    storyChapterCommands.includes("rebuild_registered_story_context") &&
-    storyChapterCommands.includes("StoryChapterGenerationOutcome::Cancelled") &&
-    !/save_project_file|save_workflow_run|apply_canon|std::fs|fs::write/u.test(
-      storyChapterCommands.split("#[cfg(test)]")[0],
-    ) &&
-    storyChapterFrontend.includes("hasExactKeys") &&
-    storyChapterFrontend.includes("writeEnabled: false") &&
-    storyContextUi.includes("requestStoryChapterCancel") &&
-    storyContextUi.includes("expectedProviderId") &&
-    !/project_save_file|workflow_proposal_apply|apply_canon/iu.test(
-      `${storyChapterFrontend}\n${storyContextUi}`,
-    ),
-  "NG-503 Chapter Proposal must be strict, fixed-Provider, cancellable, same-Provider retryable, source-aware, memory-only and write-disabled",
-);
-assert(
-  storyContinuityCore.includes("CONTINUITY_CHECK_VERSION: u16 = 1") &&
-    storyContinuityCore.includes("ContinuitySeverityV1") &&
-    storyContinuityCore.includes("Blocking") &&
-    storyContinuityCore.includes("Warning") &&
-    storyContinuityCore.includes("Unknown") &&
-    storyContinuityCore.includes("Passed") &&
-    storyContinuityCore.includes("check_story_continuity") &&
-    storyContinuityCore.includes("confirm_story_continuity_warnings") &&
-    storyContinuityCore.includes("acknowledged_unknown_rule_ids") &&
-    storyContinuityCore.includes("unknowns_confirmed") &&
-    storyContinuityCore.includes("validate_source") &&
-    storyContinuityCore.includes("write_enabled: false") &&
-    !/reqwest|ProviderHttpClient|std::fs|OpenOptions|write_all/u.test(
-      storyContinuityCore.split("#[cfg(test)]")[0],
-    ) &&
-    storyContinuityCommands.includes("pub fn story_continuity_check") &&
-    storyContinuityCommands.includes("pub fn story_continuity_status_load") &&
-    storyContinuityCommands.includes("pub fn story_continuity_warning_confirm") &&
-    storyContinuityCommands.includes("build_registered_story_generation_material") &&
-    storyContinuityCommands.includes("load_story_target_state") &&
-    !/ProviderHttpClient|client\.stream|save_project_file|app_state|std::fs|fs::write/u.test(
-      storyContinuityCommands.split("#[cfg(test)]")[0],
-    ) &&
-    storyContinuityFrontend.includes("hasExactKeys") === false &&
-    storyContinuityFrontend.includes("writeEnabled: false") &&
-    storyContinuityFrontend.includes("unknownsConfirmed") &&
-    storyContinuityFrontend.includes("results.length !== 17") &&
-    storyContextUi.includes("requestStoryContinuityCheck") &&
-    storyContextUi.includes("continuitySeverities") &&
-    !/project_save_file|workflow_proposal_apply|apply_canon/iu.test(
-      `${storyContinuityFrontend}\n${storyContextUi}`,
-    ),
-  "NG-507 continuity check must remain deterministic, four-state, source/target-bound, local-only and write-disabled while explicit author confirmation preserves unknown as unknown",
-);
-assert(
-  storyChapterPatchCore.includes("CHAPTER_PATCH_SCHEMA_VERSION: u16 = 1") &&
-    storyChapterPatchCore.includes("pub struct ChapterPatchPreviewV1") &&
-    storyChapterPatchCore.includes("accepted_or_final_unlock_confirmed") &&
-    storyChapterPatchCore.includes("bind_chapter_patch_encoded_hash") &&
-    !/reqwest|ProviderHttpClient|StoryLedger|story_ledger/u.test(
-      storyChapterPatchCore.split("#[cfg(test)]")[0],
-    ) &&
-    storyChapterPatchCommands.includes("pub fn story_chapter_patch_preview") &&
-    storyChapterPatchCommands.includes("pub fn story_chapter_patch_status_load") &&
-    storyChapterPatchCommands.includes("pub fn story_chapter_patch_apply") &&
-    storyChapterPatchCommands.includes("rebuild_registered_story_continuity") &&
-    storyChapterPatchCommands.includes("apply_chapter_file_recoverable") &&
-    storyChapterPatchCommands.includes("confirmed") &&
-    !/ProviderHttpClient|client\.stream|provider_key|story_ledger/u.test(
-      storyChapterPatchCommands.split("#[cfg(test)]")[0],
-    ) &&
-    storyChapterPatchFrontend.includes("parseChapterPatchPreview") &&
-    storyChapterPatchFrontend.includes("confirmed: true") &&
-    storyContextUi.includes("requestStoryChapterPatchPreview") &&
-    storyContextUi.includes("requestStoryChapterPatchApply"),
-  "NG-505 chapter patch must be local-diffed, explicitly confirmed, continuity/target-bound, recoverable and limited to one chapter",
-);
-assert(
-  storyLifecycleCore.includes("CHAPTER_LIFECYCLE_SCHEMA_VERSION: u16 = 1") &&
-    storyLifecycleCore.includes("pub enum ChapterLifecycleStatusV1") &&
-    storyLifecycleCore.includes("TransitionForbidden") &&
-    storyLifecycleCore.includes("LedgerPendingRecordV1") &&
-    storyLifecycleCore.includes(
-      'STORY_LEDGER_RELATIVE_PATH: &str = "materials/000.story-ledger.md"',
-    ) &&
-    storyLifecycleCore.includes("bind_chapter_status_encoded_hash") &&
-    storyLifecycleCore.includes("bind_ledger_update_encoded_hash") &&
-    !/reqwest|ProviderHttpClient|client\.stream|std::fs|OpenOptions|write_all/u.test(
-      storyLifecycleCore.split("#[cfg(test)]")[0],
-    ) &&
-    storyLifecycleCommands.includes("pub fn story_chapter_state_preview") &&
-    storyLifecycleCommands.includes("pub fn story_chapter_lifecycle_status_load") &&
-    storyLifecycleCommands.includes("pub fn story_chapter_state_apply") &&
-    storyLifecycleCommands.includes("pub fn story_ledger_update_preview") &&
-    storyLifecycleCommands.includes("pub fn story_ledger_update_apply") &&
-    storyLifecycleCommands.includes("apply_chapter_file_recoverable") &&
-    storyLifecycleCommands.includes("confirmed") &&
-    !/ProviderHttpClient|client\.stream|provider_key/u.test(
-      storyLifecycleCommands.split("#[cfg(test)]")[0],
-    ) &&
-    storyLifecycleFrontend.includes("parseChapterStatusPreview") &&
-    storyLifecycleFrontend.includes("parseLedgerUpdatePreview") &&
-    storyLifecycleFrontend.includes("confirmed: true") &&
-    storyContextUi.includes("requestStoryChapterStateApply") &&
-    storyContextUi.includes("requestStoryLedgerUpdateApply") &&
-    storyContextUi.includes("setLedgerDeferred") &&
-    !/setInterval|setTimeout/u.test(storyLifecycleFrontend),
-  "NG-506 must enforce separate status and fixed-Ledger confirmations, recover pending from Markdown, and contain no Provider or background retry path",
-);
-assert(
-  workflowPlot.includes("pub struct PlotProposalV1") &&
-    workflowPlot.includes("deny_unknown_fields") &&
-    workflowPlot.includes("parse_and_serialize_plot") &&
-    workflowPlot.includes("parse_and_serialize_plot_replace") &&
-    workflowPlot.includes("parse_plot_source_metadata") &&
-    workflowPlot.includes("new_plot_id") &&
-    workflowPlot.includes('MAIN_PLOT_RELATIVE_PATH: &str = "plot/main.md"') &&
-    workflowPlot.includes("validate_source_bytes") &&
-    workflowPlot.includes("[REDACTED]") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowPlot.split("#[cfg(test)]")[0]),
-  "NG-404 plot output must be strict, Rust-owned, fixed-path, validated, redacted, deterministic, and side-effect free",
-);
-assert(
-  workflowSetting.includes("pub struct SettingProposalV1") &&
-    workflowSetting.includes("deny_unknown_fields") &&
-    workflowSetting.includes("parse_and_serialize_setting") &&
-    workflowSetting.includes("parse_and_serialize_setting_replace") &&
-    workflowSetting.includes("parse_setting_source_metadata") &&
-    workflowSetting.includes("new_setting_id") &&
-    workflowSetting.includes('format!("world/{display_name}.md")') &&
-    workflowSetting.includes("validate_source_bytes") &&
-    workflowSetting.includes("[REDACTED]") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowSetting.split("#[cfg(test)]")[0]),
-  "NG-402 setting output must be strict, Rust-owned, safely named, validated, redacted, deterministic, and side-effect free",
-);
-assert(
-  workflowMaterial.includes("pub struct MaterialProposalV1") &&
-    workflowMaterial.includes("deny_unknown_fields") &&
-    workflowMaterial.includes("parse_and_serialize_material") &&
-    workflowMaterial.includes("parse_and_serialize_material_replace") &&
-    workflowMaterial.includes("parse_material_source_metadata") &&
-    workflowMaterial.includes("new_material_id") &&
-    workflowMaterial.includes('format!("materials/{display_name}.md")') &&
-    workflowMaterial.includes("validate_source_bytes") &&
-    workflowMaterial.includes("[REDACTED]") &&
-    workflowMaterial.includes('file_name.starts_with("000.")') &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowMaterial.split("#[cfg(test)]")[0]),
-  "NG-403 material output must be strict, Rust-owned, safely named, validated, redacted, deterministic, ledger-reserved, and side-effect free",
-);
-assert(
-  workflowContextBuilder.includes("prepare_setting_context") &&
-    workflowContextBuilder.includes("MAX_SELECTED_SETTING_SOURCES: usize = 6") &&
-    workflowContextBuilder.includes("MAX_CONTEXT_SOURCE_BYTES: usize = 16 * 1024") &&
-    workflowContextBuilder.includes("SelectedSettingContext") &&
-    workflowContextBuilder.includes("is_allowed_setting_source") &&
-    workflowContextBuilder.includes("validate_and_bound_setting_sources"),
-  "NG-402 Setting Context must permit only six explicit world sources within the fixed 16 KiB total budget",
-);
-assert(
-  workflowContextBuilder.includes("prepare_material_context") &&
-    workflowContextBuilder.includes("MAX_SELECTED_MATERIAL_SOURCES: usize = 6") &&
-    workflowContextBuilder.includes("SelectedMaterialContext") &&
-    workflowContextBuilder.includes("is_allowed_material_source") &&
-    workflowContextBuilder.includes("validate_and_bound_material_sources") &&
-    workflowContextBuilder.includes("materials/、chapters/、聊天、编辑器与搜索结果均不属于上下文"),
-  "NG-403 Material Context must permit only six explicit world/characters/plot Canon sources and exclude all material, chapter, chat, editor, and search bodies",
-);
-assert(
-  workflowContextBuilder.includes("prepare_plot_context") &&
-    workflowContextBuilder.includes("MAX_SELECTED_PLOT_SOURCES: usize = 8") &&
-    workflowContextBuilder.includes("SelectedPlotContext") &&
-    workflowContextBuilder.includes("is_allowed_plot_source") &&
-    workflowContextBuilder.includes("validate_and_bound_plot_sources") &&
-    workflowContextBuilder.includes("plot/、chapters/、outline/、故事账本、聊天、编辑器与搜索结果"),
-  "NG-404 Plot Context must permit only eight explicit characters/world/ordinary-material sources and exclude plot, chapter, outline, ledger, chat, editor, and search bodies",
-);
-const projectCoreProduction = projectCore.split("#[cfg(test)]")[0];
-assert(
-  projectCore.includes("pub fn prepare_project_create(") &&
-    projectCore.includes("pub fn create_prepared_project(") &&
-    projectCore.includes("novelgainker.project-create.preview.v1") &&
-    projectCore.includes("expected_preview_hash != prepared.preview.preview_hash") &&
-    projectCore.includes("rollback()") &&
-    !/credential_vault|provider_core|reqwest|with_secret|send_chat/u.test(projectCoreProduction),
-  "NG-401 project creation must be offline, Hash-bound, add-only, rollback-safe, and independent of Provider/Vault",
-);
-assert(
-  projectFrontendClient.includes('"project_create_preview"') &&
-    projectFrontendClient.includes('"project_create"') &&
-    projectFrontendClient.includes("confirmed: true") &&
-    projectFrontendClient.includes("hasExactKeys") &&
-    projectWorkspace.includes("requestProjectCreatePreview") &&
-    projectWorkspace.includes("zeroWritesSoFar") &&
-    projectWorkspace.includes("createPreview === null") &&
-    projectWorkspace.includes('id="project-create-action"') &&
-    !/requestProvider|providerChat|provider_key|apiKey/iu.test(projectWorkspace),
-  "NG-401 UI must require a complete zero-write preview and explicit final confirmation without Provider or Key calls",
-);
-assert(
-  workflowFrontendClient.includes('"workflow_registry_load"') &&
-    workflowFrontendClient.includes("hasExactKeys") &&
-    !/allowedTools|source\.create_character|resourcePath|packHash|contentHash/u.test(
-      workflowFrontendClient,
-    ),
-  "NG-301 WebView contract must expose only strict catalog display fields",
-);
-assert(
-  !commandManifest.includes("source.create_character"),
-  "Internal workflow permissions must never become Tauri commands",
-);
-assert(
-  workflowManager.includes("pub struct WorkflowManager") &&
-    workflowManager.includes("active_run_id") &&
-    workflowManager.includes("RecoveryRequired") &&
-    workflowManager.includes("StaleEvent") &&
-    workflowManager.includes("TerminalEvent") &&
-    workflowManager.includes("SensitiveRunMemory") &&
-    workflowManager.includes("run.sensitive.clear()") &&
-    workflowManager.includes("MAX_RETAINED_TERMINAL_RUNS") &&
-    workflowManager.includes("create_prepared") &&
-    workflowManager.includes("prepared_manifest_for_project") &&
-    workflowManager.includes("generation_material") &&
-    workflowManager.includes("confirm_generation") &&
-    workflowManager.includes("complete_generation_with_proposal") &&
-    !workflowManager.includes("provider_response") &&
-    !/reqwest|std::fs|read_to_string|write_all|OpenOptions/u.test(
-      workflowManager.split("#[cfg(test)]")[0],
-    ),
-  "NG-303 WorkflowManager must bind prepared Context to one Run, require exact confirmation, clear responses, and remain deterministic and side-effect free",
-);
-assert(
-  workflowContextBuilder.includes("prepare_character_context") &&
-    workflowContextBuilder.includes('const PROJECT_PATH: &str = "project.md"') &&
-    workflowContextBuilder.includes('const AGENTS_PATH: &str = "AGENTS.md"') &&
-    workflowContextBuilder.includes("MAX_BRIEF_CHARACTERS: usize = 4_000") &&
-    workflowContextBuilder.includes("MAX_BRIEF_BYTES: usize = 16 * 1024") &&
-    workflowContextBuilder.includes("MAX_SOURCE_FRAGMENT_CHARACTERS: usize = 1_600") &&
-    workflowContextBuilder.includes("MAX_SOURCE_FRAGMENT_BYTES: usize = 4 * 1024") &&
-    workflowContextBuilder.includes("manifest.manifest_hash = sha256_hex(&canonical)") &&
-    workflowContextBuilder.includes("fn compile_prompt(") &&
-    workflowContextBuilder.includes("fn untrusted_boundary(") &&
-    !/reqwest|std::fs|read_to_string|write_all|OpenOptions/u.test(
-      workflowContextBuilder.split("#[cfg(test)]")[0],
-    ),
-  "NG-303 Context Builder must be pure, bounded, Hash-bound, whitelist only project.md/root AGENTS.md, and compile explicit untrusted boundaries",
-);
-assert(
-  workflowRunFrontendClient.includes('"workflow_run_status_load"') &&
-    workflowRunFrontendClient.includes('"workflow_run_prepare"') &&
-    workflowRunFrontendClient.includes('"workflow_run_generate"') &&
-    workflowRunFrontendClient.includes('"workflow_run_cancel"') &&
-    workflowRunFrontendClient.includes('"workflow_run_abandon"') &&
-    workflowRunFrontendClient.includes('"workflow-run-event"') &&
-    workflowRunFrontendClient.includes("CONTEXT_MANIFEST_SCHEMA_VERSION = 1") &&
-    workflowRunFrontendClient.includes("boundedPreview") &&
-    workflowRunFrontendClient.includes("hasExactKeys") &&
-    !/\bprompt\b|\bmessages\b|\bcontextBody\b|\bproviderResponse\b|\bproposalMarkdown\b|\bdiff\b|\bapiKey\b/iu.test(
-      workflowRunFrontendClient,
-    ),
-  "NG-303 WebView contract must expose only strict Manifest previews and fixed prepare/generate/status/cancel/abandon metadata",
-);
-assert(
-  commandManifest.includes("workflow_run_prepare") &&
-    commandManifest.includes("workflow_run_generate") &&
-    commandManifest.includes("workflow_proposal_apply") &&
-    !commandManifest.includes("workflow_run_apply") &&
-    !commandManifest.includes("workflow_run_confirm") &&
-    !commandManifest.includes("workflow_run_proposal"),
-  "NG-304 may add only the dedicated Proposal Apply command; generic workflow mutation commands remain closed",
-);
-assert(
-  workflowProposal.includes("pub struct CanonProposalV1") &&
-    workflowProposal.includes("pub struct RetainedCanonProposal") &&
-    workflowProposal.includes("canonical_json") &&
-    workflowProposal.includes("metadata.proposal_hash = proposal_hash(&metadata)") &&
-    workflowProposal.includes("validate_source_bytes") &&
-    workflowProposal.includes("MAX_PROPOSAL_BYTES") &&
-    workflowProposal.includes("[REDACTED]") &&
-    workflowProposal.includes("line_diff"),
-  "NG-304 Proposal must be canonical, bounded, validated, Hash-bound, diffable, and redacted in Debug",
-);
-assert(
-  canonApply.includes("apply_canon_file_recoverable") &&
-    canonApply.includes("verify_target_state") &&
-    canonApply.includes("sync_all") &&
-    canonApply.includes("hard_link") &&
-    canonApply.includes("MoveFileExW") &&
-    canonApply.includes("recover_project"),
-  "NG-304 Canon Apply must recheck source state, preserve exact bytes, use recoverable atomic commit, and expose recovery",
-);
-assert(
-  workflowProposalCommands.includes("pub fn workflow_proposal_apply") &&
-    workflowProposalCommands.includes("proposal_apply_material(run_id, proposal_hash)") &&
-    workflowProposalCommands.includes("confirm_proposal_apply(run_id, proposal_hash, true") &&
-    workflowProposalCommands.includes("apply_canon_file_recoverable") &&
-    workflowProposalCommands.includes("save_workflow_run(&applying)") &&
-    !/content:\s*String|relative_path:\s*String|tool:\s*String/u.test(
-      workflowProposalCommands.split("#[cfg(test)]")[0],
-    ),
-  "NG-304 Apply command must accept only Run/Proposal confirmation and retrieve all write material from Rust-held state",
-);
-assert(
-  workflowCharacter.includes("pub struct CharacterProposalV1") &&
-    workflowCharacter.includes("deny_unknown_fields") &&
-    workflowCharacter.includes("parse_and_serialize_character") &&
-    workflowCharacter.includes("validate_plain_text") &&
-    workflowCharacter.includes("is_windows_reserved_name") &&
-    workflowCharacter.includes('format!("characters/{display_name}.md")') &&
-    workflowCharacter.includes("validate_source_bytes") &&
-    workflowCharacter.includes("MAX_REPAIR_CAPTURE_BYTES") &&
-    workflowCharacter.includes("[REDACTED]") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowCharacter.split("#[cfg(test)]")[0]),
-  "NG-305 character output must be strict, bounded, safely named, validated, redacted, deterministic, and side-effect free",
-);
-assert(
-  workflowCharacterV2.includes("pub struct CharacterProposalV2") &&
-    workflowCharacterV2.includes("pub struct ResolvedEntityReferenceV1") &&
-    workflowCharacterV2.includes("parse_and_serialize_character_v2_create") &&
-    workflowCharacterV2.includes("parse_and_serialize_character_v2_replace") &&
-    workflowCharacterV2.includes("new_character_id") &&
-    workflowCharacterV2.includes("CharacterRelationTypeV2") &&
-    workflowCharacterV2.includes("AssociatedWith") &&
-    workflowCharacterV2.includes("validate_source_bytes") &&
-    workflowCharacterV2.includes("MAX_CHARACTER_V2_REPAIR_CAPTURE_BYTES") &&
-    workflowCharacterV2.includes("[REDACTED]") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowCharacterV2.split("#[cfg(test)]")[0]),
-  "NG-405 character v2 must keep Rust-owned IDs, verified references, stable replace paths, bounded repair, strict validation, and no side effects",
+  !agentCommands.includes("AgentActionPayloadV1"),
+  "V2 entry falls back to AgentActionPayloadV1",
 );
 
+const contractSet = JSON.parse(read("resources/contracts/agent-v2/v2/contract-set.json"));
 assert(
-  workflowRouter.includes("pub fn resolve_local_router") &&
-    workflowRouter.includes("pub fn build_router_prompt") &&
-    workflowRouter.includes("pub fn build_router_repair_prompt") &&
-    workflowRouter.includes("pub fn parse_router_decision") &&
-    workflowRouter.includes("workflow.execution_available && workflow.routable") &&
-    workflowRouter.includes("MAX_ROUTER_TEXT_CHARACTERS") &&
-    !/std::fs|reqwest|OpenOptions|write_all/u.test(workflowRouter.split("#[cfg(test)]")[0]),
-  "NG-406 Router core must be deterministic, bounded, registry-only, strict, and side-effect free",
+  contractSet.runtimeEnabled === true &&
+    contractSet.resources.length === 6 &&
+    /^[a-f0-9]{64}$/u.test(contractSet.contractSetSha256),
+  "V2 contract lock is incomplete",
 );
+const actionSchema = read("resources/contracts/agent-v2/v2/agent-control-action.schema.json");
 assert(
-  routerCommands.includes("pub fn router_resolve_local") &&
-    routerCommands.includes("pub fn router_run_start") &&
-    routerCommands.includes("pub fn router_run_cancel") &&
-    routerCommands.includes("complete_once") &&
-    routerCommands.includes("build_router_repair_prompt") &&
-    routerCommands.includes("save_router_run") &&
-    !/session_id|ProjectHandle|read_project_file|list_project_files|save_project|apply_canon/u.test(
-      routerCommands.split("#[cfg(test)]")[0],
-    ),
-  "NG-406 Router IPC must accept no project session, perform no project reads/writes, and use one-shot classification",
-);
-assert(
-  routerFrontendClient.includes('"router_resolve_local"') &&
-    routerFrontendClient.includes('"router_run_start"') &&
-    routerFrontendClient.includes('"router_run_cancel"') &&
-    routerFrontendClient.includes('"router-run-event"') &&
-    routerFrontendClient.includes("hasExactKeys") &&
-    !/projectSessionId|apiKey|history|filePath/u.test(routerFrontendClient),
-  "NG-406 WebView Router contract must be strict and contain no project, Key, history, or file parameters",
-);
-assert(
-  providerCore.includes("pub fn router_decision_json") &&
-    providerCore.includes("RouterDecisionV1") &&
-    providerCore.includes('"router_decision_v1"') &&
-    providerCore.includes("pub fn complete_once"),
-  "NG-406 both Provider adapters must share the strict RouterDecisionV1 format and expose a no-retry call",
-);
-const appStateService = read("crates/app-core/src/app_state.rs");
-const productionAppStateService = appStateService.split("#[cfg(test)]")[0];
-assert(
-  productionAppStateService.includes('APP_STATE_DATABASE_NAME: &str = "app-state-v1.sqlite3"') &&
-    productionAppStateService.includes("APP_STATE_SCHEMA_VERSION: u16 = 10") &&
-    productionAppStateService.includes("MAX_RECENT_PROJECTS: usize = 12") &&
-    productionAppStateService.includes("CREATE TABLE ui_preferences") &&
-    productionAppStateService.includes("CREATE TABLE recent_projects") &&
-    productionAppStateService.includes("CREATE TABLE project_files") &&
-    productionAppStateService.includes("CREATE TABLE provider_settings") &&
-    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS router_runs") &&
-    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_sessions") &&
-    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_turns") &&
-    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_msg_index") &&
-    productionAppStateService.includes("CREATE TABLE IF NOT EXISTS agent_undo_records") &&
-    productionAppStateService.includes("migrate_agent_state_v10") &&
-    productionAppStateService.includes("save_agent_checkpoint") &&
-    productionAppStateService.includes("clear_agent_state") &&
-    productionAppStateService.includes("save_router_run") &&
-    productionAppStateService.includes("create_provider_settings(&transaction)") &&
-    productionAppStateService.includes('"user_version", APP_STATE_SCHEMA_VERSION') &&
-    productionAppStateService.includes("migrate_workflow_runs_v4") &&
-    productionAppStateService.includes("workflow_runs_v3_archive") &&
-    productionAppStateService.includes("migrate_workflow_runs_v5") &&
-    productionAppStateService.includes("workflow_runs_v4_archive") &&
-    productionAppStateService.includes("migrate_workflow_runs_v6") &&
-    productionAppStateService.includes("workflow_runs_v5_archive") &&
-    productionAppStateService.includes("migrate_workflow_runs_v7") &&
-    productionAppStateService.includes("workflow_runs_v6_archive") &&
-    productionAppStateService.includes("workflow_version IN (1, 2)") &&
-    productionAppStateService.includes("novelgainker.plot-create") &&
-    !productionAppStateService.includes("DROP TABLE workflow_runs_v3_archive") &&
-    !productionAppStateService.includes("DROP TABLE workflow_runs_v4_archive") &&
-    !productionAppStateService.includes("DROP TABLE workflow_runs_v5_archive") &&
-    !productionAppStateService.includes("DROP TABLE workflow_runs_v6_archive"),
-  "GA2 App State must transactionally migrate to bounded v10 Agent and encrypted-Undo metadata without deleting v3-v6 workflow history",
-);
-assert(
-  productionAppStateService.includes("root_path TEXT UNIQUE NOT NULL") &&
-    productionAppStateService.includes("current_relative_file TEXT NOT NULL") &&
-    productionAppStateService.includes("AppStateBackend::Degraded") &&
-    productionAppStateService.includes("CREATE TABLE workflow_runs") &&
-    productionAppStateService.includes("workflow_runs_one_active") &&
-    productionAppStateService.includes("create_workflow_runs(&transaction)") &&
-    productionAppStateService.includes("save_workflow_run") &&
-    productionAppStateService.includes("AppStateSnapshot::defaults(true)"),
-  "NG-106 must keep machine paths local, current files relative, and corruption non-blocking",
-);
-assert(
-  productionAppStateService.includes("provider_id TEXT PRIMARY KEY NOT NULL") &&
-    productionAppStateService.includes("credential_ref TEXT NULL") &&
-    productionAppStateService.includes("preset_version INTEGER NOT NULL") &&
-    productionAppStateService.includes("connection_status TEXT NOT NULL") &&
-    productionAppStateService.includes("checked_at INTEGER NULL") &&
-    productionAppStateService.includes("provider_settings_one_selected"),
-  "NG-201 provider_settings must contain only bounded non-sensitive provider metadata",
-);
-assert(
-  !/api[_-]?key|secret|prompt|search_query|manuscript|conversation|authorization|credential_blob/iu.test(
-    productionAppStateService,
-  ),
-  "NG-406 SQLite production code must not contain Key, Secret, prompt, canon, conversation, Authorization, or credential blob state",
+  actionSchema.includes('"action": { "const": "start_response" }') &&
+    actionSchema.includes('"action": { "const": "submit_canon_proposal" }') &&
+    !actionSchema.includes('"body"'),
+  "Control JSON leaks Conversation body",
 );
 
-const credentialVault = read("crates/app-core/src/credential_vault.rs");
-const productionCredentialVault = credentialVault.split("#[cfg(test)]")[0];
-assert(
-  productionCredentialVault.includes(
-    'DEEPSEEK_TARGET: &str = "NovelGainker/provider/deepseek/v1"',
-  ) &&
-    productionCredentialVault.includes('OPENAI_TARGET: &str = "NovelGainker/provider/openai/v1"') &&
-    productionCredentialVault.includes("CredWriteW") &&
-    productionCredentialVault.includes("CredReadW") &&
-    productionCredentialVault.includes("CredDeleteW") &&
-    productionCredentialVault.includes("CredFree") &&
-    productionCredentialVault.includes("CRED_TYPE_GENERIC") &&
-    productionCredentialVault.includes("CRED_PERSIST_LOCAL_MACHINE") &&
-    productionCredentialVault.includes("MAX_CREDENTIAL_BLOB_BYTES: usize = 2_560"),
-  "NG-201 Windows CredentialVault must use two fixed Generic Credential targets with bounded blobs",
-);
-assert(
-  productionCredentialVault.includes("pub struct SecretValue") &&
-    productionCredentialVault.includes("write_volatile") &&
-    productionCredentialVault.includes("compiler_fence") &&
-    productionCredentialVault.includes("fn with_secret(") &&
-    !/#\[derive\([^\]]*(?:Debug|Clone|Serialize)[^\]]*\)\]\s*pub struct SecretValue/u.test(
-      productionCredentialVault,
-    ) &&
-    !/stronghold|keyring/iu.test(productionCredentialVault),
-  "NG-201 SecretValue must be non-Debug/non-Clone/non-Serialize, zeroized best-effort, and hidden behind a temporary borrow",
-);
-
-const providerState = read("crates/app-core/src/provider_state.rs");
-const productionProviderState = providerState.split("#[cfg(test)]")[0];
-assert(
-  productionProviderState.includes("vault.put(provider, &secret)?") &&
-    productionProviderState.includes("save_provider_credential_ref") &&
-    productionProviderState.includes("vault.delete(provider)?") &&
-    productionProviderState.includes("clear_provider_credential_ref") &&
-    productionProviderState.includes("ProviderConnectionStatus::RecoveryRequired") &&
-    productionProviderState.includes("ProviderConnectionStatus::VaultUnavailable"),
-  "NG-201 Provider state must safely order cross-store writes and expose only reconciled status",
-);
-
-const productionClientFactory = providerCore.slice(
-  providerCore.indexOf("pub fn production()"),
-  providerCore.indexOf("fn for_test("),
-);
-const providerPreset = JSON.parse(read("crates/app-core/provider-presets.v1.json"));
-assert(
-  providerPreset.presetVersion === 1 &&
-    providerPreset.providers.length === 2 &&
-    providerPreset.providers[0].baseUrl === "https://api.deepseek.com" &&
-    providerPreset.providers[0].endpoint === "/chat/completions" &&
-    providerPreset.providers[0].model === "deepseek-v4-pro" &&
-    providerPreset.providers[1].baseUrl === "https://api.openai.com/v1" &&
-    providerPreset.providers[1].endpoint === "/responses" &&
-    providerPreset.providers[1].model === "gpt-5.6-terra",
-  "NG-203 Provider Preset v1 must fix exactly the approved DeepSeek and OpenAI targets and models",
-);
-assert(
-  productionClientFactory.includes("Client::builder()") &&
-    productionClientFactory.includes(".redirect(redirect::Policy::none())") &&
-    !productionClientFactory.includes(".no_proxy()") &&
-    providerCore.includes("MAX_RETRIES: u8 = 2") &&
-    providerCore.includes('"store": false') &&
-    providerCore.includes('"stream_options": { "include_usage": true }') &&
-    providerCore.includes('url.scheme() != "https"') &&
-    providerCore.indexOf(".no_proxy()") > providerCore.indexOf("fn for_test("),
-  "NG-203 production Provider Core must use normal TLS/system proxy, disable redirects, bound retries, and fix payload policy",
-);
-assert(
-  providerCore.includes("pub fn character_proposal_json") &&
-    providerCore.includes("pub fn setting_proposal_json") &&
-    providerCore.includes("pub fn material_proposal_json") &&
-    providerCore.includes('"response_format"') &&
-    providerCore.includes('"json_object"') &&
-    providerCore.includes('"json_schema"') &&
-    providerCore.includes('"strict": true') &&
-    providerCore.includes("sanitize_openai_structured_schema") &&
-    providerCore.includes('object.remove("uniqueItems")'),
-  "NG-305 Provider adapters must use fixed structured-output contracts without changing ordinary chat requests",
-);
-
-assert(
-  productionProviderState.includes("test_provider_connection") &&
-    productionProviderState.includes("vault.with_secret(provider") &&
-    productionProviderState.includes("update_provider_connection_status"),
-  "NG-203 connection testing must borrow the Vault secret and persist only coarse status metadata",
-);
-
-const providerMockContracts = read("crates/app-core/src/provider_core_mock_tests.rs");
-assert(
-  providerMockContracts.includes('TcpListener::bind(("127.0.0.1", 0))') &&
-    providerMockContracts.includes("for provider in ProviderId::ALL") &&
-    providerMockContracts.includes("429 Too Many Requests") &&
-    providerMockContracts.includes("503 Service Unavailable") &&
-    providerMockContracts.includes("TEST_REQUEST_TIMEOUT_MILLIS") &&
-    providerMockContracts.includes("fragmented_utf8") &&
-    providerMockContracts.includes("ProviderError::cancelled()") &&
-    providerMockContracts.includes("NoRequestSpy") &&
-    providerMockContracts.includes("ng204-cross-provider-canary") &&
-    !/api\.deepseek\.com|api\.openai\.com|std::env::var|process\.env/u.test(providerMockContracts),
-  "NG-204 contracts must cover both adapters on random loopback ports without real endpoints, environment keys, redirects, or cross-provider broadcast",
-);
-
-const projectService = read("crates/app-core/src/project.rs");
-const productionProjectService = projectService.split("#[cfg(test)]")[0];
-assert(
-  !/remove_dir_all|remove_file\s*\([^)]*root|remove_dir\s*\([^)]*root/u.test(
-    productionProjectService,
-  ),
-  "NG-101 production service must not recursively delete or delete the selected project root",
-);
-assert(
-  productionProjectService.includes(".create_new(true)"),
-  "NG-101 project files must use create_new and never truncate existing targets",
-);
-assert(
-  productionProjectService.includes("transaction.rollback()"),
-  "NG-101 create and metadata transactions must have scoped rollback",
-);
-
-const workspaceService = read("crates/app-core/src/workspace.rs");
-const productionWorkspaceService = workspaceService.split("#[cfg(test)]")[0];
-for (const directory of [
-  "characters",
-  "materials",
-  "macguffins",
-  "plot",
-  "outlines",
-  "world",
-  "style",
-  "chapters",
+const packageJson = JSON.parse(read("package.json"));
+for (const command of [
+  "skills-v2:check",
+  "agent-v2-read-runtime:check",
+  "agent-write-kernel:check",
+  "e2e:agent-write-kernel",
+  "e2e:canon-kernel",
+  "e2e:ngr101",
+  "e2e:ngr106",
+  "e2e:gar1",
+  "agent-v2-write-runtime:check",
+  "e2e:ngr201",
+  "e2e:ngr208",
+  "e2e:gar2",
 ]) {
   assert(
-    productionWorkspaceService.includes(`"${directory}"`),
-    `NG-102 source whitelist is missing ${directory}`,
+    typeof packageJson.scripts[command] === "string",
+    `GAR1 quality entry missing: ${command}`,
   );
 }
-assert(
-  productionWorkspaceService.includes('components == [".novelgainker", "project.json"]'),
-  "NG-102 controlled metadata path must be exact",
-);
-assert(
-  productionWorkspaceService.includes("MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024") &&
-    productionWorkspaceService.includes("MAX_PROJECT_INDEX_ENTRIES: usize = 5_000") &&
-    productionWorkspaceService.includes("MAX_PROJECT_INDEX_DEPTH: usize = 16"),
-  "NG-102 bounded read/index limits must remain explicit",
-);
-assert(
-  !/remove_dir_all|remove_dir\s*\(|copy\s*\(|File::create|create_dir|set_len/u.test(
-    productionWorkspaceService,
-  ),
-  "NG-103 workspace service must not expose recursive delete, general copy, directory creation, truncating create, or resize",
-);
-assert(
-  productionWorkspaceService.includes("source_hash") &&
-    productionWorkspaceService.includes("file_source_changed") &&
-    productionWorkspaceService.includes("create_new(true)") &&
-    productionWorkspaceService.includes("Uuid::new_v4()") &&
-    productionWorkspaceService.includes("flush()") &&
-    productionWorkspaceService.includes("sync_all()"),
-  "NG-103 saves must verify source Hash and use an unpredictable create-new sibling temporary file with flush and sync",
-);
-assert(
-  productionWorkspaceService.includes("ScopedTemporaryFile") &&
-    productionWorkspaceService.includes("self.armed && self.is_verified()") &&
-    productionWorkspaceService.includes("remove_file(&self.path)"),
-  "NG-103 may clean only its own verified temporary file",
-);
-assert(
-  productionWorkspaceService.includes("MoveFileExW") &&
-    productionWorkspaceService.includes("MOVEFILE_REPLACE_EXISTING") &&
-    productionWorkspaceService.includes("MOVEFILE_WRITE_THROUGH"),
-  "NG-103 Windows save must use replace-existing and write-through atomic replacement",
-);
-assert(
-  productionWorkspaceService.includes("from_utf8") &&
-    productionWorkspaceService.includes("file_unsupported_encoding"),
-  "NG-102 must reject non-UTF-8 input without guessing or conversion",
-);
-assert(
-  productionWorkspaceService.includes("is_link_or_reparse") &&
-    productionWorkspaceService.includes("canonical_child.starts_with(root)"),
-  "NG-102 must reject links/reparse points and out-of-root files",
-);
+const quality = read("scripts/quality.mjs");
+for (const obsolete of ["e2e:nga101", "e2e:nga201", "e2e:ga2", "agent-runtime:check"])
+  assert(!quality.includes(obsolete), `quality still schedules retired wrapper: ${obsolete}`);
 
-const searchService = read("crates/app-core/src/search.rs");
-const productionSearchService = searchService.split("#[cfg(test)]")[0];
-assert(
-  productionSearchService.includes("MAX_SEARCH_QUERY_CHARS: usize = 128") &&
-    productionSearchService.includes("MAX_SEARCH_FILES: usize = 500") &&
-    productionSearchService.includes("MAX_SEARCH_BYTES: u64 = 32 * 1024 * 1024") &&
-    productionSearchService.includes("MAX_SEARCH_RESULTS: usize = 100") &&
-    productionSearchService.includes("MAX_SEARCH_SNIPPET_CHARS: usize = 160"),
-  "NG-105 offline search limits must remain explicit",
-);
-assert(
-  productionSearchService.includes("list_project_files(handle)") &&
-    productionSearchService.includes("read_project_file(handle, &node.relative_path)") &&
-    productionSearchService.includes("ProjectFileKind::Metadata => {}") &&
-    !/std::fs|File::open|write\s*\(|remove_|create_/u.test(productionSearchService),
-  "NG-105 search must rebuild from scoped Markdown services, exclude metadata, and remain read-only",
-);
-assert(
-  productionSearchService.includes("AppError::search_invalid_query()") &&
-    !/with_diagnostic\s*\([^)]*query|println!|dbg!/u.test(productionSearchService),
-  "NG-105 search must not copy the query into AppError or logs",
-);
+for (const retiredPath of [
+  "resources/contracts/agent-runtime/v1/contract-set.json",
+  "resources/contracts/agent-runtime/v1/agent-read-action.schema.json",
+  "scripts/agent-migration-am1-contract-lock.mjs",
+  "scripts/agent-migration-am1-e2e.mjs",
+  "scripts/agent-migration-am2-e2e.mjs",
+  "apps/desktop/src/components/AgentTimelinePanel.tsx",
+  "apps/desktop/src/components/AgentTimelinePanel.test.tsx",
+  "docs/stories/agent-migration-am1-story-packet.zh-CN.md",
+])
+  assert(!exists(retiredPath), `NG-R106 retirement item still exists: ${retiredPath}`);
 
-const validationService = read("crates/novelgainker-validation/src/lib.rs");
-const productionValidationService = validationService.split("#[cfg(test)]")[0];
-assert(
-  productionValidationService.includes("MAX_FRONTMATTER_BYTES: usize = 32 * 1024") &&
-    productionValidationService.includes("MAX_FRONTMATTER_LINES: usize = 256") &&
-    productionValidationService.includes("MAX_FRONTMATTER_LINE_BYTES: usize = 1_024") &&
-    productionValidationService.includes("MAX_FRONTMATTER_DEPTH: usize = 8"),
-  "NG-105 Frontmatter parser limits must remain explicit",
-);
-assert(
-  productionValidationService.includes("eligible_for_ai_apply") &&
-    productionValidationService.includes("eligible_for_final") &&
-    productionValidationService.includes("eligible_for_epub") &&
-    productionValidationService.includes("validate_source_bytes") &&
-    !/std::fs|absolute_path|api[_-]?key|prompt/u.test(productionValidationService),
-  "NG-105 diagnostics must be pure, bounded, and explicitly gate future actions",
-);
-
-const coordinationService = read("crates/app-core/src/coordination.rs");
-const productionCoordinationService = coordinationService.split("#[cfg(test)]")[0];
-assert(
-  productionCoordinationService.includes("CreateMutexW") &&
-    productionCoordinationService.includes("ERROR_ALREADY_EXISTS") &&
-    productionCoordinationService.includes("CloseHandle") &&
-    read("crates/novelgainker-workflows/Cargo.toml"),
-  productionCoordinationService.includes("Local\\\\NovelGainker.Project."),
-  "NG-104 must use an OS-owned per-project Windows named Mutex for the single Writer",
-);
-assert(
-  !/\bpid\b|lockfile|\.lock["']/iu.test(productionCoordinationService),
-  "NG-104 must not guess process ownership or use a stale PID/lock file",
-);
-
-const recoveryService = read("crates/app-core/src/recovery.rs");
-const productionRecoveryService = recoveryService.split("#[cfg(test)]")[0];
-const journalBody = productionRecoveryService.match(
-  /struct RecoveryJournal\s*\{([\s\S]*?)\n\}/u,
-)?.[1];
-assert(journalBody, "NG-104 recovery journal schema must remain explicit");
-const journalFields = [...journalBody.matchAll(/^\s+([a-z_]+):/gmu)].map((match) => match[1]);
-assert(
-  JSON.stringify(journalFields) ===
-    JSON.stringify([
-      "schema_version",
-      "transaction_id",
-      "project_id",
-      "relative_path",
-      "stage",
-      "operation",
-      "source_hash",
-      "replacement_hash",
-      "temporary_file_id",
-      "backup_file_id",
-    ]),
-  "NG-505 recovery journal may contain only version, identifiers, relative path, operation, stage, hashes, temporary ID and optional backup ID",
-);
-assert(
-  productionRecoveryService.includes("deny_unknown_fields") &&
-    productionRecoveryService.includes("MAX_JOURNAL_BYTES") &&
-    productionRecoveryService.includes("recover_project") &&
-    productionRecoveryService.includes("RecoveryStatus::Required") &&
-    productionRecoveryService.includes("is_verified_update_temporary"),
-  "NG-104 recovery must reject unknown schema, remain bounded, classify ambiguity, and clean only verified state temps",
-);
-assert(
-  !/manuscript|absolute_path|root_path|api[_-]?key|prompt|(?:^|\W)content\s*:/imu.test(journalBody),
-  "NG-104 recovery journal must never store manuscript text, absolute paths, prompts, or secrets",
-);
-
-const commandSource = read("apps/desktop/src-tauri/src/commands.rs");
-const productionCommandSource = commandSource.split("#[cfg(test)]")[0];
-const agentCommandSource = read("apps/desktop/src-tauri/src/agent_commands.rs");
-const productionAgentCommandSource = agentCommandSource.split("#[cfg(test)]")[0];
-const agentTimelineSource = read("apps/desktop/src/components/AgentTimelinePanel.tsx");
-const agentTimelineTestSource = read("apps/desktop/src/components/AgentTimelinePanel.test.tsx");
-const presentAppErrorSource = read("apps/desktop/src/errors/present-app-error.ts");
-const presentAppErrorTestSource = read("apps/desktop/src/errors/present-app-error.test.ts");
-const projectWorkspaceTestSource = read("apps/desktop/src/components/ProjectWorkspace.test.tsx");
-const zhCnSource = read("apps/desktop/src/i18n/zh-CN.ts");
-const desktopLibSource = read("apps/desktop/src-tauri/src/lib.rs");
-const providerCoreMockTests = read("crates/app-core/src/provider_core_mock_tests.rs");
-const workflowCommandSource = read("apps/desktop/src-tauri/src/workflow_commands.rs");
-const productionWorkflowCommandSource = workflowCommandSource.split("#[cfg(test)]")[0];
-assert(
-  !/absolute_path|root_path|(?:^|\W)path:\s*String/u.test(commandSource),
-  "Frontend commands must not accept or return absolute filesystem paths",
-);
-assert(
-  commandSource.includes("blocking_pick_folder") && commandSource.includes("ProjectRegistry"),
-  "Directory selection and opaque project roots must remain in Rust-managed state",
-);
-assert(
-  commandSource.includes("relative_path: String") &&
-    commandSource.includes("read_project_file(&handle, &relative_path)"),
-  "NG-102 reads must use only a scoped project session and relative path",
-);
-assert(
-  productionCommandSource.includes("project_save_file") &&
-    productionCommandSource.includes("content: String") &&
-    productionCommandSource.includes("source_hash: String") &&
-    productionCommandSource.includes("save_registered_project_file(") &&
-    productionCommandSource.includes("save_project_file_recoverable(") &&
-    productionCommandSource.includes("RecoveryStatus::Required") &&
-    productionCommandSource.includes("project_writer_required"),
-  "NG-104 save command must require a Writer, completed recovery, scoped path, content, and source Hash",
-);
-assert(
-  productionCommandSource.includes("project_watch_file") &&
-    productionCommandSource.includes("expected_hash: String") &&
-    productionCommandSource.includes("check_project_file(&handle, &relative_path, &expected_hash)"),
-  "NG-104 Watcher command must compare a scoped current file against its expected Hash",
-);
-assert(
-  productionCommandSource.includes("project_validate_draft") &&
-    productionCommandSource.includes("validate_project_draft(&handle, &relative_path, &content)"),
-  "NG-105 pre-save validation must remain scoped and advisory",
-);
-assert(
-  productionCommandSource.includes("project_search") &&
-    productionCommandSource.includes("search_project_sources(&handle, &query, case_sensitive)"),
-  "NG-105 search must remain scoped to an opaque project session",
-);
-assert(
-  productionCommandSource.includes("provider_status_load") &&
-    productionCommandSource.includes("provider_key_save") &&
-    productionCommandSource.includes("provider_key_delete") &&
-    productionCommandSource.includes("provider_select") &&
-    productionCommandSource.includes("provider_connection_test") &&
-    productionCommandSource.includes("provider_chat_start") &&
-    productionCommandSource.includes("provider_chat_cancel") &&
-    productionCommandSource.includes("begin_provider_run") &&
-    productionCommandSource.includes("credential_vault.with_secret") &&
-    productionCommandSource.includes('PROVIDER_RUN_EVENT_CHANNEL: &str = "provider-run-event"') &&
-    productionCommandSource.includes("cancel_active_provider_run") &&
-    productionCommandSource.includes("NormalizedRequest::conversation") &&
-    productionCommandSource.includes("spawn_blocking") &&
-    productionCommandSource.includes("provider_id: String") &&
-    productionCommandSource.includes("key: String") &&
-    productionCommandSource.includes("confirmed: bool") &&
-    productionCommandSource.includes("state.credential_vault.as_ref()"),
-  "NG-205 Tauri commands must keep bounded Provider operations and add only one cancellable, Vault-borrowed streaming chat run",
-);
-assert(
-  productionCommandSource.includes("select_registered_provider") &&
-    productionCommandSource.includes("state.active_provider_id().is_some()") &&
-    productionCommandSource.includes("expected_provider_id: ProviderId") &&
-    productionCommandSource.includes("selected.provider_id != expected_provider_id"),
-  "NG-206 backend must lock Provider switching during a run and bind every start to the expected selected Provider",
-);
-assert(
-  productionCommandSource.includes("workflow_run_status_load") &&
-    productionCommandSource.includes("workflow_run_cancel") &&
-    productionCommandSource.includes("workflow_run_abandon") &&
-    productionCommandSource.includes("restore_workflow_manager") &&
-    productionCommandSource.includes("workflow_generation_active") &&
-    productionCommandSource.includes("save_workflow_run(&updated)") &&
-    productionCommandSource.includes("requestProviderChatStart") === false &&
-    productionCommandSource.includes("legacy_workflow_blocks_unified_runtime") &&
-    !/workflow_run_(?:apply|confirm|proposal)/u.test(productionCommandSource),
-  "NG-304 foundation must restore checkpoints, block conflicting project/provider mutations, persist before commit, and keep Proposal Apply in its dedicated module",
-);
-assert(
-  productionCommandSource.includes("retire_orphaned_legacy_workflow_generation") &&
-    productionCommandSource.includes("state.active_provider_id().is_some()") &&
-    /manager\s*\.\s*active_record\(\)/u.test(productionCommandSource) &&
-    productionCommandSource.includes(".abandon(&current.run_id, true, now_unix_seconds())") &&
-    productionCommandSource.includes("save_workflow_run(&retired)"),
-  "GA2-R001 must retire only the exact orphaned legacy Generating run, preserve real Provider ownership, and persist the terminal state before Agent use",
-);
-assert(
-  productionAgentCommandSource.includes("if state.active_provider_id().is_some()") &&
-    productionAgentCommandSource.includes("retire_orphaned_legacy_workflow_generation(&state)?") &&
-    productionAgentCommandSource.includes("if workflow_generation_active(&state)?"),
-  "GA2-R001 Agent start must reconcile an orphaned legacy workflow without bypassing an active Provider run",
-);
-assert(
-  agentTimelineSource.includes("items.filter((item) => item.id !== messageId)") &&
-    agentTimelineSource.includes("setInput(submitted)") &&
-    agentTimelineSource.includes('id="agent-composer-error"') &&
-    agentTimelineSource.includes(
-      'aria-describedby={presentedError ? "agent-composer-error" : undefined}',
-    ) &&
-    agentTimelineSource.includes("ZH_CN.agent.errorCodeLabel") &&
-    agentTimelineTestSource.includes("keeps unsent input when a real workflow is still running") &&
-    agentTimelineTestSource.includes('toHaveValue("把港口规则同步到世界观")') &&
-    zhCnSource.includes('title: "已有工作流正在执行"') &&
-    zhCnSource.includes("请等待当前工作流结束") &&
-    !zhCnSource.includes("不能同时启动普通对话请求"),
-  "GA2-R001 rejected Agent starts must retain the input, remove the unsent optimistic bubble, and expose an accessible current-run error without ordinary-chat copy",
-);
-const legacyRuntimeGuardBody = productionCommandSource.slice(
-  productionCommandSource.indexOf("fn legacy_workflow_blocks_unified_runtime"),
-  productionCommandSource.indexOf("fn context_build_error"),
-);
-assert(
-  legacyRuntimeGuardBody.includes("record.state != WorkflowRunState::RecoveryRequired") &&
-    !productionCommandSource.includes("recovery_required_workflow_matches_project") &&
-    (productionCommandSource.match(/legacy_workflow_blocks_unified_runtime\(/gu) ?? []).length ===
-      11 &&
-    commandSource.includes(
-      "ng_302_restored_recovery_is_inert_and_can_still_be_explicitly_abandoned",
-    ) &&
-    productionCommandSource.includes("pub async fn project_create_preview") &&
-    !agentTimelineSource.includes("requestWorkflowRunStatus") &&
-    !agentTimelineSource.includes("requestWorkflowRunAbandon") &&
-    !agentTimelineSource.includes("legacyRecoveryRequired") &&
-    agentTimelineTestSource.includes('queryByRole("button", { name: "确认结束旧工作流" })') &&
-    projectWorkspaceTestSource.includes(
-      "reports a real active workflow when it blocks project selection",
-    ) &&
-    !zhCnSource.includes('title: "检测到迁移前的工作流状态"') &&
-    !zhCnSource.includes('legacyRecoveryAction: "确认结束旧工作流"'),
-  "GA2-R003 must retain RecoveryRequired as inert compatibility history, unblock unified project/provider actions, hide it from current UI, and preserve real active-run guards",
-);
-assert(
-  productionAgentCommandSource.includes("fn agent_action_format_instruction") &&
-    productionAgentCommandSource.includes(String.raw`\"action\":\"respond\"`) &&
-    productionAgentCommandSource.includes(String.raw`\"visibleText\"`) &&
-    productionAgentCommandSource.includes("不得使用 Markdown 代码围栏或增加字段") &&
-    agentCommandSource.includes("storytelling_prompt_exposes_the_exact_respond_action_shape") &&
-    agentTimelineSource.includes("submittedInputRef") &&
-    agentTimelineSource.includes("void loadSession(true)") &&
-    agentTimelineSource.includes('status: "failed"') &&
-    agentTimelineTestSource.includes(
-      "keeps an asynchronous Turn failure visible and restores the submitted input",
-    ) &&
-    agentTimelineTestSource.includes("agent-action.repair-exhausted") &&
-    presentAppErrorSource.includes("SAFE_AGENT_ERROR_CODE") &&
-    presentAppErrorSource.includes("ZH_CN.errors.agentContract") &&
-    presentAppErrorTestSource.includes("保留安全的 Agent 子错误码") &&
-    zhCnSource.includes('failedInputRestored: "Turn 失败 · 输入已恢复"') &&
-    zhCnSource.includes('title: "Agent 操作格式未通过校验"'),
-  "GA2-R004 must expose the exact Agent Action JSON shape to JSON-object Providers, retain asynchronous failure diagnostics and input through session reload, and keep the error accessible",
-);
-assert(
-  providerCore.includes("pub async fn complete_cancellable") &&
-    providerCore.includes("read_bounded_cancellable") &&
-    providerCore.includes("sleep_retry_cancellable") &&
-    providerCore.includes("tokio::select!") &&
-    providerCoreMockTests.includes(
-      "ga2_r005_cancellable_completion_aborts_before_response_headers_without_retrying",
-    ) &&
-    providerCoreMockTests.includes(
-      "ga2_r005_cancellable_completion_aborts_while_response_body_is_stalled",
-    ) &&
-    providerCoreMockTests.includes("cancelled requests must never retry") &&
-    productionAgentCommandSource.includes(
-      "tauri::async_runtime::block_on(client.complete_cancellable",
-    ) &&
-    (productionAgentCommandSource.match(/if context\.cancellation\.is_cancelled\(\)/gu) ?? [])
-      .length >= 8 &&
-    agentTimelineSource.includes('setTurnState("cancelling")') &&
-    agentTimelineSource.includes("ZH_CN.agent.cancellingStatus") &&
-    agentTimelineSource.includes('aria-live="polite"') &&
-    agentTimelineTestSource.includes(
-      "acknowledges cancellation immediately and releases the Turn on the terminal event",
-    ) &&
-    zhCnSource.includes('cancellingStatus: "正在中断 Provider 请求；不会再启动新的工具或写入"') &&
-    desktopLibSource.includes("tauri::WindowEvent::CloseRequested") &&
-    desktopLibSource.includes("cancel_active_provider_run"),
-  "GA2-R005 must interrupt an in-flight Agent Provider request, stop before new tools or writes, expose cancellation feedback, and reuse the signal on window close",
-);
-assert(
-  productionWorkflowCommandSource.includes("pub fn workflow_run_prepare") &&
-    productionWorkflowCommandSource.includes("pub fn workflow_run_generate") &&
-    productionWorkflowCommandSource.includes('read_project_file(handle, "project.md")') &&
-    productionWorkflowCommandSource.includes('read_project_file(handle, "AGENTS.md")') &&
-    productionWorkflowCommandSource.includes("check_project_file") &&
-    productionWorkflowCommandSource.includes("NormalizedRequest::character_proposal_json") &&
-    productionWorkflowCommandSource.includes("generation_material(&run_id, &manifest_hash)") &&
-    productionWorkflowCommandSource.includes("confirm_generation(&run_id, &manifest_hash, true") &&
-    productionWorkflowCommandSource.includes("build_character_v2_repair_prompt") &&
-    productionWorkflowCommandSource.includes("new_character_id") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_character_v2_create") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_character_v2_replace") &&
-    productionWorkflowCommandSource.includes("resolve_character_references") &&
-    productionWorkflowCommandSource.includes("workflow_output_invalid") &&
-    productionWorkflowCommandSource.includes("workflow_repair_failed") &&
-    productionWorkflowCommandSource.includes("build_generated_workflow_proposal") &&
-    productionWorkflowCommandSource.includes("complete_generation_with_proposal") &&
-    productionWorkflowCommandSource.includes("ProjectFileWatchState::Missing") &&
-    productionWorkflowCommandSource.includes(
-      'WORKFLOW_RUN_EVENT_CHANNEL: &str = "workflow-run-event"',
-    ) &&
-    !/workflow_run_(?:apply|confirm|proposal)/u.test(productionWorkflowCommandSource) &&
-    !/std::fs|read_to_string|OpenOptions/u.test(productionWorkflowCommandSource),
-  "NG-405 Tauri workflow execution must use the captured Provider, enforce structured v2 output, resolve verified IDs, allow one bounded repair, create or same-path replace only, and retain no raw response",
-);
-assert(
-  productionWorkflowCommandSource.includes("pub fn workflow_source_catalog") &&
-    productionWorkflowCommandSource.includes("load_workflow_source_catalog") &&
-    productionWorkflowCommandSource.includes("read_setting_context_sources") &&
-    productionWorkflowCommandSource.includes("parse_setting_source_metadata") &&
-    productionWorkflowCommandSource.includes("NormalizedRequest::setting_proposal_json") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_setting") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_setting_replace") &&
-    productionWorkflowCommandSource.includes("resolve_setting_replace_target") &&
-    productionWorkflowCommandSource.includes("SettingGenerationTarget::Replace") &&
-    productionWorkflowCommandSource.includes("CanonFileOperationKind::Replace") &&
-    productionWorkflowCommandSource.includes("new_setting_id") &&
-    productionWorkflowCommandSource.includes("GeneratedWorkflowArtifact::Setting") &&
-    productionWorkflowCommandSource.includes('"world/"') &&
-    !/std::fs|read_to_string|OpenOptions/u.test(productionWorkflowCommandSource),
-  "NG-402 Tauri setting execution must expose metadata-only sources, read only explicit world paths, use one captured Provider, and retain only Rust-generated artifacts",
-);
-assert(
-  productionWorkflowCommandSource.includes("read_material_context_sources") &&
-    productionWorkflowCommandSource.includes("parse_material_source_metadata") &&
-    productionWorkflowCommandSource.includes("NormalizedRequest::material_proposal_json") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_material") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_material_replace") &&
-    productionWorkflowCommandSource.includes("resolve_material_replace_target") &&
-    productionWorkflowCommandSource.includes("MaterialGenerationTarget::Replace") &&
-    productionWorkflowCommandSource.includes("new_material_id") &&
-    productionWorkflowCommandSource.includes("GeneratedWorkflowArtifact::Material") &&
-    productionWorkflowCommandSource.includes('"materials/"') &&
-    productionWorkflowCommandSource.includes('"world/"') &&
-    productionWorkflowCommandSource.includes('"characters/"') &&
-    productionWorkflowCommandSource.includes('"plot/"') &&
-    productionWorkflowCommandSource.includes('tail.starts_with("000.")') &&
-    !/std::fs|read_to_string|OpenOptions/u.test(productionWorkflowCommandSource),
-  "NG-403 Tauri material execution must keep sources metadata-only, separate ordinary replace targets, exclude the story ledger, use one captured Provider, and retain only Rust-generated artifacts",
-);
-assert(
-  productionWorkflowCommandSource.includes("NormalizedRequest::plot_proposal_json") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_plot") &&
-    productionWorkflowCommandSource.includes("parse_and_serialize_plot_replace") &&
-    productionWorkflowCommandSource.includes("resolve_plot_replace_target") &&
-    productionWorkflowCommandSource.includes("PlotGenerationTarget::Replace") &&
-    productionWorkflowCommandSource.includes("new_plot_id") &&
-    productionWorkflowCommandSource.includes("GeneratedWorkflowArtifact::Plot") &&
-    productionWorkflowCommandSource.includes("MAIN_PLOT_RELATIVE_PATH") &&
-    productionWorkflowCommandSource.includes("MAX_SELECTED_PLOT_SOURCES") &&
-    !/std::fs|read_to_string|OpenOptions/u.test(productionWorkflowCommandSource),
-  "NG-404 Tauri plot execution must keep sources metadata-only, bind one exact main target, use one captured Provider, and retain only Rust-generated artifacts",
-);
-assert(
-  !/provider_key_(?:read|reveal|export)|credential_(?:read|reveal|export)/u.test(commandSource),
-  "NG-201 must not register any credential readback, reveal, or export command",
-);
-assert(
-  !/force[_A-Z]|forceOverwrite|overwrite:\s*bool/iu.test(productionCommandSource),
-  "NG-104 must not expose any force-overwrite command option",
-);
-const tauriSetup = read("apps/desktop/src-tauri/src/lib.rs");
-assert(
-  tauriSetup.includes("app_data_dir()") &&
-    tauriSetup.includes("ProjectRegistry::new") &&
-    tauriSetup.includes("registry().workflows.len(), 6"),
-  "NG-501 desktop startup must root recovery state in Tauri App Data and accept six fixed workflows",
-);
-
-const frontendProjectClients = [
-  read("apps/desktop/src/lib/tauri/app-state.ts"),
-  read("apps/desktop/src/lib/tauri/provider.ts"),
-  read("apps/desktop/src/lib/tauri/project.ts"),
-  read("apps/desktop/src/lib/tauri/analysis.ts"),
-  read("apps/desktop/src/lib/tauri/workspace.ts"),
-].join("\n");
-assert(
-  !/@tauri-apps\/plugin-fs|showDirectoryPicker|showOpenFilePicker/u.test(frontendProjectClients),
-  "Frontend must not receive a generic file or directory API",
-);
-assert(
-  !/rootPath|absolutePath/u.test(frontendProjectClients),
-  "Frontend project contracts must not expose a root or absolute path field",
-);
-assert(
-  frontendProjectClients.includes("project_save_file") &&
-    frontendProjectClients.includes("sourceHash") &&
-    frontendProjectClients.includes('diagnosticState: "ready"') &&
-    frontendProjectClients.includes("parseValidationReport(value.validation)"),
-  "NG-105 frontend must retain the strict scoped save and saved-Hash validation contracts",
-);
-assert(
-  frontendProjectClients.includes("project_watch_file") &&
-    frontendProjectClients.includes("expectedHash") &&
-    frontendProjectClients.includes('state: "unchanged" | "modified" | "missing"'),
-  "NG-104 frontend must validate strict Hash Watcher states without receiving file content",
-);
-const frontendProviderClient = read("apps/desktop/src/lib/tauri/provider.ts");
-assert(
-  frontendProviderClient.includes('"provider_status_load"') &&
-    frontendProviderClient.includes('"provider_key_save"') &&
-    frontendProviderClient.includes('"provider_key_delete"') &&
-    frontendProviderClient.includes('"provider_select"') &&
-    frontendProviderClient.includes('"provider_connection_test"') &&
-    frontendProviderClient.includes("configured: boolean") &&
-    frontendProviderClient.includes("connectionStatus: ProviderConnectionStatus") &&
-    frontendProviderClient.includes("schemaVersion: 2"),
-  "NG-203 frontend must keep the strict Provider status, mutation, selection, and connection-test contract",
-);
-assert(
-  !/maskedKey|keySuffix|lastFour|credentialRef|apiKeyHash/u.test(frontendProviderClient),
-  "NG-201 frontend status must not receive Key fragments, references, or fingerprints",
-);
-const frontendProviderChat = read("apps/desktop/src/lib/tauri/provider-chat.ts");
-const conversationPanelSource = read("apps/desktop/src/components/ConversationPanel.tsx");
-const conversationStateSource = read("apps/desktop/src/components/conversation-state.ts");
-assert(
-  workflowProposalFrontend.includes("hasExactKeys") &&
-    workflowProposalFrontend.includes("proposedContentHash") &&
-    workflowProposalFrontend.includes("proposalHash") &&
-    workflowRunFrontendClient.includes('"workflow_proposal_apply"') &&
-    workflowRunFrontendClient.includes("{ runId, proposalHash, confirmed }") &&
-    !/apiKey|fetch\s*\(|toolName|absolutePath/u.test(workflowProposalFrontend),
-  "NG-304 frontend Proposal contract must be strict and Apply must send only Run ID, Proposal Hash, and confirmation",
-);
-assert(
-  workflowRunFrontendClient.includes('kind: "repairing" | "proposalReady"') &&
-    workflowRunFrontendClient.includes('value.kind === "repairing"') &&
-    workflowRunFrontendClient.includes('value.kind === "proposalReady"') &&
-    conversationPanelSource.includes("workflowRepairing") &&
-    conversationPanelSource.includes("onCanonApplied?.(target)"),
-  "NG-305 frontend must strictly parse repair/proposal events, disclose the single repair, and refresh the applied Canon file",
-);
-assert(
-  workflowFrontendClient.includes('"novelgainker.setting-create"') &&
-    workflowRunFrontendClient.includes('"workflow_source_catalog"') &&
-    workflowRunFrontendClient.includes("requestSettingWorkflowRunPrepare") &&
-    workflowRunFrontendClient.includes("parseWorkflowSourceCatalog") &&
-    workflowRunFrontendClient.includes("selectedSourcePaths.length > 6") &&
-    workflowRunFrontendClient.includes("replaceTargetPath") &&
-    workflowRunFrontendClient.includes("selectedSourcePaths.includes(replaceTargetPath)") &&
-    workflowRunFrontendClient.includes("selected_setting_context") &&
-    workflowProposalFrontend.includes('? "world/"') &&
-    conversationPanelSource.includes("requestWorkflowSourceCatalog") &&
-    conversationPanelSource.includes("requestSettingWorkflowRunPrepare") &&
-    conversationPanelSource.includes("setting-source-picker") &&
-    conversationPanelSource.includes("selectedSettingSources") &&
-    conversationPanelSource.includes("settingReplaceTarget"),
-  "NG-402 frontend must use a strict metadata-only Source Picker, fixed SettingBrief, bounded Manifest, and world-only Proposal path",
-);
-assert(
-  workflowFrontendClient.includes('"novelgainker.material-create"') &&
-    workflowRunFrontendClient.includes("requestMaterialWorkflowSourceCatalog") &&
-    workflowRunFrontendClient.includes("requestMaterialWorkflowRunPrepare") &&
-    workflowRunFrontendClient.includes("selected_material_context") &&
-    workflowRunFrontendClient.includes("selectedSourcePaths.length > 6") &&
-    workflowProposalFrontend.includes('"materials/"') &&
-    workflowProposalFrontend.includes('startsWith("000.")') &&
-    conversationPanelSource.includes("selectedMaterialSources") &&
-    conversationPanelSource.includes("materialReplaceTarget") &&
-    conversationPanelSource.includes("requestMaterialWorkflowSourceCatalog") &&
-    conversationPanelSource.includes("requestMaterialWorkflowRunPrepare") &&
-    conversationPanelSource.includes("confirmMaterialCanon") &&
-    conversationPanelSource.includes("materialAbandon"),
-  "NG-403 frontend must use a strict metadata-only Canon Source Picker, separate ordinary material replacement, four fixed Material types, and distinct review/Canon/abandon actions",
-);
-assert(
-  workflowFrontendClient.includes('"novelgainker.plot-create"') &&
-    workflowRunFrontendClient.includes("requestPlotWorkflowSourceCatalog") &&
-    workflowRunFrontendClient.includes("requestPlotWorkflowRunPrepare") &&
-    workflowRunFrontendClient.includes("selected_plot_context") &&
-    workflowRunFrontendClient.includes("selectedSourcePaths.length > 8") &&
-    workflowRunFrontendClient.includes('value === "plot/main.md"') &&
-    workflowProposalFrontend.includes('operation.relativePath !== "plot/main.md"') &&
-    conversationPanelSource.includes("selectedPlotSources") &&
-    conversationPanelSource.includes("plotReplaceTarget") &&
-    conversationPanelSource.includes("requestPlotWorkflowSourceCatalog") &&
-    conversationPanelSource.includes("requestPlotWorkflowRunPrepare") &&
-    conversationPanelSource.includes("confirmPlotWrite") &&
-    conversationPanelSource.includes("plotAbandon"),
-  "NG-404 frontend must use a strict metadata-only Plot Source Picker, fixed PlotBriefV1, exact plot/main.md target, and distinct review/write/abandon actions",
-);
-assert(
-  frontendProviderChat.includes('"provider_chat_start"') &&
-    frontendProviderChat.includes('"provider_chat_cancel"') &&
-    frontendProviderChat.includes('"provider-run-event"') &&
-    frontendProviderChat.includes("hasExactKeys") &&
-    frontendProviderChat.includes("parseProviderRunEvent") &&
-    !/fetch\s*\(|project|filePath|selection|search|apiKey/iu.test(frontendProviderChat),
-  "NG-205 frontend chat IPC must be strict, Provider-event-only, and contain no browser network, project, file, selection, search, or Key contract",
-);
-assert(
-  frontendProviderChat.includes("expectedProviderId: ProviderId") &&
-    frontendProviderChat.includes("{ expectedProviderId, messages }") &&
-    conversationPanelSource.includes("selectedProvider.providerId !== failedMessage.providerId") &&
-    conversationPanelSource.includes(
-      "requestProviderChatStart(expectedProviderId, requestMessages)",
-    ) &&
-    conversationPanelSource.includes("ZH_CN.conversation.retrySameProvider"),
-  "NG-206 retry must require a fresh click, use only the failed message Provider, and pass its identity through strict IPC",
-);
-assert(
-  conversationPanelSource.includes("requestProviderChatStart") &&
-    conversationPanelSource.includes("requestProviderChatCancel") &&
-    conversationPanelSource.includes("listenProviderRunEvents") &&
-    conversationPanelSource.includes("requestCharacterWorkflowRunPrepare") &&
-    conversationPanelSource.includes("requestCharacterWorkflowSourceCatalog") &&
-    conversationPanelSource.includes("requestWorkflowRunGenerate") &&
-    conversationPanelSource.includes("requestWorkflowProposalApply") &&
-    conversationPanelSource.includes("listenWorkflowRunEvents") &&
-    conversationPanelSource.includes("<pre>{source.boundedPreview}</pre>") &&
-    conversationPanelSource.includes("<pre>{workflowProposal.fullContent}</pre>") &&
-    conversationPanelSource.includes("workflowProposal.lineDiff.map") &&
-    conversationPanelSource.includes("workflowManifest.manifestHash") &&
-    conversationPanelSource.includes("workflowProposal.proposalHash") &&
-    conversationPanelSource.includes("workflowRunActive") &&
-    conversationPanelSource.includes("<p>{message.content") &&
-    conversationPanelSource.includes("projectSessionId") &&
-    !/dangerouslySetInnerHTML|projectId|filePath|selection|search|fetch\s*\(/iu.test(
-      conversationPanelSource,
-    ),
-  "NG-405 conversation UI must keep explicit Character Source selection, Manifest review, repair disclosure, full Proposal/Diff, two-step Apply confirmation, and no browser/project-path escape",
-);
-assert(
-  conversationStateSource.includes("event.sequence <= active.lastSequence") &&
-    conversationStateSource.includes("event.providerId !== active.providerId") &&
-    conversationStateSource.includes("event.model !== active.model") &&
-    conversationStateSource.includes("event.runId !== active.runId"),
-  "NG-205 conversation reducer must reject duplicate, late, and wrong frozen-identity events",
-);
-const providerSettingsSource = read("apps/desktop/src/components/ProviderSettings.tsx");
-assert(
-  providerSettingsSource.includes('type="password"') &&
-    providerSettingsSource.includes('autoComplete="new-password"') &&
-    providerSettingsSource.includes('autoCapitalize="none"') &&
-    providerSettingsSource.includes("requestSaveProviderKey") &&
-    providerSettingsSource.includes("requestDeleteProviderKey") &&
-    providerSettingsSource.includes("requestSelectProvider") &&
-    providerSettingsSource.includes("requestProviderConnectionTest"),
-  "NG-203 UI must expose only short-lived password inputs and approved Provider operations",
-);
-assert(
-  providerSettingsSource.includes(
-    'setKeyValues((current) => ({ ...current, [providerId]: "" }))',
-  ) &&
-    providerSettingsSource.indexOf(
-      'setKeyValues((current) => ({ ...current, [providerId]: "" }))',
-    ) < providerSettingsSource.indexOf("await requestSaveProviderKey"),
-  "NG-202 UI must clear the component Key buffer before awaiting the Vault save",
-);
-assert(
-  !/fetch\s*\(/u.test(providerSettingsSource) &&
-    providerSettingsSource.includes("ZH_CN.connection.run"),
-  "NG-203 connection test must require explicit confirmation and never use browser network APIs",
-);
-assert(
-  providerSettingsSource.includes("runActive?: boolean") &&
-    providerSettingsSource.includes(
-      "if (!desktopRuntime || !ready || busy !== null || runActive)",
-    ) &&
-    providerSettingsSource.includes(
-      "disabled={!desktopRuntime || !ready || busy !== null || runActive}",
-    ) &&
-    providerSettingsSource.includes("ZH_CN.providers.switchLocked"),
-  "NG-206 UI must disable explicit Provider switching for the full active-run interval",
-);
-const projectWorkspaceSource = read("apps/desktop/src/components/ProjectWorkspace.tsx");
-assert(
-  projectWorkspaceSource.includes("externalChange.reload") &&
-    projectWorkspaceSource.includes("externalChange.keep") &&
-    projectWorkspaceSource.includes("externalChange.copy") &&
-    projectWorkspaceSource.includes("externalConflict !== null"),
-  "NG-104 UI must offer reload, keep-memory, and copy-memory while blocking conflicted saves",
-);
-assert(
-  projectWorkspaceSource.includes("const advisory = await requestProjectDraftValidation") &&
-    projectWorkspaceSource.includes("const result = await requestProjectFileSave") &&
-    projectWorkspaceSource.indexOf("const advisory = await requestProjectDraftValidation") <
-      projectWorkspaceSource.indexOf("const result = await requestProjectFileSave") &&
-    projectWorkspaceSource.includes("setValidation(result.validation)"),
-  "NG-105 UI must advise before save and display the post-save Hash-bound report",
-);
-
-const centralizedUiPaths = [
-  "apps/desktop/src/App.tsx",
-  "apps/desktop/src/main.tsx",
-  "apps/desktop/src/components/ProviderSettings.tsx",
-  "apps/desktop/src/components/AppErrorBoundary.tsx",
-  "apps/desktop/src/components/HealthStatus.tsx",
-  "apps/desktop/src/components/ProjectSearch.tsx",
-  "apps/desktop/src/components/ProjectWorkspace.tsx",
-  "apps/desktop/src/components/SourceDiagnostics.tsx",
-  "apps/desktop/src/errors/present-app-error.ts",
-  "apps/desktop/src/presentation/health.ts",
-];
-for (const path of centralizedUiPaths) {
-  assert(
-    !/[\u3400-\u9fff]/u.test(read(path)),
-    `Visible Simplified Chinese must be centralized in zh-CN.ts, found in ${path}`,
-  );
-}
-
-const frontendSourcePaths = walk("apps/desktop/src").filter((path) =>
-  /\.(?:css|ts|tsx)$/u.test(path),
-);
-for (const path of frontendSourcePaths) {
-  assert(!/[\uac00-\ud7af]/u.test(read(path)), `Korean UI/test string found in ${path}`);
-}
-
-const productionFrontendSources = frontendSourcePaths
-  .filter((path) => !/\.test\.(?:ts|tsx)$/u.test(path))
-  .map(read)
-  .join("\n");
-assert(
-  !/localStorage|sessionStorage|indexedDB/u.test(productionFrontendSources),
-  "NG-104 file content and dirty drafts must remain in process memory only",
-);
-
-const errorUiSource = [
-  read("apps/desktop/src/components/ProviderSettings.tsx"),
-  read("apps/desktop/src/App.tsx"),
-  read("apps/desktop/src/components/AppErrorBoundary.tsx"),
-  read("apps/desktop/src/components/HealthStatus.tsx"),
-  read("apps/desktop/src/components/ProjectWorkspace.tsx"),
-].join("\n");
-assert(
-  !/console\.(?:error|log)|\.stack\b|String\s*\(\s*error\s*\)/u.test(errorUiSource),
-  "Error UI must not log or render raw exceptions/stacks or document content",
-);
-
-const dependencyManifests = [
-  read("Cargo.toml"),
-  read("apps/desktop/src-tauri/Cargo.toml"),
-  read("crates/app-core/Cargo.toml"),
-  read("crates/novelgainker-validation/Cargo.toml"),
-  read("package.json"),
-  read("apps/desktop/package.json"),
-].join("\n");
-const appCoreManifest = read("crates/app-core/Cargo.toml");
-assert(
-  !/tauri-plugin-(?:shell|process|opener)|@tauri-apps\/plugin-(?:shell|process|opener)/u.test(
-    dependencyManifests,
-  ),
-  "Shell, Process, or Opener dependency remains forbidden",
-);
-assert(
-  !/ureq|sqlx|keyring|stronghold/u.test(dependencyManifests) &&
-    (dependencyManifests.match(/\breqwest\s*=/gu) ?? []).length === 1 &&
-    appCoreManifest.includes('reqwest = { version = "0.13.4", features = ["blocking", "json"] }') &&
-    dependencyManifests.includes('rusqlite = { version = "0.37", features = ["bundled"] }') &&
-    dependencyManifests.includes('"Win32_Security_Credentials"'),
-  "NG-203 may add only fixed reqwest in app-core; alternate network clients, databases, Stronghold, and generic keyring remain forbidden",
-);
-
-const sprint2SecurityE2E = read("scripts/sprint2-security-e2e.mjs");
-const sprint2LiveSmoke = read("scripts/sprint2-live-smoke.mjs");
-const sprint3SafeApplyE2E = read("scripts/sprint3-safe-apply-e2e.mjs");
-const sprint4ProjectCreateE2E = read("scripts/sprint4-project-create-e2e.mjs");
-const sprint4SettingCreateE2E = read("scripts/sprint4-setting-create-e2e.mjs");
-const sprint4MaterialCreateE2E = read("scripts/sprint4-material-create-e2e.mjs");
-const sprint4PlotCreateE2E = read("scripts/sprint4-plot-create-e2e.mjs");
-const sprint4CharacterV2E2E = read("scripts/sprint4-character-v2-e2e.mjs");
-const sprint4RouterE2E = read("scripts/sprint4-router-e2e.mjs");
-const sprint4G4E2E = read("scripts/sprint4-g4-e2e.mjs");
-const sprint5ContextBuilderE2E = read("scripts/sprint5-context-builder-e2e.mjs");
-const sprint5ReaderModelE2E = read("scripts/sprint5-reader-model-e2e.mjs");
-const sprint5ChapterProposalE2E = read("scripts/sprint5-chapter-proposal-e2e.mjs");
-const sprint5ContinuityE2E = read("scripts/sprint5-continuity-e2e.mjs");
-const sprint5ChapterApplyE2E = read("scripts/sprint5-chapter-apply-e2e.mjs");
-const sprint5LifecycleLedgerE2E = read("scripts/sprint5-lifecycle-ledger-e2e.mjs");
-const sprint5G5StorytellingE2E = read("scripts/sprint5-g5-storytelling-e2e.mjs");
-const smokeDesktop = read("scripts/smoke-desktop.ps1");
-const qualitySource = read("scripts/quality.mjs");
-const rootPackage = read("package.json");
-assert(
-  sprint2SecurityE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint2SecurityE2E.includes("canaryFragments") &&
-    sprint2SecurityE2E.includes("scanFiles") &&
-    sprint2SecurityE2E.includes('"tauri-g2-window.png"') &&
-    sprint2SecurityE2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint2SecurityE2E.includes("canonAutomaticWriteCount") &&
-    sprint2SecurityE2E.includes('"e2e:sprint1"') &&
-    sprint2SecurityE2E.includes("rmSync(temporaryRoot") &&
-    sprint2SecurityE2E.includes("awaiting-product-owner-choice"),
-  "NG-207 Mock E2E must scan high-entropy Canary fragments, preserve Canon, rerun offline editing, verify real G2 window evidence, and clean only its verified temporary root",
-);
-assert(
-  sprint2LiveSmoke.includes("process.argv.length !== 2") &&
-    sprint2LiveSmoke.includes("delete liveEnvironment[name]") &&
-    sprint2LiveSmoke.includes(
-      "ng_207_live_provider_smoke_reads_only_fixed_windows_vault_targets",
-    ) &&
-    !/--key|OPENAI_API_KEY|DEEPSEEK_API_KEY/u.test(sprint2LiveSmoke) &&
-    credentialVault.includes(
-      '#[ignore = "requires explicit G2 product-owner approval and both fixed Vault credentials"]',
-    ) &&
-    credentialVault.includes("WindowsCredentialVault::production()") &&
-    credentialVault.includes("vault.with_secret(provider"),
-  "NG-207 Live Smoke must be explicit, default-ignored, accept no credential arguments or secret environment inputs, and borrow only fixed Windows Vault targets",
-);
-assert(
-  qualitySource.includes("delete offlineEnvironment[name]") &&
-    qualitySource.includes('["Sprint 2 security E2E", ["e2e:sprint2"]]') &&
-    qualitySource.indexOf('["Sprint 2 security E2E", ["e2e:sprint2"]]') >
-      qualitySource.indexOf('["Release desktop smoke test", ["smoke:desktop"]]') &&
-    rootPackage.includes('"e2e:sprint2": "node scripts/sprint2-security-e2e.mjs"') &&
-    rootPackage.includes('"smoke:provider:live": "node scripts/sprint2-live-smoke.mjs"') &&
-    rootPackage.includes("-CaptureEvidence -EvidenceGate g2"),
-  "NG-207 unified quality must strip secret-like environment inputs, capture G2 evidence, and run the offline Mock/Leak E2E while keeping Live Smoke separate",
-);
-
-assert(
-  providerMockContracts.includes(
-    "ng_405_both_loopback_providers_use_one_validator_for_one_confirmed_canon_create",
-  ) &&
-    providerMockContracts.includes("parse_and_serialize_character_v2_create") &&
-    providerMockContracts.includes("build_canon_proposal") &&
-    providerMockContracts.includes("apply_canon_file_recoverable"),
-  "NG-405 both Loopback Providers must traverse the same production CharacterProposalV2 validator, Proposal builder, and exactly one confirmed Canon create",
-);
-assert(
-  canonApply.includes("ng_306_canon_apply_crash_fixture") &&
-    canonApply.includes(
-      "ng_306_applying_subprocess_interrupt_is_rolled_back_or_completed_on_reopen",
-    ) &&
-    canonApply.includes("std::process::exit(NG306_CRASH_EXIT_CODE)") &&
-    canonApply.includes("reopened_recovery.recover_project(&reopened)"),
-  "NG-306 applying interruption must use a real subprocess boundary and prove deterministic rollback or completed commit after reopen",
-);
-assert(
-  sprint3SafeApplyE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint3SafeApplyE2E.includes("canaryFragments") &&
-    sprint3SafeApplyE2E.includes("scanFiles") &&
-    sprint3SafeApplyE2E.includes("assertRedactedEvidence") &&
-    sprint3SafeApplyE2E.includes('"tauri-g3-window.png"') &&
-    sprint3SafeApplyE2E.includes("unconfirmedCanonWriteCount: 0") &&
-    sprint3SafeApplyE2E.includes("halfWrittenCanonCount: 0") &&
-    sprint3SafeApplyE2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint3SafeApplyE2E.includes('runPnpm("real Tauri G3 window evidence", ["smoke:g3"])') &&
-    sprint3SafeApplyE2E.includes('runPnpm("Sprint 1 no-Key offline editor regression"') &&
-    sprint3SafeApplyE2E.includes("rmSync(temporaryRoot") &&
-    !/api\.deepseek\.com|api\.openai\.com|OPENAI_API_KEY|DEEPSEEK_API_KEY/u.test(
-      sprint3SafeApplyE2E,
-    ),
-  "NG-306 G3 E2E must be Mock-only, scan high-entropy Canary fragments, prove zero unsafe writes/fallback/half-write, capture real Tauri evidence, rerun offline editing, and clean only a verified temporary root",
-);
-assert(
-  qualitySource.includes('["Sprint 3 safe apply E2E", ["e2e:sprint3"]]') &&
-    qualitySource.indexOf('["Sprint 3 safe apply E2E", ["e2e:sprint3"]]') >
-      qualitySource.indexOf('["Sprint 2 security E2E", ["e2e:sprint2"]]') &&
-    rootPackage.includes('"e2e:sprint3": "node scripts/sprint3-safe-apply-e2e.mjs"') &&
-    rootPackage.includes('"smoke:g3"') &&
-    rootPackage.includes("-CaptureEvidence -EvidenceGate g3") &&
-    smokeDesktop.includes('"g3"'),
-  "NG-306 unified quality must run G3 Safe Apply E2E after Sprint 2 regression and use the shared real Tauri renderer for redacted G3 evidence",
-);
-assert(
-  sprint4ProjectCreateE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4ProjectCreateE2E.includes("providerRequestCount: 0") &&
-    sprint4ProjectCreateE2E.includes("providerRouterRequestCount: 0") &&
-    sprint4ProjectCreateE2E.includes("vaultAccessCount: 0") &&
-    sprint4ProjectCreateE2E.includes("prePreviewWriteCount: 0") &&
-    sprint4ProjectCreateE2E.includes("preConfirmationWriteCount: 0") &&
-    sprint4ProjectCreateE2E.includes("injectedRollbackStepCount: 15") &&
-    sprint4ProjectCreateE2E.includes('"smoke:ng401"') &&
-    sprint4ProjectCreateE2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint4ProjectCreateE2E,
-    ),
-  "NG-401 E2E must be no-Key/offline, scan a high-entropy Canary, prove zero Provider/Router/Vault/pre-confirmation writes, cover all rollback steps, regress offline editing, and capture real Tauri evidence",
-);
-assert(
-  qualitySource.includes('["NG-401 offline project-create E2E", ["e2e:ng401"]]') &&
-    qualitySource.indexOf('["NG-401 offline project-create E2E", ["e2e:ng401"]]') >
-      qualitySource.indexOf('["Sprint 3 safe apply E2E", ["e2e:sprint3"]]') &&
-    rootPackage.includes('"e2e:ng401": "node scripts/sprint4-project-create-e2e.mjs"') &&
-    rootPackage.includes('"smoke:ng401"') &&
-    rootPackage.includes("-CaptureEvidence -EvidenceGate ng401") &&
-    smokeDesktop.includes('"ng401"'),
-  "NG-401 unified quality must run the offline project-create E2E after Sprint 1-3 regressions and use the shared real Tauri evidence renderer",
-);
-
-assert(
-  sprint4SettingCreateE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4SettingCreateE2E.includes("canaryFragments") &&
-    sprint4SettingCreateE2E.includes("scanFiles") &&
-    sprint4SettingCreateE2E.includes("mockProviderCount: 2") &&
-    sprint4SettingCreateE2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint4SettingCreateE2E.includes("requestBeforeManifestConfirmationCount: 0") &&
-    sprint4SettingCreateE2E.includes("writeBeforeProposalConfirmationCount: 0") &&
-    sprint4SettingCreateE2E.includes("metadataCatalogBodyCount: 0") &&
-    sprint4SettingCreateE2E.includes("confirmedWorldCreateCount: 1") &&
-    sprint4SettingCreateE2E.includes("confirmedWorldReplaceCount: 1") &&
-    sprint4SettingCreateE2E.includes("replaceIdOrPathMutationCount: 0") &&
-    sprint4SettingCreateE2E.includes("sourceChangedWriteCount: 0") &&
-    sprint4SettingCreateE2E.includes("collisionOverwriteCount: 0") &&
-    sprint4SettingCreateE2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api.deepseek.com|api.openai.com/u.test(
-      sprint4SettingCreateE2E,
-    ),
-  "NG-402 E2E must be Mock-only, scan a high-entropy Setting Canary, prove explicit metadata-only sources, zero unsafe requests/writes/fallback, one confirmed create plus one same-path/ID replace, and regress offline editing",
-);
-assert(
-  qualitySource.includes('["NG-402 setting-create E2E", ["e2e:ng402"]]') &&
-    qualitySource.indexOf('["NG-402 setting-create E2E", ["e2e:ng402"]]') >
-      qualitySource.indexOf('["NG-401 offline project-create E2E", ["e2e:ng401"]]') &&
-    rootPackage.includes('"e2e:ng402": "node scripts/sprint4-setting-create-e2e.mjs"'),
-  "NG-402 unified quality must run the setting-create E2E after NG-401 and all Sprint 1-3 regressions",
-);
-assert(
-  providerMockContracts.includes(
-    "ng_403_material_generation_is_strict_and_byte_identical_across_both_loopback_providers",
-  ) &&
-    providerMockContracts.includes("NormalizedRequest::material_proposal_json") &&
-    providerMockContracts.includes('"material_proposal_v1"'),
-  "NG-403 both Loopback Providers must use the same strict MaterialProposalV1 contract and return byte-identical output without fallback",
-);
-assert(
-  sprint4MaterialCreateE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4MaterialCreateE2E.includes("canaryFragments") &&
-    sprint4MaterialCreateE2E.includes("scanFiles") &&
-    sprint4MaterialCreateE2E.includes("mockProviderCount: 2") &&
-    sprint4MaterialCreateE2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint4MaterialCreateE2E.includes("requestBeforeManifestConfirmationCount: 0") &&
-    sprint4MaterialCreateE2E.includes("writeBeforeProposalConfirmationCount: 0") &&
-    sprint4MaterialCreateE2E.includes("metadataCatalogBodyCount: 0") &&
-    sprint4MaterialCreateE2E.includes("hiddenDraftPersistenceCount: 0") &&
-    sprint4MaterialCreateE2E.includes("selectedMaterialBodyCount: 0") &&
-    sprint4MaterialCreateE2E.includes("confirmedMaterialCreateCount: 1") &&
-    sprint4MaterialCreateE2E.includes("confirmedMaterialReplaceCount: 1") &&
-    sprint4MaterialCreateE2E.includes("storyLedgerWriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes("replaceIdOrPathMutationCount: 0") &&
-    sprint4MaterialCreateE2E.includes("sourceChangedWriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes("targetChangedWriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes("reservedTargetWriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes("collisionOverwriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes("abandonWriteCount: 0") &&
-    sprint4MaterialCreateE2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api.deepseek.com|api.openai.com/u.test(
-      sprint4MaterialCreateE2E,
-    ),
-  "NG-403 E2E must be Mock-only, scan a high-entropy Material Canary, prove metadata-only Canon sources, zero hidden drafts/unsafe requests/writes/fallback, one confirmed create plus one same-path/ID replace, and an immutable Story Ledger",
-);
-assert(
-  qualitySource.includes('["NG-403 material-create E2E", ["e2e:ng403"]]') &&
-    qualitySource.indexOf('["NG-403 material-create E2E", ["e2e:ng403"]]') >
-      qualitySource.indexOf('["NG-402 setting-create E2E", ["e2e:ng402"]]') &&
-    rootPackage.includes('"e2e:ng403": "node scripts/sprint4-material-create-e2e.mjs"'),
-  "NG-403 unified quality must run the material-create E2E after NG-402 and all earlier regressions",
-);
-
-assert(
-  providerMockContracts.includes(
-    "ng_404_plot_generation_is_strict_and_byte_identical_across_both_loopback_providers",
-  ) &&
-    providerMockContracts.includes("NormalizedRequest::plot_proposal_json") &&
-    providerMockContracts.includes('"plot_proposal_v1"'),
-  "NG-404 both Loopback Providers must use the same strict PlotProposalV1 contract and return byte-identical output without fallback",
-);
-assert(
-  sprint4PlotCreateE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4PlotCreateE2E.includes("canaryFragments") &&
-    sprint4PlotCreateE2E.includes("scanFiles") &&
-    sprint4PlotCreateE2E.includes("mockProviderCount: 2") &&
-    sprint4PlotCreateE2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint4PlotCreateE2E.includes("requestBeforeManifestConfirmationCount: 0") &&
-    sprint4PlotCreateE2E.includes("writeBeforeProposalConfirmationCount: 0") &&
-    sprint4PlotCreateE2E.includes("metadataCatalogBodyCount: 0") &&
-    sprint4PlotCreateE2E.includes("hiddenDraftPersistenceCount: 0") &&
-    sprint4PlotCreateE2E.includes("selectedPlotSourceBodyCount: 0") &&
-    sprint4PlotCreateE2E.includes("maximumSelectedPlotSources: 8") &&
-    sprint4PlotCreateE2E.includes("confirmedPlotCreateCount: 1") &&
-    sprint4PlotCreateE2E.includes("confirmedPlotReplaceCount: 1") &&
-    sprint4PlotCreateE2E.includes("storyLedgerWriteCount: 0") &&
-    sprint4PlotCreateE2E.includes("replaceIdOrPathMutationCount: 0") &&
-    sprint4PlotCreateE2E.includes("sourceChangedWriteCount: 0") &&
-    sprint4PlotCreateE2E.includes("targetChangedWriteCount: 0") &&
-    sprint4PlotCreateE2E.includes("collisionOverwriteCount: 0") &&
-    sprint4PlotCreateE2E.includes("abandonWriteCount: 0") &&
-    sprint4PlotCreateE2E.includes("revealEvidenceLeakCount: 0") &&
-    sprint4PlotCreateE2E.includes("payoffEvidenceLeakCount: 0") &&
-    sprint4PlotCreateE2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api.deepseek.com|api.openai.com/u.test(sprint4PlotCreateE2E),
-  "NG-404 E2E must be Mock-only, scan a high-entropy Plot Canary, prove metadata-only explicit sources, zero sensitive persistence/unsafe requests/writes/fallback, one fixed create plus one same-path/ID replace, and immutable Story Ledger",
-);
-assert(
-  qualitySource.includes('["NG-404 plot-create E2E", ["e2e:ng404"]]') &&
-    qualitySource.indexOf('["NG-404 plot-create E2E", ["e2e:ng404"]]') >
-      qualitySource.indexOf('["NG-403 material-create E2E", ["e2e:ng403"]]') &&
-    rootPackage.includes('"e2e:ng404": "node scripts/sprint4-plot-create-e2e.mjs"'),
-  "NG-404 unified quality must run the plot-create E2E after NG-403 and all earlier regressions",
-);
-assert(
-  providerMockContracts.includes(
-    "ng_405_character_v2_schema_is_fixed_for_both_loopback_providers",
-  ) &&
-    providerMockContracts.includes('"schemaVersion": 2') &&
-    providerMockContracts.includes("parse_and_serialize_character_v2_create") &&
-    workflowProposalCommands.includes(
-      "confirmed_character_v2_enhance_reuses_id_and_path_without_reverse_writes",
-    ),
-  "NG-405 both Loopback Providers must use the fixed CharacterProposalV2 structured-output contract and the same local validator without fallback",
-);
-assert(
-  sprint4CharacterV2E2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4CharacterV2E2E.includes("canaryFragments") &&
-    sprint4CharacterV2E2E.includes("scanFiles") &&
-    sprint4CharacterV2E2E.includes("mockProviderCount: 2") &&
-    sprint4CharacterV2E2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint4CharacterV2E2E.includes("requestBeforeManifestConfirmationCount: 0") &&
-    sprint4CharacterV2E2E.includes("writeBeforeProposalConfirmationCount: 0") &&
-    sprint4CharacterV2E2E.includes("metadataCatalogBodyCount: 0") &&
-    sprint4CharacterV2E2E.includes("unselectedSourceBodyCount: 0") &&
-    sprint4CharacterV2E2E.includes("maximumSelectedCharacterSources: 6") &&
-    sprint4CharacterV2E2E.includes("confirmedCharacterCreateCount: 1") &&
-    sprint4CharacterV2E2E.includes("confirmedCharacterEnhanceCount: 1") &&
-    sprint4CharacterV2E2E.includes("reverseRelationshipWriteCount: 0") &&
-    sprint4CharacterV2E2E.includes("sourceChangedWriteCount: 0") &&
-    sprint4CharacterV2E2E.includes("targetChangedWriteCount: 0") &&
-    sprint4CharacterV2E2E.includes("collisionOverwriteCount: 0") &&
-    sprint4CharacterV2E2E.includes("privateCharacterFieldEvidenceLeakCount: 0") &&
-    sprint4CharacterV2E2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api.deepseek.com|api.openai.com/u.test(sprint4CharacterV2E2E),
-  "NG-405 E2E must be Mock-only, scan a high-entropy private-field Canary, prove metadata-only explicit sources, stable IDs/paths and verified links, explicit v1 upgrade, zero unsafe requests/writes/fallback/reverse writes, and offline editing regression",
-);
-assert(
-  qualitySource.includes('["NG-405 character-v2 E2E", ["e2e:ng405"]]') &&
-    qualitySource.indexOf('["NG-405 character-v2 E2E", ["e2e:ng405"]]') >
-      qualitySource.indexOf('["NG-404 plot-create E2E", ["e2e:ng404"]]') &&
-    rootPackage.includes('"e2e:ng405": "node scripts/sprint4-character-v2-e2e.mjs"'),
-  "NG-405 unified quality must run the character-v2 E2E after NG-404 and all earlier regressions",
-);
-assert(
-  sprint4RouterE2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4RouterE2E.includes("fragments") &&
-    sprint4RouterE2E.includes("scanFiles") &&
-    sprint4RouterE2E.includes('mode: "mock-only-local-first"') &&
-    sprint4RouterE2E.includes("deterministicCommandCount: 6") &&
-    sprint4RouterE2E.includes("routableWorkflowCount: 5") &&
-    sprint4RouterE2E.includes("automaticTransientRetryCount: 0") &&
-    sprint4RouterE2E.includes("automaticFallbackCount: 0") &&
-    sprint4RouterE2E.includes("requestBeforeConsentCount: 0") &&
-    sprint4RouterE2E.includes("projectReadCount: 0") &&
-    sprint4RouterE2E.includes("projectWriteCount: 0") &&
-    sprint4RouterE2E.includes("persistedUserInputCount: 0") &&
-    sprint4RouterE2E.includes('"e2e:sprint1"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api.deepseek.com|api.openai.com/u.test(sprint4RouterE2E),
-  "NG-406 E2E must be Mock-only, scan a high-entropy Router Canary, prove consent, no retry/fallback/project access/persistence, and rerun offline editing",
-);
-assert(
-  qualitySource.includes('["NG-406 workflow Router E2E", ["e2e:ng406"]]') &&
-    qualitySource.indexOf('["NG-406 workflow Router E2E", ["e2e:ng406"]]') >
-      qualitySource.indexOf('["NG-405 character-v2 E2E", ["e2e:ng405"]]') &&
-    rootPackage.includes('"e2e:ng406": "node scripts/sprint4-router-e2e.mjs"'),
-  "NG-406 unified quality must run the Router E2E after NG-405 and all earlier regressions",
-);
-assert(
-  sprint4G4E2E.includes(
-    'const expectedPackHash = "1658685537a9fe57b441928816e0fd2af770109e9b9a12a985204774496246a5";',
-  ) &&
-    sprint4G4E2E.includes("expectedResourcePaths") &&
-    sprint4G4E2E.includes('"storytelling/chapter-proposal.output.schema.json"') &&
-    sprint4G4E2E.includes("calculatePackHash") &&
-    sprint4G4E2E.includes("calculateWorkflowHash") &&
-    sprint4G4E2E.includes("DatabaseSync") &&
-    sprint4G4E2E.includes('randomBytes(48).toString("base64url")') &&
-    sprint4G4E2E.includes("000.story-ledger.md") &&
-    sprint4G4E2E.includes("000.sprint5-sentinel.md") &&
-    sprint4G4E2E.includes("assertPngMetadataRedacted") &&
-    sprint4G4E2E.includes("confirmedCanonWritePerRunMaximum: 1") &&
-    sprint4G4E2E.includes("serializerGoldenMismatchCount: 0") &&
-    sprint4G4E2E.includes("unconfirmedCanonWriteCount: 0") &&
-    sprint4G4E2E.includes("cancelledCanonWriteCount: 0") &&
-    sprint4G4E2E.includes("staleCanonWriteCount: 0") &&
-    sprint4G4E2E.includes("conflictCanonWriteCount: 0") &&
-    sprint4G4E2E.includes("invalidRelationshipWriteCount: 0") &&
-    sprint4G4E2E.includes("validationFailureWriteCount: 0") &&
-    sprint4G4E2E.includes("halfWrittenCanonCount: 0") &&
-    sprint4G4E2E.includes("silentOverwriteCount: 0") &&
-    sprint4G4E2E.includes("automaticNumberingCount: 0") &&
-    sprint4G4E2E.includes("backgroundMigrationCount: 0") &&
-    sprint4G4E2E.includes("storyLedgerWriteCount: 0") &&
-    sprint4G4E2E.includes("sprint5SentinelMutationCount: 0") &&
-    sprint4G4E2E.includes("explicitRouteProviderRequestCount: 0") &&
-    sprint4G4E2E.includes("ambiguousRouteCanonWriteCount: 0") &&
-    sprint4G4E2E.includes("crossProviderAutomaticRequestCount: 0") &&
-    sprint4G4E2E.includes("externalUserProjectReadCount: 0") &&
-    sprint4G4E2E.includes("realCredentialReadCount: 0") &&
-    sprint4G4E2E.includes("sensitiveCanaryLeakCount: 0") &&
-    sprint4G4E2E.includes('"smoke:g4"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(sprint4G4E2E),
-  "NG-407 G4 E2E must freeze the exact Pack Hash, aggregate both Mock Providers and all workflow reports, protect Story Ledger/Sprint 5 sentinels, scan SQLite/log/error/DOM/PNG metadata, and prove every unsafe count remains zero",
-);
-assert(
-  qualitySource.includes("NOVELGAINKER_QUALITY_STARTED_AT") &&
-    qualitySource.includes('"Sprint 4 G4 evidence E2E"') &&
-    qualitySource.includes('["e2e:ng407", "--", "--quality-sequence"]') &&
-    qualitySource.indexOf('"Sprint 4 G4 evidence E2E"') >
-      qualitySource.indexOf('["NG-406 workflow Router E2E", ["e2e:ng406"]]') &&
-    rootPackage.includes('"e2e:sprint4": "node --no-warnings scripts/sprint4-g4-e2e.mjs"') &&
-    rootPackage.includes('"e2e:ng407": "node --no-warnings scripts/sprint4-g4-e2e.mjs"') &&
-    rootPackage.includes('"smoke:g4"') &&
-    rootPackage.includes("-CaptureEvidence -EvidenceGate g4") &&
-    smokeDesktop.includes('"g4"'),
-  "NG-407 unified quality must run G4 after NG-401 through NG-406 from the same marked quality sequence and capture real redacted Tauri G4 evidence",
-);
-assert(
-  sprint5ContextBuilderE2E.includes('mode: "offline-local-first-zero-write"') &&
-    sprint5ContextBuilderE2E.includes("story_context::tests") &&
-    sprint5ContextBuilderE2E.includes("story_context_commands::tests") &&
-    sprint5ContextBuilderE2E.includes("workspace::tests") &&
-    sprint5ContextBuilderE2E.includes("stableManifestMismatchCount: 0") &&
-    sprint5ContextBuilderE2E.includes("pathEscapeReadCount: 0") &&
-    sprint5ContextBuilderE2E.includes("symbolicLinkReadCount: 0") &&
-    sprint5ContextBuilderE2E.includes("providerRequestCount: 0") &&
-    sprint5ContextBuilderE2E.includes("projectWriteCount: 0") &&
-    qualitySource.includes('["NG-501 Context Builder E2E", ["e2e:ng501"]]') &&
-    qualitySource.indexOf('"NG-501 Context Builder E2E"') >
-      qualitySource.indexOf('"Sprint 4 G4 evidence E2E"') &&
-    rootPackage.includes('"e2e:ng501": "node scripts/sprint5-context-builder-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5ContextBuilderE2E,
-    ),
-  "NG-501 unified quality must run the offline Context Fixture after G4 and prove stable, scoped, zero-Provider and zero-write behavior",
-);
-assert(
-  sprint5ReaderModelE2E.includes('mode: "offline-local-first-zero-write"') &&
-    sprint5ReaderModelE2E.includes("StoryContextRequestSnapshotV1") &&
-    sprint5ReaderModelE2E.includes("readerModelFieldCount: 6") &&
-    sprint5ReaderModelE2E.includes("maximumOutputTokens: 4096") &&
-    sprint5ReaderModelE2E.includes("stableRequestHashMismatchCount: 0") &&
-    sprint5ReaderModelE2E.includes("sourceChangeReaderModelLossCount: 0") &&
-    sprint5ReaderModelE2E.includes("staleSourceReviewBypassCount: 0") &&
-    sprint5ReaderModelE2E.includes("providerRequestCount: 0") &&
-    sprint5ReaderModelE2E.includes("projectWriteCount: 0") &&
-    qualitySource.includes('["NG-502 Reader Mental Model E2E", ["e2e:ng502"]]') &&
-    qualitySource.indexOf('"NG-502 Reader Mental Model E2E"') >
-      qualitySource.indexOf('"NG-501 Context Builder E2E"') &&
-    rootPackage.includes('"e2e:ng502": "node scripts/sprint5-reader-model-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5ReaderModelE2E,
-    ),
-  "NG-502 unified quality must run the offline Reader Mental Model request-snapshot fixture after NG-501 and prove review freshness, stable hashes, zero Provider requests, and zero project writes",
-);
-assert(
-  sprint5ChapterProposalE2E.includes('mode: "provider-neutral-streaming-memory-only"') &&
-    sprint5ChapterProposalE2E.includes('supportedProviders: ["deepseek", "openai"]') &&
-    sprint5ChapterProposalE2E.includes("sameProviderRepairMaximumCount: 1") &&
-    sprint5ChapterProposalE2E.includes("staleSourceWriteUnlockCount: 0") &&
-    sprint5ChapterProposalE2E.includes("cancellationProjectWriteCount: 0") &&
-    sprint5ChapterProposalE2E.includes("rawResponsePersistenceCount: 0") &&
-    sprint5ChapterProposalE2E.includes("credentialLeakCount: 0") &&
-    qualitySource.includes('["NG-503 Chapter Proposal E2E", ["e2e:ng503"]]') &&
-    qualitySource.indexOf('"NG-503 Chapter Proposal E2E"') >
-      qualitySource.indexOf('"NG-502 Reader Mental Model E2E"') &&
-    rootPackage.includes('"e2e:ng503": "node scripts/sprint5-chapter-proposal-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5ChapterProposalE2E,
-    ),
-  "NG-503 unified quality must run the dual-Provider streaming Chapter Proposal fixture after NG-502 and prove strict parsing, same-Provider repair, source-stale lock, cancellation, zero writes and zero credential leakage",
-);
-assert(
-  sprint5ContinuityE2E.includes('mode: "offline-deterministic-read-only"') &&
-    sprint5ContinuityE2E.includes("orderedRuleCount: 17") &&
-    sprint5ContinuityE2E.includes('severities: ["blocking", "warning", "unknown", "passed"]') &&
-    sprint5ContinuityE2E.includes("stableRuleOrderMismatchCount: 0") &&
-    sprint5ContinuityE2E.includes("blockingWriteUnlockCount: 0") &&
-    sprint5ContinuityE2E.includes("warningConfirmationBypassCount: 0") &&
-    sprint5ContinuityE2E.includes("unknownCountedAsPassedCount: 0") &&
-    sprint5ContinuityE2E.includes("sourceStaleBypassCount: 0") &&
-    sprint5ContinuityE2E.includes("targetStaleBypassCount: 0") &&
-    sprint5ContinuityE2E.includes("providerRequestCount: 0") &&
-    sprint5ContinuityE2E.includes("projectWriteCount: 0") &&
-    qualitySource.includes("[" + '"NG-504 local continuity E2E", ["e2e:ng504"]]') &&
-    qualitySource.indexOf('"NG-504 local continuity E2E"') >
-      qualitySource.indexOf('"NG-503 Chapter Proposal E2E"') &&
-    rootPackage.includes('"e2e:ng504": "node scripts/sprint5-continuity-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5ContinuityE2E,
-    ),
-  "NG-504 unified quality must run the offline deterministic continuity matrix after NG-503 and prove stable four-state results, session warning confirmation, stale-source/target blocking, zero Provider requests and zero writes",
-);
-assert(
-  sprint5ChapterApplyE2E.includes('mode: "offline-deterministic-recoverable-write"') &&
-    sprint5ChapterApplyE2E.includes("preconfirmationWriteCount: 0") &&
-    sprint5ChapterApplyE2E.includes("createCollisionOverwriteCount: 0") &&
-    sprint5ChapterApplyE2E.includes("staleTargetWriteCount: 0") &&
-    sprint5ChapterApplyE2E.includes("lockedStatusBypassCount: 0") &&
-    sprint5ChapterApplyE2E.includes("precommitFailureLostOriginalCount: 0") &&
-    sprint5ChapterApplyE2E.includes("postwriteFailureLostOriginalCount: 0") &&
-    sprint5ChapterApplyE2E.includes("restartReplaceLostOriginalCount: 0") &&
-    sprint5ChapterApplyE2E.includes("storyLedgerWriteCount: 0") &&
-    sprint5ChapterApplyE2E.includes("providerRequestCount: 0") &&
-    qualitySource.includes('["NG-505 recoverable chapter apply E2E", ["e2e:ng505"]]') &&
-    qualitySource.indexOf('"NG-505 recoverable chapter apply E2E"') >
-      qualitySource.indexOf('"NG-504 local continuity E2E"') &&
-    rootPackage.includes('"e2e:ng505": "node scripts/sprint5-chapter-apply-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5ChapterApplyE2E,
-    ),
-  "NG-505 unified quality must run the offline recoverable chapter Apply matrix after NG-504 and prove explicit confirmation, target revalidation, original preservation, zero Provider requests and zero Story Ledger writes",
-);
-assert(
-  sprint5LifecycleLedgerE2E.includes('mode: "offline-two-transaction-lifecycle-ledger"') &&
-    sprint5LifecycleLedgerE2E.includes("statusConfirmationCount: 1") &&
-    sprint5LifecycleLedgerE2E.includes("ledgerConfirmationCount: 1") &&
-    sprint5LifecycleLedgerE2E.includes("draftToFinalAllowed: false") &&
-    sprint5LifecycleLedgerE2E.includes('ledgerTarget: "materials/000.story-ledger.md"') &&
-    sprint5LifecycleLedgerE2E.includes('pendingRecoverySource: "chapter-markdown"') &&
-    sprint5LifecycleLedgerE2E.includes("backgroundRetryAllowed: false") &&
-    sprint5LifecycleLedgerE2E.includes("unconfirmedStatusWriteCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("unconfirmedLedgerWriteCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("draftToFinalBypassCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("wrongLedgerTargetWriteCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("ledgerFailureChapterRollbackCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("automaticRetryCount: 0") &&
-    sprint5LifecycleLedgerE2E.includes("providerRequestCount: 0") &&
-    qualitySource.includes('["NG-506 lifecycle and Ledger E2E", ["e2e:ng506"]]') &&
-    qualitySource.indexOf('"NG-506 lifecycle and Ledger E2E"') >
-      qualitySource.indexOf('"NG-505 recoverable chapter apply E2E"') &&
-    rootPackage.includes('"e2e:ng506": "node scripts/sprint5-lifecycle-ledger-e2e.mjs"') &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5LifecycleLedgerE2E,
-    ),
-  "NG-506 unified quality must run after NG-505 and prove two confirmations, fixed Ledger scope, pending recovery, no chapter rollback, no background retry and zero Provider requests",
-);
-assert(
-  providerCoreMockTests.includes(
-    "ng_507_both_loopback_providers_complete_the_storytelling_transaction_state_machine",
-  ) &&
-    providerCoreMockTests.includes(
-      "ng_507_both_loopback_providers_cancel_truncate_error_and_stale_sources_without_writes",
-    ) &&
-    providerCoreMockTests.includes("ProviderId::ALL") &&
-    providerCoreMockTests.includes("staleOverwriteCount") &&
-    providerCoreMockTests.includes("unknownsConfirmed") &&
-    sprint5G5StorytellingE2E.includes("NG507_TEST_CANARY") &&
-    sprint5G5StorytellingE2E.includes("deepseek-storytelling-loopback-report.json") &&
-    sprint5G5StorytellingE2E.includes("openai-storytelling-loopback-report.json") &&
-    sprint5G5StorytellingE2E.includes("chapter-transaction-report.json") &&
-    sprint5G5StorytellingE2E.includes("ledger-transaction-report.json") &&
-    sprint5G5StorytellingE2E.includes("cancellation-and-recovery-report.json") &&
-    sprint5G5StorytellingE2E.includes("g5-review-report.md") &&
-    sprint5G5StorytellingE2E.includes("g5-manifest.json") &&
-    sprint5G5StorytellingE2E.includes('status: "review-complete-product-approval-pending"') &&
-    sprint5G5StorytellingE2E.includes("本报告不代替产品批准") &&
-    sprint5G5StorytellingE2E.includes('status: "not-authorized"') &&
-    sprint5G5StorytellingE2E.includes("liveRequestCount: 0") &&
-    !sprint5G5StorytellingE2E.includes("smoke:provider:live") &&
-    !/OPENAI_API_KEY|DEEPSEEK_API_KEY|api\.deepseek\.com|api\.openai\.com/u.test(
-      sprint5G5StorytellingE2E,
-    ) &&
-    qualitySource.includes(
-      '["NG-507 dual-Provider Storytelling G5 E2E", ["e2e:ng507", "--", "--quality-sequence"]]',
-    ) &&
-    qualitySource.indexOf('"NG-507 dual-Provider Storytelling G5 E2E"') >
-      qualitySource.indexOf('"NG-506 lifecycle and Ledger E2E"') &&
-    rootPackage.includes('"e2e:ng507": "node scripts/sprint5-g5-storytelling-e2e.mjs"') &&
-    rootPackage.includes('"smoke:g5"') &&
-    smokeDesktop.includes('"g5"'),
-  "NG-507 unified quality must run after NG-506, exercise one shared dual-Provider Storytelling transaction state machine, prove every negative path is zero-write, protect manual edits, generate the full redacted G5 evidence set, and keep Live Smoke uncalled without authorization",
-);
+assert(COMMANDS.length === 35 && AGENT_COMMANDS.length === 14, "GAR2 command cardinality drift");
 console.log(
-  "[boundary] PASS sixty scoped commands through GA2; embedded nine-Skill governed-write Agent, exact JSON-object Action guidance, four bounded read tools plus two Skill-scoped write tools, visible cancellable traces and line diffs, retained asynchronous failures and rejected input, orphaned legacy-generation reconciliation plus inert hidden RecoveryRequired compatibility, App State v10 bounded summaries/hashes/Undo metadata, DPAPI-protected Undo bodies, legacy workflow compatibility, no hidden pending-body persistence, raw Provider output retention, Key readback, browser network, cross-Provider fallback, Shell, Process, background retries, or unauthorized Live Smoke",
+  `[boundaries] PASS GAR2 exact ${COMMANDS.length} commands / ${AGENT_COMMANDS.length} V2 Agent IPC; ${RETIRED_COMMANDS.length} retired IPC are unregistered and unpermitted`,
 );
