@@ -22,7 +22,7 @@ pub const MAX_RETRIES: u8 = 2;
 const CONNECT_TIMEOUT_SECONDS: u64 = 15;
 #[cfg(test)]
 const TEST_REQUEST_TIMEOUT_MILLIS: u64 = 250;
-const FIXED_SYSTEM_INSTRUCTION: &str =
+pub const CONVERSATION_SYSTEM_INSTRUCTION: &str =
     "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。本阶段不调用工具或修改文件。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,7 +106,7 @@ impl NormalizedRequest {
             messages: vec![
                 NormalizedMessage {
                     role: MessageRole::System,
-                    content: FIXED_SYSTEM_INSTRUCTION.to_owned(),
+                    content: CONVERSATION_SYSTEM_INSTRUCTION.to_owned(),
                 },
                 NormalizedMessage {
                     role: MessageRole::User,
@@ -124,7 +124,7 @@ impl NormalizedRequest {
             messages: vec![
                 NormalizedMessage {
                     role: MessageRole::System,
-                    content: FIXED_SYSTEM_INSTRUCTION.to_owned(),
+                    content: CONVERSATION_SYSTEM_INSTRUCTION.to_owned(),
                 },
                 NormalizedMessage {
                     role: MessageRole::User,
@@ -139,7 +139,20 @@ impl NormalizedRequest {
         messages: Vec<NormalizedMessage>,
         max_output_tokens: u32,
     ) -> Result<Self, ProviderError> {
-        if messages.is_empty()
+        Self::with_system(
+            CONVERSATION_SYSTEM_INSTRUCTION.to_owned(),
+            messages,
+            max_output_tokens,
+        )
+    }
+
+    pub fn with_system(
+        system_instruction: String,
+        messages: Vec<NormalizedMessage>,
+        max_output_tokens: u32,
+    ) -> Result<Self, ProviderError> {
+        if system_instruction.is_empty()
+            || messages.is_empty()
             || messages
                 .iter()
                 .any(|message| message.role == MessageRole::System)
@@ -150,7 +163,7 @@ impl NormalizedRequest {
         let mut normalized = Vec::with_capacity(messages.len() + 1);
         normalized.push(NormalizedMessage {
             role: MessageRole::System,
-            content: FIXED_SYSTEM_INSTRUCTION.to_owned(),
+            content: system_instruction,
         });
         normalized.extend(messages);
         let request = Self {
@@ -166,6 +179,14 @@ impl NormalizedRequest {
             || self.messages.len() > MAX_MESSAGE_COUNT
             || self.max_output_tokens == 0
             || self.max_output_tokens > MAX_OUTPUT_TOKENS
+            || self.messages[0].role != MessageRole::System
+            || self.messages[0].content.trim().is_empty()
+            || self
+                .messages
+                .iter()
+                .filter(|message| message.role == MessageRole::System)
+                .count()
+                != 1
         {
             return Err(ProviderError::invalid_request());
         }
@@ -204,7 +225,7 @@ pub enum FinishReason {
     Unknown,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedResponse {
     pub text: String,
     pub usage: Option<Usage>,
@@ -499,10 +520,10 @@ impl ProviderAdapter for OpenaiAdapter {
     fn streaming_body(&self, request: &NormalizedRequest) -> Value {
         json!({
             "model": self.preset().model,
-            "instructions": FIXED_SYSTEM_INSTRUCTION,
+            "instructions": request.messages[0].content,
             "input": message_values(request)
                 .into_iter()
-                .filter(|message| message.get("role").and_then(Value::as_str) != Some("system"))
+                .skip(1)
                 .collect::<Vec<_>>(),
             "max_output_tokens": request.max_output_tokens,
             "store": false,
@@ -792,6 +813,44 @@ impl ProviderHttpClient {
         Err(last_error)
     }
 
+    pub async fn complete_once_cancellable(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        request: &NormalizedRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<NormalizedResponse, ProviderError> {
+        request.validate()?;
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::cancelled());
+        }
+        let adapter = adapter(provider);
+        let body = serde_json::to_vec(&adapter.completion_body(request))
+            .map_err(|_| ProviderError::protocol())?;
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
+            response = self.send_async(provider, key, &body, "application/json") => response?,
+        };
+        if !response.status().is_success() {
+            return Err(map_http_status(response.status()));
+        }
+        parse_bounded_completion_cancellable(response, adapter, cancellation).await
+    }
+
+    pub fn complete_once_cancellable_blocking(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        request: &NormalizedRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<NormalizedResponse, ProviderError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| ProviderError::unreachable())?;
+        runtime.block_on(self.complete_once_cancellable(provider, key, request, cancellation))
+    }
+
     pub fn stream(
         &self,
         provider: ProviderId,
@@ -915,6 +974,52 @@ impl ProviderHttpClient {
             .build()
             .map_err(|_| ProviderError::unreachable())?;
         runtime.block_on(self.stream_cancellable(provider, key, request, cancellation, sink))
+    }
+
+    pub async fn stream_once_cancellable<F>(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        request: &NormalizedRequest,
+        cancellation: &CancellationToken,
+        sink: &mut F,
+    ) -> Result<NormalizedResponse, ProviderError>
+    where
+        F: FnMut(NormalizedEvent) -> Result<(), ProviderError> + Send,
+    {
+        request.validate()?;
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::cancelled());
+        }
+        let adapter = adapter(provider);
+        let body = serde_json::to_vec(&adapter.streaming_body(request))
+            .map_err(|_| ProviderError::protocol())?;
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
+            response = self.send_async(provider, key, &body, "text/event-stream") => response?,
+        };
+        if !response.status().is_success() {
+            return Err(map_http_status(response.status()));
+        }
+        consume_stream_cancellable(response, provider, adapter, cancellation, sink).await
+    }
+
+    pub fn stream_once_cancellable_blocking<F>(
+        &self,
+        provider: ProviderId,
+        key: &[u8],
+        request: &NormalizedRequest,
+        cancellation: &CancellationToken,
+        sink: &mut F,
+    ) -> Result<NormalizedResponse, ProviderError>
+    where
+        F: FnMut(NormalizedEvent) -> Result<(), ProviderError> + Send,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| ProviderError::unreachable())?;
+        runtime.block_on(self.stream_once_cancellable(provider, key, request, cancellation, sink))
     }
 
     fn endpoint(&self, provider: ProviderId) -> Result<String, ProviderError> {
@@ -1448,6 +1553,84 @@ fn wipe(bytes: &mut [u8]) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::Duration;
+
+    fn capture_outbound_json(
+        provider: ProviderId,
+        request: &NormalizedRequest,
+        streaming: bool,
+    ) -> Value {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 4 * 1024];
+            let header_end = loop {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0, "request ended before headers completed");
+                received.extend_from_slice(&buffer[..read]);
+                if let Some(index) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = std::str::from_utf8(&received[..header_end]).unwrap();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .expect("loopback request must include content-length");
+            while received.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0, "request ended before body completed");
+                received.extend_from_slice(&buffer[..read]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            serde_json::from_slice(&received[header_end..header_end + content_length]).unwrap()
+        });
+        let client = ProviderHttpClient::for_test(
+            provider,
+            format!("http://{address}/{}", provider.as_str()),
+        )
+        .unwrap();
+        let cancellation = CancellationToken::default();
+        let result = if streaming {
+            client
+                .stream_once_cancellable_blocking(
+                    provider,
+                    b"synthetic-loopback-key",
+                    request,
+                    &cancellation,
+                    &mut |_| Ok(()),
+                )
+                .map(|_| ())
+        } else {
+            client
+                .complete_once_cancellable_blocking(
+                    provider,
+                    b"synthetic-loopback-key",
+                    request,
+                    &cancellation,
+                )
+                .map(|_| ())
+        };
+        assert_eq!(result.unwrap_err(), ProviderError::unreachable());
+        server.join().unwrap()
+    }
 
     #[test]
     fn preset_v1_is_exact_hashed_and_has_only_fixed_https_hosts() {
@@ -1510,7 +1693,7 @@ mod tests {
         .unwrap();
         assert_eq!(request.messages.len(), 4);
         assert_eq!(request.messages[0].role, MessageRole::System);
-        assert_eq!(request.messages[0].content, FIXED_SYSTEM_INSTRUCTION);
+        assert_eq!(request.messages[0].content, CONVERSATION_SYSTEM_INSTRUCTION);
         assert_eq!(request.messages[1].content, "先写一段");
         assert_eq!(request.messages[3].content, "继续");
         assert!(NormalizedRequest::conversation(Vec::new(), 512).is_err());
@@ -1523,6 +1706,145 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn dynamic_system_instruction_is_captured_for_both_adapters_and_modes() {
+        let compactor = NormalizedRequest::with_system(
+            crate::memory::COMPACTOR_SYSTEM_INSTRUCTION.to_owned(),
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "【新增对话片段】\n用户确认继续写作".to_owned(),
+            }],
+            128,
+        )
+        .unwrap();
+        let memory_marker = "MEMORY-FIDELITY-MARKER";
+        let main_system =
+            format!("{CONVERSATION_SYSTEM_INSTRUCTION}\n\n【派生对话记忆】\n{memory_marker}");
+        let main = NormalizedRequest::with_system(
+            main_system.clone(),
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "继续".to_owned(),
+            }],
+            512,
+        )
+        .unwrap();
+
+        let deepseek_completion = capture_outbound_json(ProviderId::Deepseek, &compactor, false);
+        assert_eq!(deepseek_completion["stream"], false);
+        assert_eq!(
+            deepseek_completion["messages"][0]["content"],
+            crate::memory::COMPACTOR_SYSTEM_INSTRUCTION
+        );
+        let deepseek_streaming = capture_outbound_json(ProviderId::Deepseek, &main, true);
+        assert_eq!(deepseek_streaming["stream"], true);
+        assert_eq!(deepseek_streaming["messages"][0]["content"], main_system);
+        assert_eq!(
+            deepseek_streaming
+                .to_string()
+                .matches(memory_marker)
+                .count(),
+            1
+        );
+
+        let openai_completion = capture_outbound_json(ProviderId::Openai, &compactor, false);
+        assert_eq!(openai_completion["stream"], false);
+        assert_eq!(
+            openai_completion["instructions"],
+            crate::memory::COMPACTOR_SYSTEM_INSTRUCTION
+        );
+        assert!(openai_completion["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message["role"] != "system"));
+        let openai_streaming = capture_outbound_json(ProviderId::Openai, &main, true);
+        assert_eq!(openai_streaming["stream"], true);
+        assert_eq!(openai_streaming["instructions"], main_system);
+        assert!(openai_streaming["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message["role"] != "system"));
+        assert_eq!(
+            openai_streaming.to_string().matches(memory_marker).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_system_contract_is_rejected_before_any_outbound_attempt() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let client = ProviderHttpClient::for_test(
+            ProviderId::Deepseek,
+            format!("http://{}/invalid-system", listener.local_addr().unwrap()),
+        )
+        .unwrap();
+        let invalid_requests = [
+            NormalizedRequest {
+                messages: vec![
+                    NormalizedMessage {
+                        role: MessageRole::User,
+                        content: "用户消息".to_owned(),
+                    },
+                    NormalizedMessage {
+                        role: MessageRole::System,
+                        content: "不在首位".to_owned(),
+                    },
+                ],
+                max_output_tokens: 128,
+            },
+            NormalizedRequest {
+                messages: vec![
+                    NormalizedMessage {
+                        role: MessageRole::System,
+                        content: "第一条".to_owned(),
+                    },
+                    NormalizedMessage {
+                        role: MessageRole::System,
+                        content: "重复".to_owned(),
+                    },
+                    NormalizedMessage {
+                        role: MessageRole::User,
+                        content: "用户消息".to_owned(),
+                    },
+                ],
+                max_output_tokens: 128,
+            },
+            NormalizedRequest {
+                messages: vec![
+                    NormalizedMessage {
+                        role: MessageRole::System,
+                        content: " \n\t".to_owned(),
+                    },
+                    NormalizedMessage {
+                        role: MessageRole::User,
+                        content: "用户消息".to_owned(),
+                    },
+                ],
+                max_output_tokens: 128,
+            },
+        ];
+        for request in invalid_requests {
+            assert_eq!(
+                client
+                    .complete_once(
+                        ProviderId::Deepseek,
+                        b"synthetic-loopback-key",
+                        &request,
+                        &CancellationToken::default(),
+                    )
+                    .unwrap_err(),
+                ProviderError::invalid_request()
+            );
+        }
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
     #[test]
     fn adapters_map_non_streaming_text_usage_and_finish_reason() {
         let deepseek = DEEPSEEK_ADAPTER
@@ -1619,5 +1941,123 @@ mod tests {
             "https://example.com/responses".to_owned()
         )
         .is_err());
+    }
+    #[test]
+    fn nr1_compactor_and_main_primitives_make_one_attempt_each_without_retry() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicUsize;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = attempts.clone();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(800);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        let mut request = [0u8; 8 * 1024];
+                        let _ = stream.read(&mut request);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("loopback accept failed: {error}"),
+                }
+            }
+        });
+        let client = ProviderHttpClient::for_test(
+            ProviderId::Openai,
+            format!("http://{address}/v1/responses"),
+        )
+        .unwrap();
+        let request = NormalizedRequest::conversation(
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "继续".to_owned(),
+            }],
+            128,
+        )
+        .unwrap();
+        let cancellation = CancellationToken::default();
+
+        let completion = client.complete_once_cancellable_blocking(
+            ProviderId::Openai,
+            b"synthetic-loopback-key",
+            &request,
+            &cancellation,
+        );
+        assert_eq!(completion.unwrap_err(), ProviderError::unreachable());
+        let streaming = client.stream_once_cancellable_blocking(
+            ProviderId::Openai,
+            b"synthetic-loopback-key",
+            &request,
+            &cancellation,
+            &mut |_| Ok(()),
+        );
+        assert_eq!(streaming.unwrap_err(), ProviderError::unreachable());
+        server.join().unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn nr1_compactor_request_is_cancellable_while_http_is_in_flight() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 8 * 1024];
+            let _ = stream.read(&mut request);
+            let _ = accepted_tx.send(());
+            thread::sleep(Duration::from_secs(2));
+        });
+        let client = ProviderHttpClient::for_test(
+            ProviderId::Openai,
+            format!("http://{address}/v1/responses"),
+        )
+        .unwrap();
+        let request = NormalizedRequest::conversation(
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "整理上下文".to_owned(),
+            }],
+            128,
+        )
+        .unwrap();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || {
+            client.complete_once_cancellable_blocking(
+                ProviderId::Openai,
+                b"synthetic-loopback-key",
+                &request,
+                &worker_cancellation,
+            )
+        });
+        accepted_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("compactor loopback must receive exactly one request");
+        let cancelled_at = Instant::now();
+        cancellation.cancel();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err(),
+            ProviderError::cancelled()
+        );
+        assert!(cancelled_at.elapsed() < Duration::from_secs(2));
     }
 }

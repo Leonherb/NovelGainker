@@ -1,0 +1,56 @@
+artifact: "NR-G2-REMEDIATION-D2"
+kind: "story_packet"
+status: "implemented"
+updated_at: "2026-09-01T20:28:11+08:00"
+source_gate:
+  id: "NR-G2"
+  submission_status: "technical_submission"
+  review_status: "changes_requested"
+  product_approved: false
+source_report:
+  path: "docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md"
+packet:
+  path: "docs/stories/novelist-agent-runtime-nr-g2-remediation-story-packet-draft-2.zh-CN.md"
+  draft: 2
+  final: true
+  prior_draft: "NR-G2-REMEDIATION-D1"
+  findings:
+    - id: "NR-G2-R01"
+      story: "NR-G2-R01"
+      status: "completed"
+      title: "Provider dynamic system instruction fidelity"
+      review_boundary: "Validate exactly one non-empty leading System message and prove both adapters across completion and streaming serialization."
+    - id: "NR-G2-R02"
+      story: "NR-G2-R02"
+      status: "completed"
+      title: "Preserve valid Memory when incremental compaction is unavailable"
+      review_boundary: "Only an initially absent or invalid Memory may use recent rebuild; a valid Memory can never fall through to rebuild."
+    - id: "NR-G2-R03"
+      story: "NR-G2-R03"
+      status: "completed"
+      title: "Strict ordered unique five-heading validation"
+      review_boundary: "Align the prompt with exact line grammar and reject only whole top-level JSON structures without scanning body keywords."
+authorization:
+  implementation: true
+  nr_g2_approval: false
+  live_smoke: false
+  nr_2: false
+proposed_implementation:
+  order:
+    - "NR-G2-R01"
+    - "NR-G2-R02"
+    - "NR-G2-R03"
+  regenerate_nr_g2_manifest: true
+  run_full_quality: true
+  stop_at: "NR-G2-technical-resubmission"
+resulting_gate:
+  id: "NR-G2"
+  status: "passed"
+  product_approved: true
+  approved_at: "2026-09-01"
+  live_smoke_executed: false
+  nr_2_authorized: false
+next_action:
+  type: "await_product_direction"
+  id: "NR-G2-POST-GATE"
+  instruction: "Stop at the approved NR-G2 Gate. Do not execute real Provider Live Smoke or form or enter NR-2 without separate authorization."

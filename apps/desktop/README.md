@@ -12,4 +12,4 @@ Project Metadata 当前为 `schemaVersion = 2`。v1 工程在 writer lease 与�
 
 窗口关闭只有脏 Markdown 可以阻断，并提供 `保存 / 放弃 / 取消`。确认关闭后窗口立即销毁，不等待项目或 Provider；活动请求在窗口销毁时取消。
 
-生产 IPC 为 24 条，其中 Conversation Command 为 3 条。开发、测试和构建命令见 [docs/development.md](../../docs/development.md)。NR-G1 已获产品批准；当前只评审 NR-1 Draft 1，未授权实施，也未执行真实 Provider Live Smoke。
+生产 IPC 为 24 条，其中 Conversation Command 为 3 条。开发、测试和构建命令见 [docs/development.md](../../docs/development.md)。NR-G1 已获产品批准；当前只等待批准 NR-1 Draft 2 Final，未授权实施，也未执行真实 Provider Live Smoke。

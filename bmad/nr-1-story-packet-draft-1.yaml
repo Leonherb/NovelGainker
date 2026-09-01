@@ -1,6 +1,6 @@
 artifact: "NR-1-D1"
 kind: "story_packet"
-status: "draft"
+status: "superseded"
 updated_at: "2026-09-01T12:00:00+08:00"
 source_gate:
   id: "NR-G1"
@@ -22,5 +22,7 @@ authorization:
   nr_2: false
   live_smoke: false
 next_action:
-  type: "review"
-  instruction: "Review NR1-D1-R01 through NR1-D1-R04; do not implement."
+  type: "superseded"
+  by: "NR-1-D2"
+  path: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2.zh-CN.md"
+  instruction: "Use NR-1-D2 for final review; do not implement."

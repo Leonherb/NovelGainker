@@ -29,6 +29,7 @@
     "e2e:nr004": "node scripts/nr004-provider-conversation-e2e.mjs",
     "e2e:nr005": "node scripts/nr005-conversation-ui-close-e2e.mjs",
     "e2e:nr006": "node scripts/nr006-nrg1-e2e.mjs",
+    "e2e:nr106": "node scripts/nr106-nrg2-e2e.mjs",
     "smoke:desktop:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile debug",
     "smoke:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile release -CaptureEvidence -EvidenceGate nr-g1",
     "quality": "node scripts/quality.mjs"

@@ -1,20 +1,20 @@
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
 use app_core::conversation::{
-    execute_provider_turn, finish_conversation_turn, load_conversation, read_conversation,
-    recent_visible_messages, start_conversation_turn, ConversationProviderTerminalState,
-    ConversationSession, ConversationTerminalKind,
+    finish_conversation_turn, load_conversation, read_conversation, start_conversation_turn,
+    ConversationProviderTerminalState, ConversationSession, ConversationTerminalKind,
 };
+use app_core::conversation_runtime::execute_memory_managed_turn;
 use app_core::coordination::{try_acquire_project_write_lease, ProjectWriteLease};
 use app_core::credential_vault::{CredentialVault, ProviderId, WindowsCredentialVault};
+
 use app_core::project::{
     create_prepared_project, inspect_project_root, open_project, prepare_project_create,
     PreparedProjectCreate, ProjectCreateInputV1, ProjectCreatePreview, ProjectHandle,
     ProjectInspection, ProjectScanMode, ProjectScanPreview,
 };
 use app_core::provider_core::{
-    preset, CancellationToken, FinishReason, MessageRole, NormalizedEvent, NormalizedMessage,
-    NormalizedRequest, ProviderError, ProviderHttpClient, Usage, MAX_MESSAGE_BYTES,
-    MAX_MESSAGE_COUNT, MAX_OUTPUT_TOKENS, MAX_REQUEST_BYTES,
+    preset, CancellationToken, FinishReason, NormalizedEvent, ProviderError, ProviderHttpClient,
+    Usage,
 };
 use app_core::provider_state::{
     delete_provider_key, load_provider_state, save_provider_key, select_provider,
@@ -368,22 +368,6 @@ pub fn conversation_turn_start(
         return Err(error);
     }
 
-    let request = match prepare_conversation_request(&handle) {
-        Ok(request) => request,
-        Err(app_error) => {
-            let _ = finish_conversation_turn(
-                &handle,
-                &started.turn_id,
-                "",
-                ConversationTerminalKind::Failed,
-                Some(&app_error.code),
-                now_ms().unwrap_or(started_at_ms),
-            );
-            state.finish_provider_run(&started.turn_id);
-            return Err(app_error);
-        }
-    };
-
     let result = ConversationTurnStartResult {
         session_id: session_id.clone(),
         conversation_session_id: started.session_id,
@@ -401,7 +385,6 @@ pub fn conversation_turn_start(
             worker_turn_id,
             provider_id,
             model,
-            request,
             cancellation,
         );
     });
@@ -824,7 +807,6 @@ fn run_conversation_provider(
     turn_id: String,
     provider_id: ProviderId,
     model: String,
-    request: NormalizedRequest,
     cancellation: CancellationToken,
 ) {
     let state = app.state::<ProjectRegistry>();
@@ -835,13 +817,12 @@ fn run_conversation_provider(
         state
             .credential_vault
             .with_secret(provider_id, &mut |key| {
-                outcome = Some(execute_provider_turn(
+                outcome = Some(execute_memory_managed_turn(
                     &client,
                     &handle,
                     &turn_id,
                     provider_id,
                     key,
-                    &request,
                     &cancellation,
                     now_ms()?,
                     |event| match event {
@@ -952,27 +933,6 @@ fn run_conversation_provider(
             );
         }
     }
-}
-
-fn prepare_conversation_request(handle: &ProjectHandle) -> Result<NormalizedRequest, AppError> {
-    let session = read_conversation(handle)?;
-    let messages = recent_visible_messages(
-        &session,
-        MAX_MESSAGE_COUNT.saturating_sub(1),
-        MAX_REQUEST_BYTES.saturating_sub(1_024),
-    )
-    .into_iter()
-    .filter(|message| message.content.len() <= MAX_MESSAGE_BYTES)
-    .map(|message| NormalizedMessage {
-        role: match message.role {
-            app_core::conversation::ConversationRole::User => MessageRole::User,
-            app_core::conversation::ConversationRole::Assistant => MessageRole::Assistant,
-        },
-        content: message.content,
-    })
-    .collect();
-    NormalizedRequest::conversation(messages, MAX_OUTPUT_TOKENS)
-        .map_err(AppError::from_provider_error)
 }
 
 fn now_ms() -> Result<u64, AppError> {

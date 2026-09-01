@@ -1,66 +1,66 @@
-# NovelGainker NR-1 规划状态
+# NovelGainker NR-1 交付状态
 
 更新时间：2026-09-01
 
 ## 当前结论
 
-NR-001 → NR-006 与 NR-G1-R01 → NR-G1-R03 已完成，NR-G1 技术提交已获产品批准。
+NR-101 → NR-106 与 NR-G2-R01 → NR-G2-R03 已按批准顺序完成。产品负责人已明确批准 NR-G2 技术提交并确认 Gate 通过，当前停止于 NR-G2：
 
-当前保持：
+- `NR-G2.status = passed`
+- `NR-G2.reviewStatus = approved`
+- `nrG2Approved = true`
+- `remediationImplementationAuthorized = true`
+- `realProviderLiveSmokeExecuted = false`
+- `nr2Authorized = false`
 
-- `NR-G1.status = passed`
-- `nrG1Approved = true`
-- 已形成 `NR-1 Story Packet Draft 1`
-- `nr1ImplementationAuthorized = false`
-- 未执行真实 Provider Live Smoke
+当前不执行真实 Provider Live Smoke，不形成或进入 NR-2；后续动作等待产品负责人另行授权。
 
-NR-G1 技术 Manifest 与报告中的机器声明继续保留“技术提交生成时”的冻结状态，不重写历史 Evidence；当前产品批准记录以 BMAD 状态和报告中的 Gate Decision 为准。
+## NR-G2 Remediation Draft 2
 
-## 已完成基线
+| Story     | 状态      | 关闭目标                                             |
+| --------- | --------- | ---------------------------------------------------- |
+| NR-G2-R01 | completed | 请求级 System 不变量、双 Provider 四条序列化路径保真 |
+| NR-G2-R02 | completed | 仅初始无有效 Memory 可重建；有效 Memory 禁止降级替换 |
+| NR-G2-R03 | completed | Prompt/行语法对齐；顶层结构拒绝且正文不做关键词扫描  |
 
-| Story          | 状态      | 核心交付                                                                                        |
-| -------------- | --------- | ----------------------------------------------------------------------------------------------- |
-| NR-001～NR-006 | completed | 自然对话基线、Conversation Store、单次 Provider Turn、三栏 UI、关闭生命周期与首次技术提交       |
-| NR-G1-R01      | completed | Event 快速通知 + Store 最终事实；listener readiness；活动 Turn 1000ms 自动对账与同步失败恢复    |
-| NR-G1-R02      | completed | Project Metadata `schemaVersion 1 -> 2` 一次性 Clean Slate；保留 Canon、凭据、UI 和无关项目状态 |
-| NR-G1-R03      | completed | 递归发布面、五层 24/3 IPC 闭包、上游 Evidence 派生、违规生产文件与 Report 漂移负向 Gate         |
+Packet：`docs/stories/novelist-agent-runtime-nr-g2-remediation-story-packet-draft-2.zh-CN.md`。
 
-## NR-1 Draft 1
+## 已完成 Story
 
-Packet：`docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md`
+| Story  | 状态      | 核心交付                                                                       |
+| ------ | --------- | ------------------------------------------------------------------------------ |
+| NR-101 | completed | 完整 History 事实源、工程绑定 Memory Store、Segment Cursor、源 Hash 与原子替换 |
+| NR-102 | completed | 字节阈值、近期优先重建、连续覆盖、前向衔接和渐进 Backfill                      |
+| NR-103 | completed | 当前 Provider/CredentialVault 下的纯文本 Compactor；可取消、单 attempt、零重试 |
+| NR-104 | completed | 固定优先级 Context Assembler；压缩失败回退；当前用户消息一次且仅一次           |
+| NR-105 | completed | 重开、Provider 切换、停止与关窗恢复；不新增 History/Memory UI                  |
+| NR-106 | completed | 候选 Profile、10,000 消息与长消息规模证据、预算冻结、NR-G2 Manifest/Report     |
 
-提议顺序：
+## 冻结 Profile
 
-1. NR-101 — History / Memory 合同与派生 Store
-2. NR-102 — 增量覆盖与阈值判断
-3. NR-103 — 有界 Compactor Provider 模式
-4. NR-104 — Context Assembler 与主回复回退
-5. NR-105 — 生命周期与无新增 History UI
-6. NR-106 — 规模测试、预算冻结与 NR-G2 技术提交
+| 参数                        |           值 |
+| --------------------------- | -----------: |
+| Trigger                     |       64 KiB |
+| Protected exact tail        |       24 KiB |
+| Segment content             |        6 KiB |
+| Compactor input             |       72 KiB |
+| Backfill reserve            |        8 KiB |
+| Memory summary              |       12 KiB |
+| Compactor requested output  | 1,024 tokens |
+| Main reply requested output | 4,096 tokens |
+| Cumulative requested output | 5,120 tokens |
 
-本 Draft 只覆盖完整可见 History、Host 增量 Memory、阈值压缩和长对话 Context。Novelist Skill、Agent Tool Loop、Canon 读取或 Markdown 自动维护均不在 NR-1。
+每次用户发送在阈值以下最多 1 次真实 HTTP attempt；触发压缩时最多 2 次。Compactor 与主回复均可取消且零重试。Skill、Tool 与 Canon 操作仍为 0。
 
-## 当前冻结事实
+## 产品边界
 
-- Production Commands：24
-- Conversation Commands：3
-- Provider Calls / Turn：NR-0 基线为 1
-- Skill Calls / Turn：0
-- Tool Calls / Turn：0
-- Canon Operations / Turn：0
-- Store reconciliation 最大间隔：1000ms
-- 自动化外部请求：0
-- 真实 Provider Live Smoke：未执行
+NR-1 只实现完整可见 History、派生 Memory、阈值压缩和长对话 Context。它不加载 Novelist Skill、不读取 Canon 作为模型上下文、不调用 Tool，也不由 AI 创建或更新小说 Markdown。Memory 不是 Canon，也不在中栏生成独立气泡或控制入口。
 
-这些是 NR-G1 已通过基线，不代表 NR-1 的压缩阈值或累计输出预算已经冻结。
+## Gate 证据
 
-## 下一步
+- Packet：`docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md`
+- 技术报告：`docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md`
+- 机器 Manifest：`target/qa/nr-106/nr-g2-manifest.json`
+- 最终验收入口：`pnpm quality`
 
-评审 `NR1-D1-R01`～`NR1-D1-R04`。在明确批准 Final Packet 和连续实施顺序前：
-
-- 不开始 NR-101；
-- 不新增 Memory、Compactor 或 Context Assembler 生产代码；
-- 不加载 Novelist Skill；
-- 不调用 Tool 或读取/写入 Canon；
-- 不执行真实 Provider Live Smoke；
-- 不进入 NR-2。
+NR-G1 与 NR-G2 的历史 Manifest/机器声明保持生成时事实不变；提交后的产品批准记录在各自 Report Gate Decision 与 BMAD 当前状态中。

@@ -54,8 +54,10 @@ const ipc = inspectIpcClosure(root);
 const commandsSource = read("apps/desktop/src-tauri/src/commands_current.rs");
 const handlerProviderRuns =
   (commandsSource.match(/run_conversation_provider\(/gu) ?? []).length - 1;
-const providerExecutions = (commandsSource.match(/execute_provider_turn\(/gu) ?? []).length;
-const releaseConversationPathCount = handlerProviderRuns * providerExecutions;
+const managedRuntimeCalls = (commandsSource.match(/execute_memory_managed_turn\(/gu) ?? []).length;
+const runtimeSource = read("crates/app-core/src/conversation_runtime.rs");
+const providerExecutions = (runtimeSource.match(/execute_provider_turn\(/gu) ?? []).length;
+const releaseConversationPathCount = handlerProviderRuns * managedRuntimeCalls * providerExecutions;
 if (releaseConversationPathCount !== 1) {
   throw new Error(`NR-G1 release Conversation path count drift: ${releaseConversationPathCount}`);
 }
@@ -153,7 +155,6 @@ for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"])
   if (
     !status.includes('status: "passed"') ||
     !status.includes("nrG1Approved: true") ||
-    !status.includes("implementation_authorized: false") ||
     status.includes("real_provider_live_smoke_executed: true")
   ) {
     throw new Error(`NR-G1 BMAD/report Gate state drift: ${relative}`);

@@ -2,11 +2,11 @@ project:
   name: "NovelGainker"
   level: 4
   initialized: "2026-08-29T18:12:34Z"
-  last_updated: "2026-09-01T12:00:00+08:00"
+  last_updated: "2026-09-01T20:28:11+08:00"
 
 current_phase: 4
-current_workflow: "nr-1-story-packet-draft-1"
-baseline_note: "NR-G1 已获产品批准；当前只形成并评审 NR-1 Draft 1，未授权 NR-1 实施或真实 Provider Live Smoke。"
+current_workflow: "nr-g2-gate-passed-stopped"
+baseline_note: "产品负责人已明确批准 NR-G2 技术提交并确认 Gate 通过；当前停止于 NR-G2，不执行真实 Provider Live Smoke，不进入 NR-2，等待后续另行授权。"
 
 phases:
   phase_1_analysis:
@@ -20,65 +20,76 @@ phases:
     status: "completed"
   phase_4_implementation:
     name: "实现"
-    status: "NR-G1-approved-planning-next-increment"
+    status: "NR-G2-passed-stopped"
     packet:
-      id: "NR-0-D2"
+      id: "NR-1-D2-FINAL"
       status: "approved"
-      output_file: "docs/stories/novelist-agent-runtime-nr0-clean-slate-story-packet.zh-CN.md"
+      output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md"
     stories:
       total: 6
       completed: 6
       in_progress: 0
       story_list:
-        - id: "NR-001"
+        - id: "NR-101"
           status: "completed"
-        - id: "NR-002"
+        - id: "NR-102"
           status: "completed"
-        - id: "NR-003"
+        - id: "NR-103"
           status: "completed"
-        - id: "NR-004"
+        - id: "NR-104"
           status: "completed"
-        - id: "NR-005"
+        - id: "NR-105"
           status: "completed"
-        - id: "NR-006"
+        - id: "NR-106"
           status: "completed"
-    remediation_stories:
-      - id: "NR-G1-R01"
-        status: "completed"
-      - id: "NR-G1-R02"
-        status: "completed"
-      - id: "NR-G1-R03"
-        status: "completed"
 
 metrics:
-  progress_scope: "nr_1_packet_planning"
-  progress_percentage: 0
+  progress_scope: "nr_1_implementation"
+  progress_percentage: 100
   estimated_stories: 6
-  completed_stories: 0
+  completed_stories: 6
 
-gate:
+previous_gate:
   id: "NR-G1"
   status: "passed"
   nrG1Approved: true
+  approved_at: "2026-09-01"
+
+gate:
+  id: "NR-G2"
+  status: "passed"
+  review_status: "approved"
+  nrG2Approved: true
   product_approved: true
   approved_at: "2026-09-01"
   real_provider_live_smoke_executed: false
-  report: "docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md"
-  remediation_packet:
-    id: "NR-G1-REMEDIATION-D2-FINAL"
-    status: "approved"
-    implementation_authorized: true
-    output_file: "docs/stories/novelist-agent-runtime-nr-g1-remediation-story-packet-draft-2-final.zh-CN.md"
+  nr_2_authorized: false
+  report: "docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md"
 
-next_packet:
-  id: "NR-1-D1"
-  kind: "story_packet"
-  status: "draft"
-  implementation_authorized: false
+packet:
+  id: "NR-1-D2-FINAL"
+  status: "implemented"
+  implementation_authorized: true
+  implementation_completed: true
   real_provider_live_smoke_authorized: false
-  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md"
+  nr_2_authorized: false
+  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md"
+
+remediation_packet:
+  id: "NR-G2-REMEDIATION-D2"
+  status: "implemented"
+  implementation_authorized: true
+  implementation_completed: true
+  findings:
+    - id: "NR-G2-R01"
+      status: "completed"
+    - id: "NR-G2-R02"
+      status: "completed"
+    - id: "NR-G2-R03"
+      status: "completed"
+  output_file: "docs/stories/novelist-agent-runtime-nr-g2-remediation-story-packet-draft-2.zh-CN.md"
 
 next_action:
-  type: "review"
-  id: "NR-1-Draft-1-review"
-  instruction: "评审 NR-1 Story Packet Draft 1；不实施 NR-101，不执行真实 Provider Live Smoke。"
+  type: "await_product_direction"
+  id: "NR-G2-POST-GATE"
+  instruction: "停止于已通过的 NR-G2；不执行真实 Provider Live Smoke，不形成或进入 NR-2，等待产品负责人另行授权。"

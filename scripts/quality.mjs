@@ -31,6 +31,7 @@ const steps = [
   ["NR-004 Provider Conversation", ["e2e:nr004"]],
   ["NR-005 conversation UI and close lifecycle", ["e2e:nr005"]],
   ["NR-006 final freeze and NR-G1 manifest", ["e2e:nr006"]],
+  ["NR-106 scale evidence and NR-G2 manifest", ["e2e:nr106"]],
   ["Rust format check", ["format:rust"]],
   ["Rust Clippy", ["lint:rust"]],
   ["Rust tests", ["test:rust"]],

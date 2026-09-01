@@ -2,8 +2,10 @@
 pub mod app_state;
 pub mod canon_apply;
 pub mod conversation;
+pub mod conversation_runtime;
 pub mod coordination;
 pub mod credential_vault;
+pub mod memory;
 pub mod project;
 pub mod provider_core;
 pub mod provider_state;

@@ -1,0 +1,47 @@
+artifact: "NR-1-D2-FINAL"
+kind: "story_packet"
+status: "implemented"
+updated_at: "2026-09-01T18:00:00+08:00"
+source_gate:
+  id: "NR-G1"
+  status: "passed"
+  product_approved: true
+supersedes:
+  id: "NR-1-D2"
+  path: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2.zh-CN.md"
+packet:
+  path: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md"
+  draft: 2
+  final: true
+  stories:
+    - "NR-101"
+    - "NR-102"
+    - "NR-103"
+    - "NR-104"
+    - "NR-105"
+    - "NR-106"
+authorization:
+  implementation: true
+  nr_2: false
+  live_smoke: false
+implementation:
+  order:
+    - "NR-101"
+    - "NR-102"
+    - "NR-103"
+    - "NR-104"
+    - "NR-105"
+    - "NR-106"
+  current_story: null
+  completed: true
+  stopped_at: "NR-G2-technical-submission"
+gate:
+  id: "NR-G2"
+  status: "technical_submission"
+  nrG2Approved: false
+  real_provider_live_smoke_executed: false
+  nr_2_authorized: false
+next_action:
+  type: "review_gate"
+  gate: "NR-G2"
+  instruction: "Review the NR-G2 technical submission. No real Provider Live Smoke and no NR-2 without separate explicit approval."

@@ -187,8 +187,12 @@ where
     F: FnMut(NormalizedEvent) + Send,
 {
     let mut accumulated = String::new();
-    let result =
-        client.stream_cancellable_blocking(provider_id, key, request, cancellation, &mut |event| {
+    let result = client.stream_once_cancellable_blocking(
+        provider_id,
+        key,
+        request,
+        cancellation,
+        &mut |event| {
             if let NormalizedEvent::TextDelta { delta, .. } = &event {
                 accumulated.push_str(delta);
             }
@@ -196,7 +200,8 @@ where
                 on_event(event);
             }
             Ok(())
-        });
+        },
+    );
     let (state, kind, finish_reason, provider_error, error_code) = match result {
         Ok(response) if response.finish_reason == FinishReason::Stop => (
             ConversationProviderTerminalState::Completed,

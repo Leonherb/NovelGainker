@@ -3,58 +3,81 @@ project:
   level: 4
 
 sprint:
-  number: "NR-1-Planning"
+  number: "NR-1"
   start_date: "2026-09-01"
-  end_date: null
-  goal: "形成并评审 History / Memory / Compaction Story Packet"
-  status: "story-packet-draft-1"
+  end_date: "2026-09-01"
+  goal: "完整 History、派生 Memory、阈值压缩与长对话 Context"
+  status: "gate_passed_stopped"
 
 stories:
   - id: "NR-101"
     title: "History / Memory 合同与派生 Store"
-    status: "pending_approval"
+    status: "completed"
   - id: "NR-102"
     title: "增量覆盖与阈值判断"
-    status: "pending_approval"
+    status: "completed"
   - id: "NR-103"
     title: "有界 Compactor Provider 模式"
-    status: "pending_approval"
+    status: "completed"
   - id: "NR-104"
     title: "Context Assembler 与主回复回退"
-    status: "pending_approval"
+    status: "completed"
   - id: "NR-105"
     title: "生命周期与无新增 History UI"
-    status: "pending_approval"
+    status: "completed"
   - id: "NR-106"
     title: "规模测试、预算冻结与 NR-G2 技术提交"
-    status: "pending_approval"
+    status: "completed"
 
 metrics:
   total_stories: 6
-  completed_stories: 0
+  completed_stories: 6
   in_progress_stories: 0
   blocked_stories: 0
-  completion_percentage: 0
+  completion_percentage: 100
 
-gate:
+previous_gate:
   id: "NR-G1"
   status: "passed"
   nrG1Approved: true
+
+gate:
+  id: "NR-G2"
+  status: "passed"
+  review_status: "approved"
+  nrG2Approved: true
   product_approved: true
   approved_at: "2026-09-01"
   real_provider_live_smoke_executed: false
-  report: "docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md"
+  nr_2_authorized: false
+  report: "docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md"
 
 packet:
-  id: "NR-1-D1"
-  status: "draft"
-  implementation_authorized: false
+  id: "NR-1-D2-FINAL"
+  status: "implemented"
+  implementation_authorized: true
+  implementation_completed: true
   real_provider_live_smoke_authorized: false
-  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md"
+  nr_2_authorized: false
+  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md"
+
+remediation_packet:
+  id: "NR-G2-REMEDIATION-D2"
+  status: "implemented"
+  implementation_authorized: true
+  implementation_completed: true
+  findings:
+    - id: "NR-G2-R01"
+      status: "completed"
+    - id: "NR-G2-R02"
+      status: "completed"
+    - id: "NR-G2-R03"
+      status: "completed"
+  output_file: "docs/stories/novelist-agent-runtime-nr-g2-remediation-story-packet-draft-2.zh-CN.md"
 
 next_action:
-  type: "review"
-  id: "NR-1-Draft-1-review"
-  instruction: "评审 Draft 1；未授权实施 NR-101，也未授权真实 Provider Live Smoke。"
+  type: "await_product_direction"
+  id: "NR-G2-POST-GATE"
+  instruction: "停止于已通过的 NR-G2；不执行真实 Provider Live Smoke，不形成或进入 NR-2，等待产品负责人另行授权。"
 
-last_updated: "2026-09-01T12:00:00+08:00"
+last_updated: "2026-09-01T20:28:11+08:00"

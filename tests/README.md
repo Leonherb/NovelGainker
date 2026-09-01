@@ -32,4 +32,4 @@ pnpm e2e:sprint1
 pnpm quality
 ```
 
-`pnpm quality` 是唯一完整 Gate；它包含格式、lint、TypeScript、React、NR-001～NR-006 Evidence、Rust、离线编辑闭环、Tauri Debug/Release 构建和 Windows 离线 Smoke。真实 Provider Live Smoke 仍需单独明确授权；NR-1 Draft 1 未授予该权限。
+`pnpm quality` 是唯一完整 Gate；它包含格式、lint、TypeScript、React、NR-001～NR-006 Evidence、Rust、离线编辑闭环、Tauri Debug/Release 构建和 Windows 离线 Smoke。真实 Provider Live Smoke 仍需单独明确授权；NR-1 Draft 2 Final 未授予该权限。

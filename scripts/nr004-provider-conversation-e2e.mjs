@@ -8,6 +8,7 @@ const read = (relative) => readFileSync(path.join(root, relative), "utf8");
 const commands = read("apps/desktop/src-tauri/src/commands_current.rs");
 const provider = read("crates/app-core/src/provider_core.rs");
 const conversation = read("crates/app-core/src/conversation.rs");
+const runtime = read("crates/app-core/src/conversation_runtime.rs");
 const client = read("apps/desktop/src/lib/tauri/conversation.ts");
 
 for (const required of [
@@ -21,12 +22,16 @@ for (const required of [
   }
 }
 for (const required of [
-  "NormalizedRequest::conversation",
+  "assemble_main_request",
   "with_secret",
-  "execute_provider_turn",
-  "stream_cancellable_blocking",
+  "execute_memory_managed_turn",
+  "stream_once_cancellable_blocking",
 ]) {
-  if (!commands.includes(required) && !conversation.includes(required)) {
+  if (
+    !commands.includes(required) &&
+    !conversation.includes(required) &&
+    !runtime.includes(required)
+  ) {
     throw new Error("NR-004 Host boundary missing: " + required);
   }
 }
@@ -39,15 +44,22 @@ const turnEnd = commands.indexOf("pub fn conversation_turn_cancel", turnStart);
 if (turnStart < 0 || turnEnd <= turnStart) throw new Error("Conversation Turn block is missing");
 const turnHandlerBlock = commands.slice(turnStart, turnEnd);
 const providerRunStart = commands.indexOf("fn run_conversation_provider");
-const providerRunEnd = commands.indexOf("fn prepare_conversation_request", providerRunStart);
+const providerRunEnd = commands.indexOf("fn now_ms", providerRunStart);
 if (providerRunStart < 0 || providerRunEnd <= providerRunStart) {
   throw new Error("Conversation Provider runner is missing");
 }
 const providerRunBlock = commands.slice(providerRunStart, providerRunEnd);
+const runtimeStart = runtime.indexOf("pub fn execute_memory_managed_turn");
+const runtimeEnd = runtime.indexOf("#[cfg(test)]", runtimeStart);
+if (runtimeStart < 0 || runtimeEnd <= runtimeStart) {
+  throw new Error("Conversation Memory runtime is missing");
+}
+const runtimeBlock = runtime.slice(runtimeStart, runtimeEnd);
 const providerCallsPerTurn =
   (turnHandlerBlock.match(/run_conversation_provider\(/gu) ?? []).length *
-  (providerRunBlock.match(/execute_provider_turn\(/gu) ?? []).length;
-const releaseTurnPath = turnHandlerBlock + providerRunBlock;
+  (providerRunBlock.match(/execute_memory_managed_turn\(/gu) ?? []).length *
+  (runtimeBlock.match(/execute_provider_turn\(/gu) ?? []).length;
+const releaseTurnPath = turnHandlerBlock + providerRunBlock + runtimeBlock;
 const skillCallsPerTurn = (
   releaseTurnPath.match(/(?:skill_call|execute_skill|invoke_skill)\s*\(/giu) ?? []
 ).length;
