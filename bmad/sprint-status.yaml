@@ -3,96 +3,58 @@ project:
   level: 4
 
 sprint:
-  number: "AM-R2"
-  start_date: "2026-08-30"
-  end_date: "GAR2-technical-submission"
-  goal: "交付 Conversation → Anchor → Canon/Chapter Commit、Context Mark、Conflict、WritePlan/Commit/Undo 与 GAR2 单路径"
-  capacity_points: 144
-  committed_points: 144
-  status: "technical_submitted"
-
-velocity:
-  current_sprint: 144
-  rolling_average: 114
-  history:
-    - sprint: "AM-R1"
-      completed_points: 84
-      status: "technical_submitted"
-    - sprint: "AM-R2"
-      completed_points: 144
-      status: "technical_submitted"
-
-epics:
-  - id: "AGENT-REBASELINE-AM-R2"
-    title: "Conversation → Anchor → Canon/Chapter Commit"
-    status: "completed"
+  number: "NR-1-Planning"
+  start_date: "2026-09-01"
+  end_date: null
+  goal: "形成并评审 History / Memory / Compaction Story Packet"
+  status: "story-packet-draft-1"
 
 stories:
-  - id: "NG-R201"
-    title: "Conversation Anchor Orchestrator"
-    points: 21
-    status: "done"
-    blocker: null
-  - id: "NG-R202"
-    title: "Draft Artifact、Canon Proposal 与实体归一"
-    points: 21
-    status: "done"
-    blocker: null
-  - id: "NG-R203"
-    title: "Context Mark 产品挂载"
-    points: 13
-    status: "done"
-    blocker: null
-  - id: "NG-R204"
-    title: "Conflict Engine 与作者决议"
-    points: 21
-    status: "done"
-    blocker: null
-  - id: "NG-R205"
-    title: "Host WritePlanV2、Commit、Recovery 与 Undo"
-    points: 21
-    status: "done"
-    blocker: null
-  - id: "NG-R206"
-    title: "人物/世界/素材/剧情 Conversation-to-Canon E2E"
-    points: 13
-    status: "done"
-    blocker: null
-  - id: "NG-R207"
-    title: "Conversation-to-Chapter Anchor E2E"
-    points: 13
-    status: "done"
-    blocker: null
-  - id: "NG-R208"
-    title: "GAR2 单路径生产切换、规模门与技术提交"
-    points: 21
-    status: "done"
-    blocker: null
-
-burndown: []
+  - id: "NR-101"
+    title: "History / Memory 合同与派生 Store"
+    status: "pending_approval"
+  - id: "NR-102"
+    title: "增量覆盖与阈值判断"
+    status: "pending_approval"
+  - id: "NR-103"
+    title: "有界 Compactor Provider 模式"
+    status: "pending_approval"
+  - id: "NR-104"
+    title: "Context Assembler 与主回复回退"
+    status: "pending_approval"
+  - id: "NR-105"
+    title: "生命周期与无新增 History UI"
+    status: "pending_approval"
+  - id: "NR-106"
+    title: "规模测试、预算冻结与 NR-G2 技术提交"
+    status: "pending_approval"
 
 metrics:
-  total_stories: 8
-  completed_stories: 8
+  total_stories: 6
+  completed_stories: 0
   in_progress_stories: 0
   blocked_stories: 0
-  total_points: 144
-  completed_points: 144
-  completion_percentage: 100
+  completion_percentage: 0
 
 gate:
-  id: "GAR2"
-  status: "technical_submitted"
-  technical_submission_ready: true
-  product_approved: false
-  review_artifacts:
-    - "target/qa/gar2/gar2-review-report.md"
-    - "target/qa/gar2/gar2-manifest.json"
+  id: "NR-G1"
+  status: "passed"
+  nrG1Approved: true
+  product_approved: true
+  approved_at: "2026-09-01"
+  real_provider_live_smoke_executed: false
+  report: "docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md"
+
+packet:
+  id: "NR-1-D1"
+  status: "draft"
+  implementation_authorized: false
+  real_provider_live_smoke_authorized: false
+  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md"
 
 next_action:
-  type: "review_gate"
-  id: "GAR2"
-  instruction: "独立评审 GAR2 Manifest 与 Review Report；未经明确授权不进入 AM-R3、Sprint 6 或真实 Provider Live Smoke"
-  stop_at: "GAR2-product-decision"
+  type: "review"
+  id: "NR-1-Draft-1-review"
+  instruction: "评审 Draft 1；未授权实施 NR-101，也未授权真实 Provider Live Smoke。"
 
-last_updated: "2026-08-31T00:14:00+08:00"
+last_updated: "2026-09-01T12:00:00+08:00"

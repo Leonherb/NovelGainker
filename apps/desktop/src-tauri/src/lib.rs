@@ -2,14 +2,15 @@ use tauri::Manager;
 
 mod command_manifest;
 #[cfg(not(test))]
+#[path = "commands_current.rs"]
 mod commands;
 #[cfg(test)]
+#[path = "commands_current.rs"]
 pub mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_assert_eq!(app_core::application_name(), "NovelGainker");
-    debug_assert_eq!(novelgainker_workflows::registry().workflows.len(), 6);
     debug_assert_eq!(novelgainker_domain::DOMAIN_CONTRACT_VERSION, 1);
     debug_assert_eq!(
         command_manifest::APP_COMMANDS,
@@ -17,20 +18,9 @@ pub fn run() {
             "health_check",
             "app_state_load",
             "app_state_save_ui",
-            "agent_skill_registry_load",
-            "agent_session_load",
-            "agent_turn_start",
-            "agent_turn_cancel",
-            "agent_session_clear",
-            "agent_memory_compact",
-            "agent_history_branch_resolve",
-            "agent_write_policy_set",
-            "agent_context_mark_upsert",
-            "agent_context_mark_remove",
-            "agent_conflict_resolution_submit",
-            "agent_write_confirmation_submit",
-            "agent_write_plan_reject",
-            "agent_write_undo_apply",
+            "conversation_session_load",
+            "conversation_turn_start",
+            "conversation_turn_cancel",
             "provider_status_load",
             "provider_key_save",
             "provider_key_delete",
@@ -65,20 +55,9 @@ pub fn run() {
             commands::health_check,
             commands::app_state_load,
             commands::app_state_save_ui,
-            commands::agent_commands::agent_skill_registry_load,
-            commands::agent_commands::agent_session_load,
-            commands::agent_commands::agent_turn_start,
-            commands::agent_commands::agent_turn_cancel,
-            commands::agent_commands::agent_session_clear,
-            commands::agent_commands::agent_memory_compact,
-            commands::agent_commands::agent_history_branch_resolve,
-            commands::agent_commands::agent_write_policy_set,
-            commands::agent_commands::agent_context_mark_upsert,
-            commands::agent_commands::agent_context_mark_remove,
-            commands::agent_commands::agent_conflict_resolution_submit,
-            commands::agent_commands::agent_write_confirmation_submit,
-            commands::agent_commands::agent_write_plan_reject,
-            commands::agent_commands::agent_write_undo_apply,
+            commands::conversation_session_load,
+            commands::conversation_turn_start,
+            commands::conversation_turn_cancel,
             commands::provider_status_load,
             commands::provider_key_save,
             commands::provider_key_delete,
@@ -99,7 +78,7 @@ pub fn run() {
             commands::project_close
         ])
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 window
                     .state::<commands::ProjectRegistry>()
                     .cancel_active_provider_run();

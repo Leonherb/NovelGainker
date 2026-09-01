@@ -603,7 +603,7 @@ fn create_scoped_temporary_file(
 }
 
 #[cfg(windows)]
-fn atomic_replace(temporary_path: &Path, target_path: &Path) -> Result<(), AppError> {
+pub(crate) fn atomic_replace(temporary_path: &Path, target_path: &Path) -> Result<(), AppError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -634,7 +634,7 @@ fn atomic_replace(temporary_path: &Path, target_path: &Path) -> Result<(), AppEr
 }
 
 #[cfg(not(windows))]
-fn atomic_replace(temporary_path: &Path, target_path: &Path) -> Result<(), AppError> {
+pub(crate) fn atomic_replace(temporary_path: &Path, target_path: &Path) -> Result<(), AppError> {
     fs::rename(temporary_path, target_path)
         .map_err(|_| file_save_failed("file-save-atomic-replace-failed"))
 }
@@ -1217,7 +1217,7 @@ mod tests {
 
         assert_eq!(document.kind, ProjectFileKind::Metadata);
         assert!(document.read_only);
-        assert!(document.content.contains("\"schemaVersion\": 1"));
+        assert!(document.content.contains("\"schemaVersion\": 2"));
     }
 
     #[test]

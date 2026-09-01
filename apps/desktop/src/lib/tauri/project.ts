@@ -56,7 +56,6 @@ export type ProjectCreatePreview = {
   previewHash: string;
   projectId: string;
   writingLanguage: "zh-CN";
-  workflowPackVersion: "1.0.0";
   defaultProviderId: "openai";
   existingUnrelatedEntryCount: number;
   directories: string[];
@@ -67,7 +66,7 @@ export type ProjectSession = {
   sessionId: string;
   projectId: string;
   displayName: string;
-  schemaVersion: 1;
+  schemaVersion: 2;
   writingLanguage: "zh-CN";
   markdownFileCount: number;
   restoredCurrentFile: string | null;
@@ -130,7 +129,6 @@ const CREATE_PREVIEW_KEYS = [
   "previewHash",
   "projectId",
   "schemaVersion",
-  "workflowPackVersion",
   "writingLanguage",
 ] as const;
 const CREATE_FILE_PREVIEW_KEYS = [
@@ -248,7 +246,6 @@ export function parseProjectCreatePreview(value: unknown): ProjectCreatePreview 
     typeof value.projectId !== "string" ||
     !UUID.test(value.projectId) ||
     value.writingLanguage !== "zh-CN" ||
-    value.workflowPackVersion !== "1.0.0" ||
     value.defaultProviderId !== "openai" ||
     !isCount(value.existingUnrelatedEntryCount) ||
     !Array.isArray(value.directories) ||
@@ -276,7 +273,6 @@ export function parseProjectCreatePreview(value: unknown): ProjectCreatePreview 
     previewHash: value.previewHash,
     projectId: value.projectId,
     writingLanguage: "zh-CN",
-    workflowPackVersion: "1.0.0",
     defaultProviderId: "openai",
     existingUnrelatedEntryCount: value.existingUnrelatedEntryCount,
     directories: [...value.directories],
@@ -329,7 +325,7 @@ export function parseProjectSession(value: unknown): ProjectSession {
     typeof value.projectId !== "string" ||
     !UUID.test(value.projectId) ||
     !isSafeDisplayName(value.displayName) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     value.writingLanguage !== "zh-CN" ||
     !isCount(value.markdownFileCount) ||
     (value.accessMode !== "writer" && value.accessMode !== "readOnly") ||

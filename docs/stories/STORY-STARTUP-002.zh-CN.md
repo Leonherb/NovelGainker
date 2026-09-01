@@ -4,7 +4,7 @@
 - **Epic:** EPIC-STARTUP-RELIABILITY
 - **Priority:** Should Have
 - **Story Points:** 3
-- **Status:** Not Started
+- **Status:** Archived / Unplanned（不属于当前 NR-1；重新启用需单独批准）
 
 ## User Story
 
@@ -32,7 +32,7 @@
 
 ## Dependencies
 
-- **Blocked by:** Sprint 6 暂停；需要用户授权后实现。
+- **Blocked by:** 无当前 Sprint 排期；只有在现行 NR 基线上重新确认问题并单独批准后才可重开。
 - **Blocks:** Windows 开发环境的可重复启动。
 
 ## Testing Requirements

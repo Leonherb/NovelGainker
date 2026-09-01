@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "expectedError": "agent-governance.confirmation-invalid",
-  "changedBindingField": "sourceSetHash",
-  "writesBeforeReconfirmation": 0
-}

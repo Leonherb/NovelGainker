@@ -15,8 +15,6 @@ reqwest = { version = "0.13.4", features = ["blocking", "json"] }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 novelgainker-domain = { path = "../novelgainker-domain" }
-novelgainker-agent = { path = "../novelgainker-agent" }
-novelgainker-workflows = { path = "../novelgainker-workflows" }
 novelgainker-validation = { path = "../novelgainker-validation" }
 rusqlite = { version = "0.37", features = ["bundled"] }
 

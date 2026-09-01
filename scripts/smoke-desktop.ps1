@@ -2,8 +2,8 @@ param(
     [ValidateSet("debug", "release")]
     [string]$Profile = "release",
     [switch]$CaptureEvidence,
-    [ValidateSet("g1", "g2", "g3", "g4", "g5", "ng301", "ng302", "ng303", "ng401")]
-    [string]$EvidenceGate = "g1"
+    [ValidateSet("nr-g1")]
+    [string]$EvidenceGate = "nr-g1"
 )
 
 $ErrorActionPreference = "Stop"

@@ -4,7 +4,7 @@
 - **Epic:** EPIC-STARTUP-RELIABILITY
 - **Priority:** Must Have
 - **Story Points:** 5
-- **Status:** Not Started
+- **Status:** Archived / Unplanned（不属于当前 NR-1；重新启用需单独批准）
 
 ## User Story
 
@@ -25,11 +25,9 @@
 
 为 `AppStateRepository` 保留受控的失败类别与只读诊断摘要；提供显式备份/重建命令，不在自动恢复路径中删除任何状态文件。
 
-### Files/Modules Affected
+### Historical Module Notes
 
-- `crates/app-core/src/app_state.rs` - 状态库失败分类和安全恢复支持。
-- `apps/desktop/src-tauri/src/commands.rs` - 受权限控制的诊断与恢复命令。
-- `apps/desktop/src/App.tsx` - 用户可理解的状态与确认交互。
+该提案引用的是 NR-0 Clean Slate 之前的模块名，不能作为当前实施清单。若未来重新批准，必须先基于现行 `app_state_current.rs`、`commands_current.rs` 与当前 UI 重新形成 Story Packet。
 
 ### Security Considerations
 
@@ -37,7 +35,7 @@
 
 ## Dependencies
 
-- **Blocked by:** Sprint 6 暂停；需要用户授权后实现。
+- **Blocked by:** 无当前 Sprint 排期；只有在现行 NR 基线上重新确认问题并单独批准后才可重开。
 - **Blocks:** 本机偏好与 Provider 配置的可靠恢复。
 
 ## Testing Requirements

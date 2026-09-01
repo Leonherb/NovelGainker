@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-conversation-session-load"
+description = "Enables the conversation_session_load command without any pre-configured scope."
+commands.allow = ["conversation_session_load"]
+
+[[permission]]
+identifier = "deny-conversation-session-load"
+description = "Denies the conversation_session_load command without any pre-configured scope."
+commands.deny = ["conversation_session_load"]

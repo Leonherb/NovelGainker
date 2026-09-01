@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
-import { AgentConversation } from "./components/AgentConversation";
+import { ConversationView } from "./components/ConversationView";
 import { HealthRuntimeSummary, HealthStatusCard } from "./components/HealthStatus";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { DEFAULT_PROVIDER_STATE } from "./components/provider-settings-model";
@@ -74,10 +74,9 @@ function App({ diagnosticsEnabled = false }: AppProps) {
     kind: "idle",
   });
   const [providerState, setProviderState] = useState(DEFAULT_PROVIDER_STATE);
-  const [providerRunActive, setProviderRunActive] = useState(false);
+  const [conversationRunActive, setConversationRunActive] = useState(false);
   const [projectNavigatorHost, setProjectNavigatorHost] = useState<HTMLElement | null>(null);
   const [startupNavigatorHost, setStartupNavigatorHost] = useState<HTMLElement | null>(null);
-  const [agentActivityHost, setAgentActivityHost] = useState<HTMLElement | null>(null);
   const healthCheckStarted = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLElement>(null);
@@ -389,7 +388,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
                 expanded={apiCardExpanded}
                 onExpandedChange={setApiCardExpanded}
                 onStateChange={setProviderState}
-                runActive={providerRunActive}
+                runActive={conversationRunActive}
               />
 
               <HealthStatusCard
@@ -403,12 +402,10 @@ function App({ diagnosticsEnabled = false }: AppProps) {
         ) : null}
 
         <main aria-label={ZH_CN.conversation.ariaLabel} className="conversation-panel">
-          <AgentConversation
-            activityHost={agentActivityHost}
-            desktopRuntime={desktopRuntime}
+          <ConversationView
             key={projectSessionId ?? "no-project"}
+            onRunActiveChange={setConversationRunActive}
             projectSessionId={projectSessionId}
-            onRunActiveChange={setProviderRunActive}
             providerState={providerState}
           />
         </main>
@@ -461,7 +458,6 @@ function App({ diagnosticsEnabled = false }: AppProps) {
           </header>
 
           <div className="right-content">
-            <div className="agent-activity-host" ref={setAgentActivityHost} />
             <div className="project-editor-region">
               <ProjectWorkspace
                 desktopRuntime={desktopRuntime}

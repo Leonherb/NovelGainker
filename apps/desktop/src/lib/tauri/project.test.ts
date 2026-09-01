@@ -38,7 +38,6 @@ const createPreview = {
   previewHash: "a".repeat(64),
   projectId: "30000000-0000-4000-8000-000000000003",
   writingLanguage: "zh-CN",
-  workflowPackVersion: "1.0.0",
   defaultProviderId: "openai",
   existingUnrelatedEntryCount: 0,
   directories: [
@@ -74,7 +73,7 @@ const session = {
   sessionId: "20000000-0000-4000-8000-000000000002",
   projectId: "30000000-0000-4000-8000-000000000003",
   displayName: "我的小说",
-  schemaVersion: 1,
+  schemaVersion: 2,
   writingLanguage: "zh-CN",
   markdownFileCount: 2,
   accessMode: "writer",

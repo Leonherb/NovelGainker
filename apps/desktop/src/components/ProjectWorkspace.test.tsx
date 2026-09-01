@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectWorkspace } from "./ProjectWorkspace";
@@ -29,7 +29,7 @@ const scaffoldContents = [
   ["AGENTS.md", "# 项目约定\n"],
   [
     ".novelgainker/project.json",
-    '{\n  "schemaVersion": 1,\n  "projectId": "30000000-0000-4000-8000-000000000003"\n}\n',
+    '{\n  "schemaVersion": 2,\n  "projectId": "30000000-0000-4000-8000-000000000003"\n}\n',
   ],
 ] as const;
 
@@ -38,7 +38,6 @@ const createPreview: projectApi.ProjectCreatePreview = {
   previewHash: "a".repeat(64),
   projectId: "30000000-0000-4000-8000-000000000003",
   writingLanguage: "zh-CN",
-  workflowPackVersion: "1.0.0",
   defaultProviderId: "openai",
   existingUnrelatedEntryCount: 0,
   directories: [
@@ -65,7 +64,7 @@ const session: projectApi.ProjectSession = {
   sessionId: "20000000-0000-4000-8000-000000000002",
   projectId: "30000000-0000-4000-8000-000000000003",
   displayName: "我的小说",
-  schemaVersion: 1,
+  schemaVersion: 2,
   writingLanguage: "zh-CN",
   markdownFileCount: 3,
   accessMode: "writer",
@@ -269,24 +268,6 @@ describe("NG-105 project workspace", () => {
     expect(screen.queryByText("目前仍为零写入")).not.toBeInTheDocument();
     expect(confirm).toBeDisabled();
     expect(create).not.toHaveBeenCalled();
-  });
-
-  it("reports a real active workflow when it blocks project selection", async () => {
-    const user = userEvent.setup();
-    vi.mocked(projectApi.requestProjectScan).mockRejectedValue({
-      code: "workflow.run_active",
-      messageKey: "errors.workflowRunActive",
-    });
-    render(<ProjectWorkspace desktopRuntime />);
-
-    await user.click(screen.getByRole("button", { name: "打开现有项目" }));
-
-    expect(await screen.findByText("已有工作流正在执行")).toBeInTheDocument();
-    expect(screen.getByText("当前工作流仍在占用运行通道，本次操作尚未执行。")).toBeInTheDocument();
-    expect(
-      screen.getByText("请等待当前工作流结束，或在对应运行界面取消后重试。"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/本轮 Agent/u)).not.toBeInTheDocument();
   });
 
   it("reopens an opaque recent project and restores its relative current file", async () => {
@@ -688,12 +669,15 @@ describe("NG-105 project workspace", () => {
       screen.getByText("继续关闭 NovelGainker 会丢弃当前编辑缓冲区中的修改。"),
     ).toBeInTheDocument();
     expect(harness.port.destroy).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "放弃修改并继续" }));
-    expect(close).toHaveBeenCalledWith(session.sessionId);
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(harness.port.destroy).not.toHaveBeenCalled();
+    await harness.requestClose();
+    await user.click(screen.getByRole("button", { name: "放弃" }));
+    expect(close).not.toHaveBeenCalled();
     expect(harness.port.destroy).toHaveBeenCalledOnce();
   });
 
-  it("closes the active project automatically before closing a clean window", async () => {
+  it("destroys a clean window without first closing the project", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();
     const close = vi.spyOn(projectApi, "requestProjectClose").mockResolvedValue({ closed: true });
@@ -704,17 +688,55 @@ describe("NG-105 project workspace", () => {
     const closeEvent = await harness.requestClose();
 
     expect(closeEvent.preventDefault).toHaveBeenCalledOnce();
-    await waitFor(() => expect(close).toHaveBeenCalledWith(session.sessionId));
+    expect(close).not.toHaveBeenCalled();
     expect(harness.port.destroy).toHaveBeenCalledOnce();
   });
 
-  it("still closes the app when best-effort project cleanup fails", async () => {
+  it("saves a dirty Markdown buffer before committing window close", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();
-    vi.spyOn(projectApi, "requestProjectClose").mockRejectedValue({
-      code: "workflow.run_active",
-      messageKey: "errors.workflowRunActive",
+    const close = vi.spyOn(projectApi, "requestProjectClose").mockResolvedValue({ closed: true });
+    vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue(draftDocument);
+    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "draft.md" }));
+    await user.type(await screen.findByRole("textbox", { name: "项目 Markdown 编辑器" }), "修改");
+    await harness.requestClose();
+
+    const dialog = screen.getByRole("alertdialog", { name: "放弃未保存修改？" });
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(workspaceApi.requestProjectFileSave).toHaveBeenCalledOnce());
+    expect(close).not.toHaveBeenCalled();
+    expect(harness.port.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the window open when save-before-close fails", async () => {
+    const user = userEvent.setup();
+    const harness = createWindowCloseHarness();
+    vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue(draftDocument);
+    vi.mocked(workspaceApi.requestProjectFileSave).mockRejectedValue({
+      code: "file.source_changed",
+      messageKey: "errors.fileSourceChanged",
     });
+    render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "draft.md" }));
+    await user.type(await screen.findByRole("textbox", { name: "项目 Markdown 编辑器" }), "修改");
+    await harness.requestClose();
+
+    const dialog = screen.getByRole("alertdialog", { name: "放弃未保存修改？" });
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText(/保存未完成.*当前编辑内容仍保留/u)).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "放弃未保存修改？" })).toBeInTheDocument();
+    expect(harness.port.destroy).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke project cleanup in the committed window close path", async () => {
+    const user = userEvent.setup();
+    const harness = createWindowCloseHarness();
+    const close = vi.spyOn(projectApi, "requestProjectClose");
     render(<ProjectWorkspace desktopRuntime windowClosePort={harness.port} />);
     await createProject(user);
     await waitFor(() => expect(harness.port.onCloseRequested).toHaveBeenCalledOnce());
@@ -722,6 +744,7 @@ describe("NG-105 project workspace", () => {
     const closeEvent = await harness.requestClose();
 
     expect(closeEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
     await waitFor(() => expect(harness.port.destroy).toHaveBeenCalledOnce());
   });
 
@@ -747,7 +770,7 @@ describe("NG-105 project workspace", () => {
     const metadataDocument: workspaceApi.ProjectFileDocument = {
       ...draftDocument,
       relativePath: ".novelgainker/project.json",
-      content: '{"schemaVersion":1}',
+      content: '{"schemaVersion":2}',
       contentHash: "c".repeat(64),
       kind: "metadata",
       readOnly: true,

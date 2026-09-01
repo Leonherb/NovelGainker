@@ -1,9 +1,8 @@
+use crate::workspace::is_link_or_reparse;
 use crate::AppError;
 use novelgainker_domain::{
     ProjectMetadata, DEFAULT_PROVIDER_ID, DEFAULT_WRITING_LANGUAGE, PROJECT_SCHEMA_VERSION,
-    WORKFLOW_PACK_VERSION,
 };
-use novelgainker_workflows::{workflow_resources, PROJECT_CREATE_WORKFLOW_ID};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
@@ -95,7 +94,6 @@ pub struct ProjectCreatePreview {
     pub preview_hash: String,
     pub project_id: String,
     pub writing_language: String,
-    pub workflow_pack_version: String,
     pub default_provider_id: String,
     pub existing_unrelated_entry_count: u32,
     pub directories: Vec<String>,
@@ -183,12 +181,17 @@ pub struct ProjectInspection {
     preview: ProjectScanPreview,
     snapshot: Vec<SnapshotEntry>,
     metadata: Option<ProjectMetadata>,
+    legacy_schema_version: Option<u16>,
     metadata_hash: Option<u64>,
 }
 
 impl ProjectInspection {
     pub fn preview(&self) -> &ProjectScanPreview {
         &self.preview
+    }
+
+    pub fn requires_clean_slate(&self) -> bool {
+        self.legacy_schema_version == Some(1)
     }
 
     pub fn coordination_key(&self) -> String {
@@ -334,7 +337,8 @@ pub fn inspect_project_root(
     let mut conflicts = Vec::new();
     let markdown_file_count = count_markdown_files(&root, &mut conflicts)?;
     let existing_entry_count = u32::try_from(snapshot.len()).unwrap_or(u32::MAX);
-    let (metadata, metadata_hash) = inspect_metadata(&root, &mut conflicts)?;
+    let (metadata, legacy_schema_version, metadata_hash) = inspect_metadata(&root, &mut conflicts)?;
+    let has_project_metadata = metadata.is_some() || legacy_schema_version.is_some();
 
     let (planned_entries, requires_metadata_confirmation) = match mode {
         ProjectScanMode::Create => {
@@ -343,7 +347,7 @@ pub fn inspect_project_root(
         }
         ProjectScanMode::Open => {
             collect_open_structure_conflicts(&root, &mut conflicts)?;
-            if metadata.is_none() {
+            if !has_project_metadata {
                 if markdown_file_count == 0 {
                     conflicts.push(ProjectConflict {
                         relative_path: "project.md".to_owned(),
@@ -369,7 +373,7 @@ pub fn inspect_project_root(
         display_name,
         existing_entry_count,
         markdown_file_count,
-        has_project_metadata: metadata.is_some(),
+        has_project_metadata,
         requires_metadata_confirmation,
         can_confirm: unique_conflicts.is_empty(),
         planned_entries,
@@ -381,6 +385,7 @@ pub fn inspect_project_root(
         preview,
         snapshot,
         metadata,
+        legacy_schema_version,
         metadata_hash,
     })
 }
@@ -406,7 +411,7 @@ pub fn prepare_project_create(
     }
 
     let input = normalize_project_create_input(input)?;
-    let metadata = ProjectMetadata::v1(Uuid::new_v4().to_string());
+    let metadata = ProjectMetadata::v2(Uuid::new_v4().to_string());
     let files = vec![
         PreparedProjectFile {
             relative_path: "project.md",
@@ -427,7 +432,6 @@ pub fn prepare_project_create(
         preview_hash,
         project_id: metadata.project_id.clone(),
         writing_language: DEFAULT_WRITING_LANGUAGE.to_owned(),
-        workflow_pack_version: WORKFLOW_PACK_VERSION.to_owned(),
         default_provider_id: DEFAULT_PROVIDER_ID.to_owned(),
         existing_unrelated_entry_count: current.preview.existing_entry_count,
         directories: PROJECT_DIRECTORIES
@@ -472,7 +476,12 @@ pub fn open_project(
         return Err(AppError::project_conflict());
     }
 
-    if current.metadata.is_none() {
+    if current.requires_clean_slate() {
+        if !confirm_metadata {
+            return Err(AppError::project_writer_required());
+        }
+        reset_v1_project_state(&current.root)?;
+    } else if current.metadata.is_none() {
         if !confirm_metadata {
             return Err(AppError::project_confirmation_required());
         }
@@ -616,9 +625,8 @@ fn validate_project_create_field(
 }
 
 fn render_project_markdown(input: &ProjectCreateInputV1) -> String {
-    let template = workflow_resources(PROJECT_CREATE_WORKFLOW_ID)
-        .expect("validated project-create resources must be embedded")
-        .template_resource;
+    let template =
+        include_str!("../../../resources/skills/novelist/v1/fixtures/project.template.md");
     let author_frontmatter = input
         .author_display_name
         .as_ref()
@@ -707,7 +715,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn create_metadata_only(root: &Path) -> Result<(), AppError> {
-    let metadata = ProjectMetadata::v1(Uuid::new_v4().to_string());
+    let metadata = ProjectMetadata::v2(Uuid::new_v4().to_string());
     let metadata_json = serialize_metadata(&metadata)?;
     let metadata_directory = root.join(".novelgainker");
     let metadata_path = metadata_directory.join("project.json");
@@ -727,6 +735,74 @@ fn create_metadata_only(root: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+fn reset_v1_project_state(root: &Path) -> Result<(), AppError> {
+    reset_v1_project_state_impl(root, false)
+}
+
+fn reset_v1_project_state_impl(root: &Path, fail_before_commit: bool) -> Result<(), AppError> {
+    let metadata_directory = root.join(".novelgainker");
+    ensure_safe_reset_tree(root, &metadata_directory)?;
+
+    let metadata = ProjectMetadata::v2(Uuid::new_v4().to_string());
+    let metadata_json = serialize_metadata(&metadata)?;
+    let staging_directory = root.join(format!(".novelgainker-v2-stage-{}", Uuid::new_v4()));
+    if staging_directory.parent() != Some(root) {
+        return Err(project_io("project-reset-boundary-failed"));
+    }
+
+    let mut transaction = ProjectTransaction::new();
+    let result = (|| {
+        transaction.create_directory(&staging_directory)?;
+        transaction.write_new_file(
+            &staging_directory.join("project.json"),
+            metadata_json.as_bytes(),
+        )?;
+        if fail_before_commit {
+            return Err(project_io("project-reset-injected-failure"));
+        }
+        fs::remove_dir_all(&metadata_directory)
+            .map_err(|_| project_io("project-reset-remove-failed"))?;
+        fs::rename(&staging_directory, &metadata_directory)
+            .map_err(|_| project_io("project-reset-commit-failed"))?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        transaction.rollback()?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn ensure_safe_reset_tree(root: &Path, metadata_directory: &Path) -> Result<(), AppError> {
+    if !root.is_absolute() || metadata_directory.parent() != Some(root) {
+        return Err(project_io("project-reset-boundary-failed"));
+    }
+    let metadata = fs::symlink_metadata(metadata_directory)
+        .map_err(|_| project_io("project-reset-inspection-failed"))?;
+    if !metadata.is_dir() || is_link_or_reparse(&metadata) {
+        return Err(project_io("project-reset-unsafe-target"));
+    }
+    ensure_safe_reset_descendant(metadata_directory)
+}
+
+fn ensure_safe_reset_descendant(directory: &Path) -> Result<(), AppError> {
+    for entry in
+        fs::read_dir(directory).map_err(|_| project_io("project-reset-inspection-failed"))?
+    {
+        let entry = entry.map_err(|_| project_io("project-reset-inspection-failed"))?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| project_io("project-reset-inspection-failed"))?;
+        if is_link_or_reparse(&metadata) {
+            return Err(project_io("project-reset-unsafe-target"));
+        }
+        if metadata.is_dir() {
+            ensure_safe_reset_descendant(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 fn serialize_metadata(metadata: &ProjectMetadata) -> Result<String, AppError> {
     let mut json =
         serde_json::to_string_pretty(metadata).map_err(|_| AppError::project_invalid_metadata())?;
@@ -742,6 +818,7 @@ fn ensure_inspection_unchanged(
         || expected.preview != current.preview
         || expected.snapshot != current.snapshot
         || expected.metadata != current.metadata
+        || expected.legacy_schema_version != current.legacy_schema_version
         || expected.metadata_hash != current.metadata_hash
     {
         return Err(AppError::project_candidate_changed());
@@ -763,14 +840,25 @@ fn project_handle_from_inspection(
     })
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectMetadataEnvelope {
+    schema_version: u16,
+    project_id: Option<String>,
+}
+
+type InspectedProjectMetadata = (Option<ProjectMetadata>, Option<u16>, Option<u64>);
+
 fn inspect_metadata(
     root: &Path,
     conflicts: &mut Vec<ProjectConflict>,
-) -> Result<(Option<ProjectMetadata>, Option<u64>), AppError> {
+) -> Result<InspectedProjectMetadata, AppError> {
     let metadata_directory = root.join(".novelgainker");
     let directory_metadata = match fs::symlink_metadata(&metadata_directory) {
         Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((None, None, None))
+        }
         Err(_) => return Err(project_io("project-metadata-inspection-failed")),
     };
 
@@ -779,20 +867,22 @@ fn inspect_metadata(
             relative_path: ".novelgainker".to_owned(),
             kind: ProjectConflictKind::SymbolicLink,
         });
-        return Ok((None, None));
+        return Ok((None, None, None));
     }
     if !directory_metadata.is_dir() {
         conflicts.push(ProjectConflict {
             relative_path: ".novelgainker".to_owned(),
             kind: ProjectConflictKind::WrongType,
         });
-        return Ok((None, None));
+        return Ok((None, None, None));
     }
 
     let metadata_path = metadata_directory.join("project.json");
     let file_metadata = match fs::symlink_metadata(&metadata_path) {
         Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((None, None, None))
+        }
         Err(_) => return Err(project_io("project-metadata-inspection-failed")),
     };
     if file_metadata.file_type().is_symlink() {
@@ -800,7 +890,7 @@ fn inspect_metadata(
             relative_path: ".novelgainker/project.json".to_owned(),
             kind: ProjectConflictKind::SymbolicLink,
         });
-        return Ok((None, None));
+        return Ok((None, None, None));
     }
     if !file_metadata.is_file() || file_metadata.len() > MAX_METADATA_BYTES {
         return Err(AppError::project_invalid_metadata());
@@ -810,13 +900,28 @@ fn inspect_metadata(
     File::open(&metadata_path)
         .and_then(|mut file| file.read_to_end(&mut bytes))
         .map_err(|_| project_io("project-metadata-read-failed"))?;
-    let metadata: ProjectMetadata =
-        serde_json::from_slice(&bytes).map_err(|_| AppError::project_invalid_metadata())?;
-    validate_metadata(&metadata)?;
-
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
-    Ok((Some(metadata), Some(hasher.finish())))
+    let metadata_hash = Some(hasher.finish());
+    let envelope: ProjectMetadataEnvelope =
+        serde_json::from_slice(&bytes).map_err(|_| AppError::project_invalid_metadata())?;
+    if envelope
+        .project_id
+        .as_deref()
+        .is_some_and(|project_id| Uuid::parse_str(project_id).is_err())
+    {
+        return Err(AppError::project_invalid_metadata());
+    }
+    match envelope.schema_version {
+        1 => Ok((None, Some(1), metadata_hash)),
+        PROJECT_SCHEMA_VERSION => {
+            let metadata: ProjectMetadata =
+                serde_json::from_slice(&bytes).map_err(|_| AppError::project_invalid_metadata())?;
+            validate_metadata(&metadata)?;
+            Ok((Some(metadata), None, metadata_hash))
+        }
+        _ => Err(AppError::project_unsupported_schema()),
+    }
 }
 
 fn validate_metadata(metadata: &ProjectMetadata) -> Result<(), AppError> {
@@ -824,7 +929,6 @@ fn validate_metadata(metadata: &ProjectMetadata) -> Result<(), AppError> {
         return Err(AppError::project_unsupported_schema());
     }
     if Uuid::parse_str(&metadata.project_id).is_err()
-        || metadata.workflow_pack_version != WORKFLOW_PACK_VERSION
         || metadata.default_provider_id != DEFAULT_PROVIDER_ID
         || metadata.writing_language != DEFAULT_WRITING_LANGUAGE
         || !metadata.strict_chapter_markup
@@ -1028,9 +1132,14 @@ fn project_io(diagnostic: &'static str) -> AppError {
 mod tests {
     use super::{
         create_prepared_project, create_prepared_project_impl, create_project,
-        inspect_project_root, open_project, prepare_project_create, ProjectCreateInputV1,
-        ProjectScanMode, AGENTS_MD,
+        inspect_project_root, open_project, prepare_project_create, reset_v1_project_state_impl,
+        ProjectCreateInputV1, ProjectScanMode, AGENTS_MD,
     };
+    use crate::conversation::{
+        finish_conversation_turn, load_conversation, start_conversation_turn,
+        ConversationTerminalKind,
+    };
+    use crate::credential_vault::ProviderId;
     use novelgainker_domain::ProjectMetadata;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1067,7 +1176,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_the_minimal_v1_scaffold_without_canon_anchors() {
+    fn creates_the_minimal_v2_scaffold_without_runtime_state() {
         let root = TestRoot::new("scaffold");
         let inspection = inspect_project_root(root.path(), ProjectScanMode::Create)
             .expect("empty root must scan");
@@ -1109,7 +1218,7 @@ mod tests {
         let metadata: ProjectMetadata =
             serde_json::from_slice(&metadata_bytes).expect("metadata must match schema");
         assert_eq!(metadata.project_id, handle.project_id());
-        assert_eq!(metadata.schema_version, 1);
+        assert_eq!(metadata.schema_version, 2);
         assert_eq!(metadata.default_provider_id, "openai");
         assert_eq!(metadata.writing_language, "zh-CN");
         assert!(metadata.strict_chapter_markup);
@@ -1323,29 +1432,213 @@ mod tests {
         );
     }
 
+    fn write_v1_state(root: &Path, project_id: &str) {
+        fs::create_dir_all(root.join(".novelgainker/conversation"))
+            .expect("legacy state directory must write");
+        fs::write(
+            root.join(".novelgainker/project.json"),
+            format!("{{\"schemaVersion\":1,\"projectId\":\"{project_id}\",\"retiredState\":true}}"),
+        )
+        .expect("legacy metadata must write");
+        fs::write(
+            root.join(".novelgainker/conversation/session.json"),
+            b"retired conversation",
+        )
+        .expect("legacy conversation must write");
+    }
+
     #[test]
-    fn rejects_unsupported_corrupt_and_sensitive_metadata() {
+    fn v1_clean_slate_runs_once_preserves_canon_and_keeps_new_conversation() {
+        let root = TestRoot::new("v1-clean-slate");
+        let old_project_id = "10000000-0000-4000-8000-000000000001";
+        fs::create_dir_all(root.path().join("materials")).unwrap();
+        fs::create_dir_all(root.path().join("assets")).unwrap();
+        fs::write(root.path().join("project.md"), b"# Canon\n").unwrap();
+        fs::write(root.path().join("materials/note.md"), b"material\n").unwrap();
+        fs::write(root.path().join("assets/cover.bin"), [0_u8, 1, 2, 255]).unwrap();
+        write_v1_state(root.path(), old_project_id);
+        let canon_before = fs::read(root.path().join("project.md")).unwrap();
+        let material_before = fs::read(root.path().join("materials/note.md")).unwrap();
+        let asset_before = fs::read(root.path().join("assets/cover.bin")).unwrap();
+
+        let inspection = inspect_project_root(root.path(), ProjectScanMode::Open).unwrap();
+        assert!(inspection.requires_clean_slate());
+        assert!(inspection.preview().has_project_metadata);
+        assert!(!inspection.preview().requires_metadata_confirmation);
+        let error = open_project(&inspection, false).expect_err("reset requires writer authority");
+        assert_eq!(error.code, "project.writer_required");
+        assert!(root
+            .path()
+            .join(".novelgainker/conversation/session.json")
+            .exists());
+
+        let handle = open_project(&inspection, true).expect("v1 state must reset once");
+        assert_ne!(handle.project_id(), old_project_id);
+        let metadata_bytes = fs::read(root.path().join(".novelgainker/project.json")).unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes).unwrap();
+        assert_eq!(metadata["schemaVersion"], 2);
+        assert_eq!(metadata.as_object().unwrap().len(), 5);
+        assert!(!root.path().join(".novelgainker/conversation").exists());
+        assert_eq!(load_conversation(&handle, 1).unwrap().turns.len(), 0);
+        assert_eq!(
+            fs::read(root.path().join("project.md")).unwrap(),
+            canon_before
+        );
+        assert_eq!(
+            fs::read(root.path().join("materials/note.md")).unwrap(),
+            material_before
+        );
+        assert_eq!(
+            fs::read(root.path().join("assets/cover.bin")).unwrap(),
+            asset_before
+        );
+
+        let started = start_conversation_turn(
+            &handle,
+            ProviderId::Openai,
+            "offline-model",
+            "保留这一轮",
+            2,
+        )
+        .unwrap();
+        finish_conversation_turn(
+            &handle,
+            &started.turn_id,
+            "已保留。",
+            ConversationTerminalKind::Completed,
+            None,
+            3,
+        )
+        .unwrap();
+        let new_project_id = handle.project_id().to_owned();
+
+        let reopened_inspection = inspect_project_root(root.path(), ProjectScanMode::Open).unwrap();
+        assert!(!reopened_inspection.requires_clean_slate());
+        let reopened = open_project(&reopened_inspection, false).unwrap();
+        assert_eq!(reopened.project_id(), new_project_id);
+        assert_eq!(load_conversation(&reopened, 4).unwrap().turns.len(), 1);
+    }
+
+    #[test]
+    fn v2_opens_without_resetting_project_local_state() {
+        let root = TestRoot::new("v2-no-reset");
+        let inspection = inspect_project_root(root.path(), ProjectScanMode::Create).unwrap();
+        let created = create_project(&inspection).unwrap();
+        fs::write(root.path().join(".novelgainker/new-state.bin"), b"keep").unwrap();
+        let project_id = created.project_id().to_owned();
+
+        let open_inspection = inspect_project_root(root.path(), ProjectScanMode::Open).unwrap();
+        assert!(!open_inspection.requires_clean_slate());
+        let opened = open_project(&open_inspection, false).unwrap();
+
+        assert_eq!(opened.project_id(), project_id);
+        assert_eq!(
+            fs::read(root.path().join(".novelgainker/new-state.bin")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn corrupt_missing_unknown_or_non_strict_v2_metadata_never_deletes_state() {
         for (label, json, expected_code) in [
             (
-                "unsupported",
-                r#"{"schemaVersion":2,"projectId":"00000000-0000-4000-8000-000000000000","workflowPackVersion":"1.0.0","defaultProviderId":"openai","writingLanguage":"zh-CN","strictChapterMarkup":true}"#,
+                "unknown",
+                r#"{"schemaVersion":3}"#,
                 "project.unsupported_schema",
             ),
             ("corrupt", "{", "project.invalid_metadata"),
             (
-                "secret-field",
-                r#"{"schemaVersion":1,"projectId":"00000000-0000-4000-8000-000000000000","workflowPackVersion":"1.0.0","defaultProviderId":"openai","writingLanguage":"zh-CN","strictChapterMarkup":true,"apiKey":"sk-secret"}"#,
+                "missing-schema",
+                r#"{"projectId":"00000000-0000-4000-8000-000000000000"}"#,
+                "project.invalid_metadata",
+            ),
+            (
+                "invalid-v1-id",
+                r#"{"schemaVersion":1,"projectId":"not-a-uuid"}"#,
+                "project.invalid_metadata",
+            ),
+            (
+                "retired-field-in-v2",
+                r#"{"schemaVersion":2,"projectId":"00000000-0000-4000-8000-000000000000","retiredField":true,"defaultProviderId":"openai","writingLanguage":"zh-CN","strictChapterMarkup":true}"#,
                 "project.invalid_metadata",
             ),
         ] {
             let root = TestRoot::new(label);
-            fs::create_dir(root.path().join(".novelgainker")).expect("fixture dir must write");
-            fs::write(root.path().join(".novelgainker/project.json"), json)
-                .expect("fixture metadata must write");
+            fs::create_dir_all(root.path().join(".novelgainker/state")).unwrap();
+            fs::write(root.path().join(".novelgainker/project.json"), json).unwrap();
+            fs::write(root.path().join(".novelgainker/state/keep.bin"), b"keep").unwrap();
+            fs::write(root.path().join("project.md"), b"canon").unwrap();
 
             let error = inspect_project_root(root.path(), ProjectScanMode::Open)
-                .expect_err("invalid metadata must be rejected");
+                .expect_err("invalid envelope or v2 contract must fail");
             assert_eq!(error.code, expected_code);
+            assert_eq!(
+                fs::read(root.path().join(".novelgainker/state/keep.bin")).unwrap(),
+                b"keep"
+            );
+            assert_eq!(fs::read(root.path().join("project.md")).unwrap(), b"canon");
         }
+    }
+
+    #[test]
+    fn failure_before_clean_slate_commit_leaves_v1_retriable_and_no_v2_stage() {
+        let root = TestRoot::new("v1-reset-failure");
+        let old_project_id = "20000000-0000-4000-8000-000000000002";
+        fs::write(root.path().join("project.md"), b"canon").unwrap();
+        write_v1_state(root.path(), old_project_id);
+        let metadata_before = fs::read(root.path().join(".novelgainker/project.json")).unwrap();
+        let conversation_before =
+            fs::read(root.path().join(".novelgainker/conversation/session.json")).unwrap();
+
+        let error = reset_v1_project_state_impl(&root.path().canonicalize().unwrap(), true)
+            .expect_err("injected failure must stop before commit");
+        assert_eq!(error.code, "project.io");
+        assert_eq!(
+            fs::read(root.path().join(".novelgainker/project.json")).unwrap(),
+            metadata_before
+        );
+        assert_eq!(
+            fs::read(root.path().join(".novelgainker/conversation/session.json")).unwrap(),
+            conversation_before
+        );
+        assert_eq!(fs::read(root.path().join("project.md")).unwrap(), b"canon");
+        assert!(fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".novelgainker-v2-stage-")
+        }));
+        assert!(inspect_project_root(root.path(), ProjectScanMode::Open)
+            .unwrap()
+            .requires_clean_slate());
+    }
+
+    #[test]
+    fn link_inside_v1_state_blocks_clean_slate_without_touching_canon() {
+        let root = TestRoot::new("v1-reset-link");
+        let old_project_id = "30000000-0000-4000-8000-000000000003";
+        fs::write(root.path().join("project.md"), b"canon").unwrap();
+        fs::write(root.path().join("outside.bin"), b"outside").unwrap();
+        write_v1_state(root.path(), old_project_id);
+        let link = root.path().join(".novelgainker/unsafe-link");
+        #[cfg(windows)]
+        let link_result =
+            std::os::windows::fs::symlink_file(root.path().join("outside.bin"), &link);
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(root.path().join("outside.bin"), &link);
+        if link_result.is_err() {
+            return;
+        }
+
+        let inspection = inspect_project_root(root.path(), ProjectScanMode::Open).unwrap();
+        let error = open_project(&inspection, true).expect_err("link must block reset");
+        assert_eq!(error.code, "project.io");
+        assert_eq!(fs::read(root.path().join("project.md")).unwrap(), b"canon");
+        assert_eq!(
+            fs::read(root.path().join("outside.bin")).unwrap(),
+            b"outside"
+        );
+        assert!(link.exists());
     }
 }

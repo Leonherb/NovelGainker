@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "expectedError": "agent-governance.cross-project-reference",
-  "snapshotProjectId": "prj_00000001",
-  "messageProjectId": "prj_00000002"
-}

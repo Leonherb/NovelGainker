@@ -1,9 +1,15 @@
 # NovelGainker Desktop
 
-基于 Tauri 2 + React/TypeScript 的 Windows 桌面工作台。
+基于 Tauri 2 + React/TypeScript 的 Windows 桌面小说工作台。
 
-当前界面包含可折叠的项目/文件树/Key-only API 左栏、按句呈现对话的统一 Agent Timeline 中栏，以及可收起、可调宽的右侧 Markdown 源文件与 Agent 修改审查栏。打开项目后，所有自然语言输入都进入同一个项目隔离 Session；中栏显示 Provider、Skill、Turn 与读写 Tool 轨迹，右栏显示完整逐文件 Diff、风险、来源/结果/事务 Hash，并提供确认和拒绝，Turn Undo 仍留在中栏。应用继续提供本地项目创建/打开、显式原子保存、外部修改检测、结构诊断、离线搜索、最近项目与布局恢复；选择文件或出现待确认 Diff 时会打开右栏。无 Key、无网络或 Provider 故障时，Agent 输入立即拒绝，但离线编辑仍可使用。
+NR-0 界面保持三栏：左栏是工程、文件树与 Provider 设置；中栏只显示工程内自然对话、输入、停止和终态；右栏是实际 Markdown 编辑器。启动时只需新建或打开工程，不要求预先创建人物、世界或章节。
 
-AM2 生产路径内置 9 项受锁 Skill，注册 `project.list_markdown`、`project.read_markdown`、`project.search_markdown`、`project.validate_markdown` 四个受限读取工具，以及 `project.create_markdown`、`project.patch_markdown` 两个按 Skill/目录治理的写工具。三种策略为 `plan_only`、`review_every_write` 与默认 `auto_apply_safe`；每 Turn 最多一个八文件原子事务，Pending 正文只在内存，Undo 正文使用 Windows 当前用户 DPAPI 保护。DeepSeek/OpenAI 共用严格 Action Schema、预算、同 Provider 单次修复和禁止跨 Provider Fallback 的停止条件。G3～G5 后端仅保留回归，旧 Conversation/Router/表单不再挂载；迁移遗留的孤儿 Workflow 生成状态会在没有真实 Provider Run 时安全终止，恢复记录作为不阻塞、不展示且不自动删除的兼容历史保留，失败发送继续保留输入。
+用户发送后，Rust Host 先保存用户消息与 `running`，再使用当前已配置 Provider 发起一次普通文本请求。DeepSeek/OpenAI 流式输出立即显示；Conversation Store 是终态真值，活动 Turn 每 1000ms 自动对账，即使终态 Event 丢失也不会永久停在“正在回复/正在停止”。对话保存在 `.novelgainker/conversation/session.json`，不进入小说索引或出版输入。
 
-当前界面和 V1/AM2 Runtime 仍是待迁移的 as-built 基线。RB0 与 Agent Protocol V2 已获产品批准，目标改为独立 Conversation/Control、项目内完整可见 History、Host 增量 Memory 和可重建 Context；这些能力尚未实施。当前唯一待评审实施输入是 [AM-R1 Story Packet](../../docs/stories/agent-conversation-authoring-am-r1-story-packet.zh-CN.md)。未批准前不修改 Runtime、不删除旧安全回归，也不执行 Sprint 6 或真实 Provider Live Smoke。开发、测试和构建命令见 [docs/development.md](../../docs/development.md)。
+Project Metadata 当前为 `schemaVersion = 2`。v1 工程在 writer lease 与安全路径检查后只重置一次精确 `.novelgainker/**`，生成新 Project ID；正文、设定、素材、图片、Provider 凭据、UI 偏好和无关项目状态保持不变。
+
+本阶段不加载 Novelist Skill、不读取小说文件作为 AI 上下文、不调用工具、不自动写入 Markdown。右栏手动编辑仍保留原子保存、source hash、外部修改检测、结构诊断、离线搜索和单 Writer 安全。
+
+窗口关闭只有脏 Markdown 可以阻断，并提供 `保存 / 放弃 / 取消`。确认关闭后窗口立即销毁，不等待项目或 Provider；活动请求在窗口销毁时取消。
+
+生产 IPC 为 24 条，其中 Conversation Command 为 3 条。开发、测试和构建命令见 [docs/development.md](../../docs/development.md)。NR-G1 已获产品批准；当前只评审 NR-1 Draft 1，未授权实施，也未执行真实 Provider Live Smoke。

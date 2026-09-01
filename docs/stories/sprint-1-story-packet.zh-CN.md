@@ -79,7 +79,7 @@ G1 Review 应能按以下顺序复现：
 
 新项目创建以下权威结构：
 
-~~~text
+```text
 project.md
 AGENTS.md
 characters/
@@ -95,11 +95,11 @@ chapters/
 published/
 .novelgainker/
   project.json
-~~~
+```
 
 project.json 使用固定的 v1 字段：
 
-~~~json
+```json
 {
   "schemaVersion": 1,
   "projectId": "uuid",
@@ -108,7 +108,7 @@ project.json 使用固定的 v1 字段：
   "writingLanguage": "zh-CN",
   "strictChapterMarkup": true
 }
-~~~
+```
 
 defaultProviderId 只是可移植的非敏感预设提示，不表示 Provider 已配置、已选中或允许联网。该文件不得包含 API Key、Token、Provider Response ID、设备用户名或绝对路径。
 
@@ -136,7 +136,7 @@ defaultProviderId 只是可移植的非敏感预设提示，不表示 Provider �
 
 ## 5. 依赖与执行顺序
 
-~~~mermaid
+```mermaid
 flowchart LR
     G0[G0 已通过] --> NG101[NG-101 项目创建与打开]
     NG101 --> NG102[NG-102 文件树与编辑器]
@@ -148,7 +148,7 @@ flowchart LR
     NG105 --> NG107
     NG106 --> NG107
     NG107 --> G1[G1 Offline Editor]
-~~~
+```
 
 单人团队按以下顺序执行：
 
@@ -565,15 +565,15 @@ NG-107 只有在一台不配置 Provider、没有 Key、禁止外部网络的 Wi
 
 ## 13. 跨 Story 验收矩阵
 
-| 能力 | NG-101 | NG-102 | NG-103 | NG-104 | NG-105 | NG-106 | NG-107 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 项目创建/打开 | 主责 | 使用 | 边界 | Lock | 校验 | 最近项目 | E2E |
-| Markdown 文件树/编辑 | 支撑 | 主责 | 安全保存 | 冲突 | 诊断/搜索 | 当前文件 | E2E |
-| 路径与文件安全 | 初始 Root | 只读白名单 | 主责 | 恢复 | 扫描边界 | 状态隔离 | 攻击矩阵 |
-| Local-first | 约束 | 使用 | 使用 | 恢复 | 搜索 | 偏好 | 主责 |
-| Canon 独立于 App 状态 | 项目格式 | 正文 | 原子写入 | 日志隔离 | 索引可重建 | 主责 | 删除状态 |
-| 无 API/Key/网络 | 约束 | 约束 | 约束 | 约束 | 约束 | 约束 | 回归 |
-| G1 演示 | 必需 | 必需 | 必需 | 必需 | 必需 | 必需 | 汇总 |
+| 能力                  | NG-101    | NG-102     | NG-103   | NG-104   | NG-105     | NG-106   | NG-107   |
+| --------------------- | --------- | ---------- | -------- | -------- | ---------- | -------- | -------- |
+| 项目创建/打开         | 主责      | 使用       | 边界     | Lock     | 校验       | 最近项目 | E2E      |
+| Markdown 文件树/编辑  | 支撑      | 主责       | 安全保存 | 冲突     | 诊断/搜索  | 当前文件 | E2E      |
+| 路径与文件安全        | 初始 Root | 只读白名单 | 主责     | 恢复     | 扫描边界   | 状态隔离 | 攻击矩阵 |
+| Local-first           | 约束      | 使用       | 使用     | 恢复     | 搜索       | 偏好     | 主责     |
+| Canon 独立于 App 状态 | 项目格式  | 正文       | 原子写入 | 日志隔离 | 索引可重建 | 主责     | 删除状态 |
+| 无 API/Key/网络       | 约束      | 约束       | 约束     | 约束     | 约束       | 约束     | 回归     |
+| G1 演示               | 必需      | 必需       | 必需     | 必需     | 必需       | 必需     | 汇总     |
 
 ## 14. Sprint 1 Gate G1
 
@@ -792,6 +792,7 @@ NG-107 只有在一台不配置 Provider、没有 Key、禁止外部网络的 Wi
 - 新增 React 布局测试，覆盖方向键放大/缩小、Home 复位、真实 Pointer 拖动到 500px/600px、拖动状态和窄屏隐藏；前端总计更新为 50 项测试通过；
 - 修正后重新执行 `pnpm quality`，十个阶段全部通过；前端 50 项测试、Rust 工作区测试、NG-104 静态边界、Release 内部构建与真实 Windows 主窗口 Smoke 均通过；
 - 修正版已覆盖 `target/release/novelgainker-desktop.exe`，可直接进行产品验收。
+
 ### 验收边界与后续
 
 - NG-104 的 Watcher 只监视当前已打开文件，并以一秒轮询调用受控 Hash 命令；递归项目监视与本地搜索属于 NG-105，不在本 Story 内；
@@ -915,7 +916,6 @@ NG-107 只有在一台不配置 Provider、没有 Key、禁止外部网络的 Wi
 
 - 产品负责人明确回复“批准 G1 验收，创建 Sprint 2 Story Packet”；
 - G1 最后一项产品 Gate 已勾选，Sprint 1 正式关闭；
-- 已创建 [Sprint 2 Story Packet](./sprint-2-story-packet.zh-CN.md)，状态为等待 Story Packet Review Gate；
+- 当时已创建 Sprint 2 Story Packet；该旧 Packet 后续在 NR-0 Clean Slate 中退役，不再作为当前计划；
 - 该批准只授权创建 Sprint 2 Packet，不等于授权 NG-201 或任何 Provider、Key、Vault 实现；
 - Sprint 2 继续按 1 人、逐 Story 明确授权、严格顺序执行。
-

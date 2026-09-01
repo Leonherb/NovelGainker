@@ -21,7 +21,7 @@ const steps = [
   {
     name: "static no-network and capability boundary",
     command: process.execPath,
-    args: ["scripts/check-sprint0-boundaries.mjs"],
+    args: ["scripts/check-nr0-boundaries.mjs"],
   },
   {
     name: "isolated offline editor round trip",

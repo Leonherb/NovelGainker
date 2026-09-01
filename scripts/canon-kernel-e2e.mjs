@@ -3,8 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 for (const args of [
-  ["test", "-p", "novelgainker-workflows", "--locked", "--offline"],
-  ["test", "-p", "app-core", "--lib", "ng_50", "--locked", "--offline"],
+  ["test", "-p", "app-core", "--lib", "canon_apply::tests", "--locked", "--offline"],
+  ["test", "-p", "app-core", "--lib", "recovery::tests", "--locked", "--offline"],
 ]) {
   const result = spawnSync("cargo", args, {
     cwd: process.cwd(),
@@ -20,20 +20,12 @@ await writeFile(
   `${JSON.stringify(
     {
       schemaVersion: 1,
-      productionMounted: false,
-      coverage: [
-        "serializer",
-        "schema",
-        "transaction",
-        "recovery",
-        "context",
-        "continuity",
-        "ledger",
-      ],
+      productionMounted: true,
+      coverage: ["atomic-write", "transaction", "recovery", "path-boundary"],
       passed: true,
     },
     null,
     2,
   )}\n`,
 );
-console.log("[e2e:canon-kernel] PASS unmounted Canon/continuity safety kernels");
+console.log("[e2e:canon-kernel] PASS data-neutral Canon/recovery safety kernels");

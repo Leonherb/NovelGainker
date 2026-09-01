@@ -1,27 +1,24 @@
 # NovelGainker
 
-桌面优先、Local-first、可切换 AI Provider 的简体中文小说创作工具。
+Windows-first、Local-first、可切换 AI Provider 的简体中文小说创作桌面应用。
 
-当前进度：对话式小说创作 RB0、RB-Q001～RB-Q008 与 Agent Protocol V2 的 AP-Q001～AP-Q010 已于 2026-08-30 获产品批准。新的 AM-R1 Story Packet 正在等待独立 Review Gate；NG-R101、运行时代码修改、旧产品层删除、AM-R2/AM-R3、Sprint 6 与真实 Provider Live Smoke 均未授权。
+当前实现为 NR-0 自然对话基线：三栏界面左侧管理工程、文件与 Provider，中间只承载工程绑定的自然对话，右侧编辑真实 Markdown。每个用户 Turn 最多调用一次 Provider；对话持久化、流式显示、停止、异常终态与 Store 自动对账已实现。
+
+NR-G1 技术提交已获产品批准，当前正在评审 `NR-1 Story Packet Draft 1`，尚未授权 NR-1 实施。现有产品仍不加载 Novelist Skill、不读取 Canon 作为模型上下文、不调用工具、不由 AI 写入 Markdown，也未执行真实 Provider Live Smoke。
 
 ## 开发入口
 
-- [架构](./docs/architecture.zh-CN.md)
-- [对话式小说创作重基线 Plan](./docs/stories/agent-conversation-authoring-rebaseline-plan.zh-CN.md)
-- [Agent Protocol V2 与 Context Mark 规格](./docs/stories/agent-protocol-v2-context-mark-review.zh-CN.md)
-- [Sprint 计划](./docs/sprint-plan.zh-CN.md)
-- [Sprint 0 Story Packet](./docs/stories/sprint-0-story-packet.zh-CN.md)
-- [Sprint 1 Story Packet](./docs/stories/sprint-1-story-packet.zh-CN.md)
-- [Sprint 2 Story Packet](./docs/stories/sprint-2-story-packet.zh-CN.md)
-- [Sprint 3 Story Packet](./docs/stories/sprint-3-story-packet.zh-CN.md)
-- [Sprint 4 Story Packet](./docs/stories/sprint-4-story-packet.zh-CN.md)
-- [Sprint 5 Story Packet](./docs/stories/sprint-5-story-packet.zh-CN.md)
-- [AM-R1 Story Packet（等待产品评审）](./docs/stories/agent-conversation-authoring-am-r1-story-packet.zh-CN.md)
-- [Sprint 6 Story Packet（已暂停）](./docs/stories/sprint-6-story-packet.zh-CN.md)
-- [开发环境](./docs/development.md)
+- [当前架构](./docs/architecture.zh-CN.md)
+- [开发与质量门](./docs/development.md)
+- [当前交付状态](./docs/sprint-plan.zh-CN.md)
+- [NR-0 Clean Slate Story Packet](./docs/stories/novelist-agent-runtime-nr0-clean-slate-story-packet.zh-CN.md)
+- [NR-G1 Remediation Final](./docs/stories/novelist-agent-runtime-nr-g1-remediation-story-packet-draft-2-final.zh-CN.md)
+- [NR-G1 技术重新提交](./docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md)
+- [NR-1 Story Packet Draft 1](./docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md)
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm typecheck
 pnpm test:frontend
 pnpm quality
 pnpm dev

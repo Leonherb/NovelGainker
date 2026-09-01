@@ -1,0 +1,29 @@
+artifact: "NR-G1-REMEDIATION-D2-FINAL"
+kind: "remediation_story_packet"
+status: "implemented"
+updated_at: "2026-09-01T12:00:00+08:00"
+source_gate: "NR-G1"
+packet:
+  path: "docs/stories/novelist-agent-runtime-nr-g1-remediation-story-packet-draft-2-final.zh-CN.md"
+  draft: 2
+  final: true
+  stories:
+    - "NR-G1-R01"
+    - "NR-G1-R02"
+    - "NR-G1-R03"
+authorization:
+  implementation: true
+  nr_g1_approved: true
+  nr_1: false
+  live_smoke: false
+implementation:
+  order:
+    - "NR-G1-R01"
+    - "NR-G1-R02"
+    - "NR-G1-R03"
+  current_story: null
+  stop_after: "NR-G1-technical-submission"
+next_action:
+  type: "complete"
+  gate: "NR-G1"
+  instruction: "NR-G1 product-approved on 2026-09-01; implementation remains stopped."

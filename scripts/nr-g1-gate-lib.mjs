@@ -1,0 +1,261 @@
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+export const CONVERSATION_COMMANDS = [
+  "conversation_session_load",
+  "conversation_turn_start",
+  "conversation_turn_cancel",
+];
+
+const RETIRED_PRODUCT_PATTERNS = [
+  /AgentConversation/gu,
+  /ConversationPlaceholder/gu,
+  /RouterDecision/gu,
+  /agent[_-](?:turn_start|session_load|context_mark|write_plan|conflict_resolution)/giu,
+  /agent-(?:v2|action|governance)/giu,
+  /control[_ -]?json/giu,
+  /skill[_ -]?selection/giu,
+  /workflow[_-](?:catalog|run|prepare|registry)/giu,
+  /proposal[_ -]?json/giu,
+];
+
+const toPosix = (value) => value.split(path.sep).join("/");
+
+function walkFiles(directory, accept = () => true) {
+  if (!existsSync(directory)) return [];
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...walkFiles(absolute, accept));
+    else if (entry.isFile() && accept(absolute)) files.push(absolute);
+  }
+  return files;
+}
+
+function isProductionTypeScript(absolute) {
+  const relative = toPosix(absolute);
+  return (
+    /\.(?:ts|tsx)$/u.test(relative) &&
+    !/\.(?:test|spec)\.(?:ts|tsx)$/u.test(relative) &&
+    !/(?:^|\/)(?:__tests__|fixtures)(?:\/|$)/u.test(relative)
+  );
+}
+
+function configuredProductionResources(repositoryRoot) {
+  const configPath = path.join(repositoryRoot, "apps/desktop/src-tauri/tauri.conf.json");
+  if (!existsSync(configPath)) return [];
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const configured = config.bundle?.resources;
+  if (configured === undefined) return [];
+  const entries =
+    typeof configured === "string"
+      ? [configured]
+      : Array.isArray(configured)
+        ? configured
+        : Object.keys(configured);
+  const files = [];
+  for (const entry of entries) {
+    if (/[*?{}[\]]/u.test(entry)) {
+      throw new Error(`NR-G1 production resource glob requires explicit gate support: ${entry}`);
+    }
+    const absolute = path.resolve(path.dirname(configPath), entry);
+    if (!existsSync(absolute))
+      throw new Error(`NR-G1 configured production resource is missing: ${entry}`);
+    files.push(...(statSync(absolute).isDirectory() ? walkFiles(absolute) : [absolute]));
+  }
+  return files;
+}
+
+export function discoverReleaseSurface(repositoryRoot) {
+  const files = [
+    ...walkFiles(path.join(repositoryRoot, "apps/desktop/src"), isProductionTypeScript),
+    ...walkFiles(path.join(repositoryRoot, "apps/desktop/src-tauri/src")),
+    ...walkFiles(path.join(repositoryRoot, "contracts")),
+    ...configuredProductionResources(repositoryRoot),
+  ];
+  const cratesRoot = path.join(repositoryRoot, "crates");
+  if (existsSync(cratesRoot)) {
+    for (const crate of readdirSync(cratesRoot, { withFileTypes: true })) {
+      if (crate.isDirectory()) files.push(...walkFiles(path.join(cratesRoot, crate.name, "src")));
+    }
+  }
+  return [...new Set(files.map((file) => path.resolve(file)))].sort();
+}
+
+export function scanRetiredProductReferences(repositoryRoot, files) {
+  const findings = [];
+  for (const absolute of files) {
+    const source = readFileSync(absolute, "utf8");
+    for (const pattern of RETIRED_PRODUCT_PATTERNS) {
+      pattern.lastIndex = 0;
+      for (const match of source.matchAll(pattern)) {
+        findings.push({
+          relativePath: toPosix(path.relative(repositoryRoot, absolute)),
+          token: match[0],
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+function uniqueSorted(values, label) {
+  const unique = [...new Set(values)].sort();
+  if (unique.length !== values.length)
+    throw new Error(`NR-G1 ${label} contains duplicate commands`);
+  return unique;
+}
+
+function assertSameCommands(expected, actual, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`NR-G1 ${label} command set drift: ${JSON.stringify(actual)}`);
+  }
+}
+
+export function inspectIpcClosure(repositoryRoot) {
+  const read = (relative) => readFileSync(path.join(repositoryRoot, relative), "utf8");
+  const manifestSource = read("apps/desktop/src-tauri/src/command_manifest.rs");
+  const manifest = uniqueSorted(
+    [...manifestSource.matchAll(/"([a-z][a-z0-9_]*)"/gu)].map((match) => match[1]),
+    "manifest",
+  );
+
+  const handlerSource = read("apps/desktop/src-tauri/src/lib.rs");
+  const handlerBlock = handlerSource.match(/tauri::generate_handler!\[([\s\S]*?)\]\s*\)/u);
+  if (!handlerBlock) throw new Error("NR-G1 Tauri handler registration was not found");
+  const handlers = uniqueSorted(
+    [...handlerBlock[1].matchAll(/commands::([a-z][a-z0-9_]*)/gu)].map((match) => match[1]),
+    "handler",
+  );
+
+  const permissionRoot = path.join(
+    repositoryRoot,
+    "apps/desktop/src-tauri/permissions/autogenerated",
+  );
+  const permissions = uniqueSorted(
+    readdirSync(permissionRoot)
+      .filter((name) => name.endsWith(".toml"))
+      .map((name) => name.slice(0, -5)),
+    "permission",
+  );
+
+  const capability = JSON.parse(read("apps/desktop/src-tauri/capabilities/default.json"));
+  const capabilityCommands = uniqueSorted(
+    capability.permissions
+      .filter(
+        (permission) =>
+          typeof permission === "string" &&
+          permission.startsWith("allow-") &&
+          !permission.includes(":"),
+      )
+      .map((permission) => permission.slice(6).replaceAll("-", "_")),
+    "capability",
+  );
+
+  const clientFiles = walkFiles(
+    path.join(repositoryRoot, "apps/desktop/src"),
+    isProductionTypeScript,
+  );
+  const clients = uniqueSorted(
+    clientFiles
+      .flatMap((file) => [
+        ...readFileSync(file, "utf8").matchAll(
+          /export const [A-Z][A-Z0-9_]*_COMMAND\s*=\s*"([a-z][a-z0-9_]*)"/gu,
+        ),
+      ])
+      .map((match) => match[1]),
+    "TypeScript client",
+  );
+
+  if (manifest.length !== 24)
+    throw new Error(`NR-G1 requires 24 commands, found ${manifest.length}`);
+  for (const [label, commands] of [
+    ["handler", handlers],
+    ["permission", permissions],
+    ["capability", capabilityCommands],
+    ["TypeScript client", clients],
+  ]) {
+    assertSameCommands(manifest, commands, label);
+  }
+  const conversation = manifest.filter((command) => command.startsWith("conversation_"));
+  assertSameCommands([...CONVERSATION_COMMANDS].sort(), conversation, "Conversation");
+  return { manifest, handlers, permissions, capability: capabilityCommands, clients, conversation };
+}
+
+export function releaseScopeSha256(repositoryRoot, files) {
+  const hash = createHash("sha256");
+  for (const absolute of files) {
+    hash.update(toPosix(path.relative(repositoryRoot, absolute)));
+    hash.update("\0");
+    hash.update(readFileSync(absolute));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+export function proveReleaseScannerRejectsNewProductionFile(repositoryRoot) {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "novelgainker-nrg1-release-"));
+  const safeParent = path.resolve(path.dirname(fixtureRoot)) === path.resolve(tmpdir());
+  const safeName = path.basename(fixtureRoot).startsWith("novelgainker-nrg1-release-");
+  if (!safeParent || !safeName) throw new Error("NR-G1 negative-fixture cleanup boundary failed");
+  try {
+    const copiedRoot = path.join(fixtureRoot, "apps/desktop/src");
+    cpSync(path.join(repositoryRoot, "apps/desktop/src"), copiedRoot, { recursive: true });
+    writeFileSync(
+      path.join(copiedRoot, "retired-production-entry.ts"),
+      'export const retiredCommand = "agent_turn_start";\n',
+      "utf8",
+    );
+    const findings = scanRetiredProductReferences(fixtureRoot, discoverReleaseSurface(fixtureRoot));
+    if (!findings.some((finding) => finding.relativePath.endsWith("retired-production-entry.ts"))) {
+      throw new Error("NR-G1 release scanner accepted a new retired production file");
+    }
+    return true;
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+export function parseReportClaims(report) {
+  const match = report.match(
+    /<!-- NR-G1-MANIFEST-CLAIMS:START -->\s*```json\s*([\s\S]*?)\s*```\s*<!-- NR-G1-MANIFEST-CLAIMS:END -->/u,
+  );
+  if (!match) throw new Error("NR-G1 report machine claims are missing");
+  return JSON.parse(match[1]);
+}
+
+export function assertReportClaims(manifest, claims) {
+  const keys = [
+    "status",
+    "nrG1Approved",
+    "productionCommandCount",
+    "conversationCommandCount",
+    "providerCallsPerTurn",
+    "skillCallsPerTurn",
+    "toolCallsPerTurn",
+    "canonOperationsPerTurn",
+    "sessionReconciliationMaximumIntervalMs",
+    "releaseConversationPathCount",
+    "retiredProductReferences",
+    "conversationStartsBlank",
+    "automatedExternalRequests",
+    "realProviderLiveSmokeExecuted",
+  ];
+  for (const key of keys) {
+    if (claims[key] !== manifest[key]) {
+      throw new Error(`NR-G1 report drift for ${key}: ${JSON.stringify(claims[key])}`);
+    }
+  }
+  return true;
+}

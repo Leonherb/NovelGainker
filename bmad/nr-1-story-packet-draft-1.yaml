@@ -1,0 +1,26 @@
+artifact: "NR-1-D1"
+kind: "story_packet"
+status: "draft"
+updated_at: "2026-09-01T12:00:00+08:00"
+source_gate:
+  id: "NR-G1"
+  status: "passed"
+  product_approved: true
+packet:
+  path: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-1.zh-CN.md"
+  draft: 1
+  final: false
+  stories:
+    - "NR-101"
+    - "NR-102"
+    - "NR-103"
+    - "NR-104"
+    - "NR-105"
+    - "NR-106"
+authorization:
+  implementation: false
+  nr_2: false
+  live_smoke: false
+next_action:
+  type: "review"
+  instruction: "Review NR1-D1-R01 through NR1-D1-R04; do not implement."

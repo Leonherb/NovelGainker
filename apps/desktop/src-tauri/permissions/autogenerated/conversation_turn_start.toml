@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-conversation-turn-start"
+description = "Enables the conversation_turn_start command without any pre-configured scope."
+commands.allow = ["conversation_turn_start"]
+
+[[permission]]
+identifier = "deny-conversation-turn-start"
+description = "Denies the conversation_turn_start command without any pre-configured scope."
+commands.deny = ["conversation_turn_start"]

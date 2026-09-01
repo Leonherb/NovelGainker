@@ -1,183 +1,60 @@
-# NovelGainker 当前架构
+# NovelGainker 当前架构（NR-0）
 
-> 状态：AM-R1 / GAR1 技术提交基线（2026-08-30）  
-> 产品门：`gar1Approved=false`；AM-R2、AM-R3、Sprint 6 与真实 Provider Live Smoke 均未授权
+## 产品边界
 
-## 1. 产品定义
+NovelGainker 是 Windows-first、local-first 的 Tauri 2 中文小说写作应用。界面保持三栏：左栏管理工程、文件与 Provider；中栏只承载自然对话；右栏显示真实 Markdown 文件编辑器。启动时只要求新建或打开工程，不要求预先建立人物、世界或章节。
 
-NovelGainker 是 Windows-first、local-first 的 Tauri 2 桌面小说创作应用。作者在工程内与 AI 自然对话；小说 Markdown 与资源文件是唯一 Canon。角色、世界、素材、剧情和章节都可以先讨论再落地，创建工程时不强制预设任何锚点。
+NR-0 只建立可靠的普通对话基线。它不加载 Novelist Skill，不读取小说 Canon 作为模型上下文，不调用工具，也不由 AI 写入 Markdown。后续能力必须经过新的 Story Packet 和 Gate。
 
-当前 AM-R1 只交付“可阅读工程上下文的对话基础”。Agent 可以选择 Novelist-compatible Skill、读取相关 Canon、展示来源并保存工程内聊天与记忆，但 Agent Canon 写入固定为 0。Canon 化、Context Mark、冲突决议和长章写入属于后续独立 Gate。
+## 运行结构
 
-## 2. 工作区与入口
+```text
+React UI
+  ├─ Project / Markdown editor
+  ├─ Provider settings
+  └─ Conversation view
+          │ 3 typed commands + 1 event
+          ▼
+Rust Tauri Host
+  ├─ Project/session registry
+  ├─ Conversation Store
+  ├─ Provider adapters
+  ├─ CredentialVault
+  └─ atomic persistence / recovery / validation kernels
+```
 
-应用启动时必须先让用户新建工程或打开已有工程。新工程只创建最小 Scaffold，不自动生成角色、世界观、剧情或 Story Ledger。
+生产 Command 固定为 24 条，其中 Conversation Command 固定为 `conversation_session_load`、`conversation_turn_start`、`conversation_turn_cancel`。流式事件为 `conversation-turn-event`。Command Manifest、Handler、Permission、Capability 与所有生产 TypeScript Client 必须严格相等。
 
-项目打开后保持三栏常驻：
+## Conversation Store 与对账
 
-- 左栏：工程文件、Provider 设置与项目操作；
-- 中栏：纯 Conversation，只显示用户与 AI 的可见消息、输入框和必要错误；
-- 右栏：Agent 活动，包括状态、所选 Skill、实际来源、Memory、累计预算和历史清理。
+工程内可见对话保存到 `.novelgainker/conversation/session.json`。Store 只保存工程/会话/Turn/Message 标识、顺序、用户可见文本、时间、Provider/模型和终态；不保存 Key、隐藏 Prompt、原始响应、绝对路径或未来能力状态。
 
-中栏不得混入 Control JSON、工具参数、隐藏推理、原始 Provider Payload、Diff 或写入控制。
+Host 在调用 Provider 前先保存用户消息与 `running`。流式字符只保留在进程内，Turn 到达终态时一次保存完整结果；遗留 `running` 在重新打开时变成 `本次回复未生成。`，不会自动重试。
 
-## 3. Canon 与工程结构
+Event 只负责低延迟 Delta 和终态通知，Store 是最终事实源。UI 必须先完成 listener 注册才允许发送；活动 Turn 使用单一非重叠的 1000ms Session reconciliation。终态 Event 会触发立即读取 Store；Event 丢失、延迟、重复或乱序不会产生第二次 Provider 调用或永久活动状态。listener/Store 同步失败会显示“状态同步失败”，并只允许重建 listener 或重新读取 Store。
 
-Canon 只来自受支持的工程 Markdown 与资源：
+## Provider 路径
 
-- `project.md`
-- `characters/**`
-- `world/**`
-- `materials/**`
-- `plot/**`
-- `chapters/**`
-- 受支持的工程根约束文件
+DeepSeek 与 OpenAI 共用普通文本请求模型和同一终态规则。每个 Turn 只调用一次 Provider，Skill/Tool/Canon 操作均为 0。自动化测试只使用本地 Loopback，不读取真实凭据、不访问真实 Provider。生产调用只在用户主动发送时由 Rust Host 临时使用 Windows Credential Manager 中的密钥。
 
-`.novelgainker/agent/**` 是随工程携带的 Agent 元数据，不是 Canon。它必须从普通工程搜索、Context Canon Index、出版输入和普通 Skill 读写范围中排除。
+普通闲聊、空工程、小说讨论与直接创作走同一路径；缺少人物卡、设定或章节不得阻断回复。任何非空模型文本都必须保留；异常结束时附加 `本次内容未生成完成。`，零文本失败显示 `本次回复未生成。`。
 
-所有项目访问都由 Rust 持有的 `ProjectHandle` 和不透明 Session ID 绑定。Provider、WebView、Skill 与工程内容不能提供绝对路径、路径片段、Shell、Process、URL、权限或写入决定。
+## Project Metadata 与一次性切换
 
-## 4. 五个协议平面
+Project Metadata 当前通用格式为 `schemaVersion = 2`。打开工程时 Host 先读取有大小上限的最小信封：v2 才进入严格 Metadata 解析；缺失 Metadata 沿用确认创建路径；损坏、缺失 schema 或未知版本返回稳定错误且不删除内容。
 
-当前实现严格分离五个平面：
+v1 表示本次可丢弃的旧应用状态。只有在取得 writer lease、确认规范化项目根和拒绝 `.novelgainker` 内 symlink/reparse point 后，Host 才以已准备的 v2 状态替换精确 `.novelgainker/**`，生成新 Project ID。失败不会留下可合法打开的 v1/v2 混合状态；成功后二次打开保持新 ID 与 Conversation，不再重置。
 
-1. **Conversation**：用户可见自然语言消息；Provider `conversation` 调用返回纯文本流。
-2. **Control**：`SkillSelectionV2` 或 `AgentControlActionV2` 的严格 JSON；两者互斥，不得作为聊天正文展示。
-3. **Content**：Host 从 Canon Index 读取的有界、不可信 Source Result。
-4. **Canon**：小说工程 Markdown；AM-R1 Agent 无写权限。
-5. **Persistence**：工程内 History、Memory、来源和分支元数据。
+全局 App State 在单一事务中删除同一规范化根关联的旧 `recent_projects` 与 `project_files`，随后只记录新 Project ID。Provider Settings、UI Preferences、无关项目记录和 Windows Credential Manager 凭据不在重置范围；小说 Markdown、素材与图片逐字节保持不变。
 
-Provider 每次调用只使用一种固定模式。AM-R1 激活 `control`、`conversation` 和按阈值触发的 `memory_compaction`；Composition、Reconciliation、Context Mark、Conflict 和 Write 全部 Policy Blocked。
+## 关闭生命周期
 
-## 5. Agent Protocol V2
+原始窗口关闭请求只检查手动 Markdown 是否未保存。只有这种情况会显示 `保存 / 放弃 / 取消`：保存成功或放弃后关窗，保存失败或取消则留在窗口且当前 AI Turn 继续。确认关窗后直接销毁窗口，不等待项目关闭、Provider 或 Conversation flush；窗口销毁事件负责取消活动请求。
 
-生产 Agent IPC 固定为七条：
+## 发布 Gate
 
-- `agent_skill_registry_load`
-- `agent_session_load`
-- `agent_turn_start`
-- `agent_turn_cancel`
-- `agent_session_clear`
-- `agent_memory_compact`
-- `agent_history_branch_resolve`
+NR-G1 Gate 递归发现 `apps/desktop/src` 的生产 TS/TSX、Tauri/Rust 生产源码、当前 contracts 和 Tauri 明确配置的 production resources；测试和历史文档不计入退役产品引用。Gate 同时比较五层 IPC 集合、读取上游测试 Evidence、校验当前 Report 声明，并用临时生产文件证明新增退役入口会被拒绝。
 
-典型 Turn 顺序：
+## Gate 状态
 
-1. Host 校验工程 Session、当前 Provider、History 状态和 GAR1 Budget Profile。
-2. Provider 以 `control/skill_selection` 从完整 eligible Skill 集合做语义选择。
-3. Host 根据已选 Skill 和用户意图规划、执行 Canon Context Query；Provider 无路径控制权。
-4. 如需多轮 Context，Provider 只能返回严格 `AgentControlActionV2`；Host 决定查询是否合法并累加来源。
-5. Provider 以独立 `conversation` 请求生成用户可见文本流。
-6. Host 写入终态 History Record、来源和增量 Memory；Agent Canon 写入数仍为 0。
-7. 取消、失败、预算耗尽或损坏都形成稳定、可见、可恢复的终态。
-
-Control 与 Conversation 不共用输出契约。Conversation 请求不得要求 JSON，Control JSON 不得进入中栏消息。
-
-## 6. Bundled Skill Runtime
-
-发行包内置并锁定九项 Novelist-compatible Skill：
-
-- `create-novel-project`
-- `create-setting`
-- `create-character`
-- `create-material`
-- `create-plot`
-- `novel-story-telling`
-- `analytical-review`
-- `create-visual-asset`
-- `publish-novel`
-
-Runtime Loader 读取完整 instructions、templates 与 references，验证来源、许可、Manifest 和每个资源 Hash。生产运行时不读取 Codex/Novelist 插件缓存、用户 `SKILL.md`、Python sidecar、用户目录或网络 Skill。
-
-Skill 选择是对完整 eligible 集合的语义选择，不使用关键词过滤。Skill 只能影响写作方法与 Context 需求，不能授予工具、路径或写权限。
-
-## 7. Context Index 与 SourceRef
-
-`ProjectContextIndexV2` 每次从当前 Canon 重建，不把数据库或 Agent 元数据当作隐藏事实来源。索引：
-
-- 只遍历批准目录和文件类型；
-- 拒绝绝对路径、遍历、隐藏目录、符号链接/联接逃逸、非 UTF-8 和超限文件；
-- 按内容 Hash、相对路径和语义信息生成确定性来源；
-- 为每个结果返回稳定 `sourceId`、相对路径、内容/摘录 Hash、标题路径和有界摘录；
-- 把所有工程内容标为 `untrusted=true`。
-
-右栏显示实际读取来源。跨人物/关系、世界规则、剧情线程和最近章节的来源在同一 Turn 中只增不丢；宽泛 n-gram 不得制造无关命中。
-
-GAR1 规模门使用不少于 120 章、50 万中文字符、48 个真值查询的确定性合成工程，并要求 Canon Hash 前后相同、Agent 元数据/项目外命中为 0。
-
-## 8. History、Memory 与同步分支
-
-首次创建工程聊天历史前，应用必须说明完整可见对话将写入 `.novelgainker/agent/`，可能随 Git/同步工具复制，并可能包含私人创作内容。用户同意前不创建 History。
-
-History 采用工程隔离的 JSONL Hash Chain，记录可见用户/助手消息、终态、Skill 和 SourceRef。单条消息、单 Turn 来源数、ID、路径、Hash 与正文长度均有固定上限。损坏历史隔离处理，不把损坏正文回显到错误。
-
-若同步产生多个有效 Branch，应用必须要求用户显式选择当前 Branch；不得自动合并、覆盖或删除。损坏 Branch 不可选择。
-
-Memory 由 Host 在每个终态 Turn 后增量维护，保存来源绑定的摘要与计数。只有 `needsCompaction=true` 或用户显式操作时才调用 `memory_compaction`；请求绑定 Session ID 与当前 Memory Hash，防止陈旧结果覆盖。
-
-清空当前会话或全部历史只删除 `.novelgainker/agent/**` 中对应状态，不改 Canon。
-
-## 9. Provider 与预算
-
-DeepSeek 与 OpenAI 使用固定、只读的 Provider Preset、TLS Host、模型和协议。Key 只存 Windows Credential Manager；项目、SQLite、前端状态、日志、证据和错误不能包含 Key、掩码、尾号、Hash 或指纹。
-
-两个 Adapter 归一化到同一 V2 调用与事件模型：
-
-- 同一时间最多一个活动 Provider Run；
-- 取消信号贯穿响应头、流式正文和 Host 安全点；
-- 不自动跨 Provider Fallback；
-- 格式修复最多一次且只能留在同一 Provider/同一模式；
-- 原始 Payload、隐藏状态和敏感输入不进入 WebView 或证据。
-
-`BudgetProfileV2(scope=gar1_read_only)` 累计 Provider Calls、Input/Output Tokens、Context Results、修复次数和耗时。所有重试共享同一个计数器；未激活能力预算固定为 0，不能借重试或模式切换绕过。
-
-## 10. 持久化与恢复
-
-App State 继续保存 UI、最近工程、Provider 非秘密状态以及旧事务恢复所需的有界元数据。它不能成为 Canon。旧 App State reader 仍用于安全打开和终结已有状态，但旧产品入口不再注册。
-
-工程内 Agent 数据使用已知文件名、原子替换和 Hash 绑定。任何损坏、版本过新、Hash 漂移或分支冲突都必须在写入前失败。打开工程时仍执行既有 Recovery Journal 与 Agent Transaction/Undo 恢复，确保重基线不破坏已有工程。
-
-## 11. 生产命令与能力面
-
-生产 Command Manifest 固定为 28 条：
-
-- 3 条 Health/App UI State；
-- 7 条 Agent Protocol V2；
-- 5 条 Provider 设置/连接；
-- 13 条工程扫描、创建、打开、读取、手动编辑、搜索和关闭。
-
-Command Manifest、`generate_handler!`、自动生成权限、主窗口 Capability、TypeScript Client 和静态边界门必须逐项相等。旧 Provider Chat、Router、Workflow、Story、Timeline 和 Agent V1/写入产品命令全部未注册、未授权、无 TypeScript Agent 调用入口。
-
-WebView 不获得 Shell、Process、Opener、任意 URL、任意命令名或操作系统路径。
-
-## 12. 未挂载安全 Kernel
-
-以下能力保留为 AM-R2 可复用的 Rust 安全 Kernel，但 AM-R1 不挂载到产品 IPC：
-
-- Markdown create/patch 预检、Schema、完整 Diff 与 Hash 绑定；
-- 风险分类、三档历史授权策略和一次性确认；
-- 多文件原子事务、Recovery Journal、DPAPI Undo；
-- 章节 Serializer、连续性、状态迁移和 Story Ledger 规则；
-- 路径逃逸、Prompt Injection、敏感 Canary、取消、冲突、故障注入和零部分提交回归。
-
-测试构建通过直接 Harness 调用这些模块。它们的存在不表示产品写入口、Context Mark 或冲突决议已授权。
-
-## 13. GAR1 技术提交状态
-
-NG-R101～NG-R106 的实现和机器可读证据构成 GAR1 技术提交。提交必须保持：
-
-- `agentCanonWriteCount=0`
-- `productionCommandCount=28`
-- `productionAgentIpcCount=7`
-- `realProviderLiveSmokeExecuted=false`
-- `gar1Approved=false`
-- `amR2Authorized=false`
-- `amR3Authorized=false`
-
-GAR1 技术提交不等于产品批准。未获得后续明确授权前，不得实现 AM-R2 Canon 化/Context Mark/冲突/Commit V2，不得实现 AM-R3 长章生成或出版闭环，不得启动 Sprint 6 或真实 Provider Live Smoke。
-
-权威执行资料：
-
-- [AM-R1 Story Packet](./stories/agent-conversation-authoring-am-r1-story-packet.zh-CN.md)
-- [Agent Protocol V2 与 Context Mark 规格](./stories/agent-protocol-v2-context-mark-review.zh-CN.md)
-- [对话式小说创作重基线 Plan](./stories/agent-conversation-authoring-rebaseline-plan.zh-CN.md)
+NR-G1 已获产品批准。当前只形成并评审 NR-1 Story Packet Draft 1；Memory、自动压缩和长对话 Context 尚未实施，Novelist Skill、工具与文件操作仍属于更后阶段。真实 Provider Live Smoke 未执行。

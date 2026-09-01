@@ -51,10 +51,8 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "app-core"
 version = "0.1.0"
 dependencies = [
- "novelgainker-agent",
  "novelgainker-domain",
  "novelgainker-validation",
- "novelgainker-workflows",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2097,22 +2095,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "novelgainker-agent"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "novelgainker-desktop"
 version = "0.1.0"
 dependencies = [
  "app-core",
- "novelgainker-agent",
  "novelgainker-domain",
- "novelgainker-workflows",
  "serde",
  "serde_json",
  "sha2",
@@ -2135,17 +2122,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "sha2",
-]
-
-[[package]]
-name = "novelgainker-workflows"
-version = "0.1.0"
-dependencies = [
- "novelgainker-validation",
- "serde",
- "serde_json",
- "sha2",
- "uuid",
 ]
 
 [[package]]

@@ -1,14 +1,7 @@
-pub mod agent_anchor;
-pub mod agent_canon;
-pub mod agent_conflict;
-pub mod agent_marks;
-pub mod agent_runtime;
-pub mod agent_transaction;
-pub mod agent_v2;
-pub mod agent_write;
-pub mod agent_write_plan_v2;
+#[path = "app_state_current.rs"]
 pub mod app_state;
 pub mod canon_apply;
+pub mod conversation;
 pub mod coordination;
 pub mod credential_vault;
 pub mod project;
@@ -64,7 +57,6 @@ pub const APP_ERROR_FILE_INVALID_SOURCE_HASH_CODE: &str = "file.invalid_source_h
 pub const APP_ERROR_FILE_SAVE_FAILED_CODE: &str = "file.save_failed";
 pub const APP_ERROR_SEARCH_INVALID_QUERY_CODE: &str = "search.invalid_query";
 pub const APP_ERROR_APP_STATE_UNAVAILABLE_CODE: &str = "app_state.unavailable";
-pub const APP_ERROR_AGENT_CONTRACT_CODE: &str = "agent.contract";
 pub const APP_ERROR_PROVIDER_INVALID_ID_CODE: &str = "provider.invalid_id";
 pub const APP_ERROR_PROVIDER_KEY_INVALID_CODE: &str = "provider.key_invalid";
 pub const APP_ERROR_PROVIDER_VAULT_UNAVAILABLE_CODE: &str = "provider.vault_unavailable";
@@ -81,22 +73,6 @@ pub const APP_ERROR_PROVIDER_CANCELLED_CODE: &str = "provider.cancelled";
 pub const APP_ERROR_PROVIDER_NOT_READY_CODE: &str = "provider.not_ready";
 pub const APP_ERROR_PROVIDER_RUN_ACTIVE_CODE: &str = "provider.run_active";
 pub const APP_ERROR_PROVIDER_RUN_NOT_FOUND_CODE: &str = "provider.run_not_found";
-pub const APP_ERROR_WORKFLOW_RUN_ACTIVE_CODE: &str = "workflow.run_active";
-pub const APP_ERROR_WORKFLOW_INVALID_STATE_CODE: &str = "workflow.invalid_state";
-pub const APP_ERROR_WORKFLOW_CONFIRMATION_REQUIRED_CODE: &str = "workflow.confirmation_required";
-pub const APP_ERROR_WORKFLOW_UNAVAILABLE_CODE: &str = "workflow.unavailable";
-pub const APP_ERROR_WORKFLOW_INPUT_INVALID_CODE: &str = "workflow.input_invalid";
-pub const APP_ERROR_WORKFLOW_CONTEXT_CHANGED_CODE: &str = "workflow.context_changed";
-pub const APP_ERROR_WORKFLOW_SOURCE_NOT_ALLOWED_CODE: &str = "workflow.source_not_allowed";
-pub const APP_ERROR_WORKFLOW_SOURCE_LIMIT_EXCEEDED_CODE: &str = "workflow.source_limit_exceeded";
-pub const APP_ERROR_WORKFLOW_OUTPUT_PENDING_CODE: &str = "workflow.output_pending";
-pub const APP_ERROR_WORKFLOW_OUTPUT_INVALID_CODE: &str = "workflow.output_invalid";
-pub const APP_ERROR_WORKFLOW_REPAIR_FAILED_CODE: &str = "workflow.repair_failed";
-pub const APP_ERROR_WORKFLOW_PROPOSAL_EXPIRED_CODE: &str = "workflow.proposal_expired";
-pub const APP_ERROR_WORKFLOW_TARGET_CONFLICT_CODE: &str = "workflow.target_conflict";
-pub const APP_ERROR_WORKFLOW_WRITER_REQUIRED_CODE: &str = "workflow.writer_required";
-pub const APP_ERROR_WORKFLOW_RECOVERY_REQUIRED_CODE: &str = "workflow.recovery_required";
-pub const APP_ERROR_WORKFLOW_VALIDATION_FAILED_CODE: &str = "workflow.validation_failed";
 pub const APP_ERROR_PROJECT_SESSION_NOT_FOUND_KEY: &str = "errors.projectSessionNotFound";
 pub const APP_ERROR_FILE_INVALID_PATH_KEY: &str = "errors.fileInvalidPath";
 pub const APP_ERROR_FILE_NOT_FOUND_KEY: &str = "errors.fileNotFound";
@@ -110,7 +86,6 @@ pub const APP_ERROR_FILE_INVALID_SOURCE_HASH_KEY: &str = "errors.fileInvalidSour
 pub const APP_ERROR_FILE_SAVE_FAILED_KEY: &str = "errors.fileSaveFailed";
 pub const APP_ERROR_SEARCH_INVALID_QUERY_KEY: &str = "errors.searchInvalidQuery";
 pub const APP_ERROR_APP_STATE_UNAVAILABLE_KEY: &str = "errors.appStateUnavailable";
-pub const APP_ERROR_AGENT_CONTRACT_KEY: &str = "errors.agentContract";
 const REDACTED_DIAGNOSTIC: &str = "diagnostic-redacted";
 pub const APP_ERROR_PROVIDER_INVALID_ID_KEY: &str = "errors.providerInvalidId";
 pub const APP_ERROR_PROVIDER_KEY_INVALID_KEY: &str = "errors.providerKeyInvalid";
@@ -130,24 +105,6 @@ pub const APP_ERROR_PROVIDER_CANCELLED_KEY: &str = "errors.providerCancelled";
 pub const APP_ERROR_PROVIDER_NOT_READY_KEY: &str = "errors.providerNotReady";
 pub const APP_ERROR_PROVIDER_RUN_ACTIVE_KEY: &str = "errors.providerRunActive";
 pub const APP_ERROR_PROVIDER_RUN_NOT_FOUND_KEY: &str = "errors.providerRunNotFound";
-pub const APP_ERROR_WORKFLOW_RUN_ACTIVE_KEY: &str = "errors.workflowRunActive";
-pub const APP_ERROR_WORKFLOW_INVALID_STATE_KEY: &str = "errors.workflowInvalidState";
-pub const APP_ERROR_WORKFLOW_CONFIRMATION_REQUIRED_KEY: &str =
-    "errors.workflowConfirmationRequired";
-pub const APP_ERROR_WORKFLOW_UNAVAILABLE_KEY: &str = "errors.workflowUnavailable";
-pub const APP_ERROR_WORKFLOW_INPUT_INVALID_KEY: &str = "errors.workflowInputInvalid";
-pub const APP_ERROR_WORKFLOW_CONTEXT_CHANGED_KEY: &str = "errors.workflowContextChanged";
-pub const APP_ERROR_WORKFLOW_OUTPUT_PENDING_KEY: &str = "errors.workflowOutputPending";
-pub const APP_ERROR_WORKFLOW_SOURCE_NOT_ALLOWED_KEY: &str = "errors.workflowSourceNotAllowed";
-pub const APP_ERROR_WORKFLOW_SOURCE_LIMIT_EXCEEDED_KEY: &str = "errors.workflowSourceLimitExceeded";
-pub const APP_ERROR_WORKFLOW_OUTPUT_INVALID_KEY: &str = "errors.workflowOutputInvalid";
-pub const APP_ERROR_WORKFLOW_REPAIR_FAILED_KEY: &str = "errors.workflowRepairFailed";
-
-pub const APP_ERROR_WORKFLOW_PROPOSAL_EXPIRED_KEY: &str = "errors.workflowProposalExpired";
-pub const APP_ERROR_WORKFLOW_TARGET_CONFLICT_KEY: &str = "errors.workflowTargetConflict";
-pub const APP_ERROR_WORKFLOW_WRITER_REQUIRED_KEY: &str = "errors.workflowWriterRequired";
-pub const APP_ERROR_WORKFLOW_RECOVERY_REQUIRED_KEY: &str = "errors.workflowRecoveryRequired";
-pub const APP_ERROR_WORKFLOW_VALIDATION_FAILED_KEY: &str = "errors.workflowValidationFailed";
 pub const fn application_name() -> &'static str {
     "NovelGainker"
 }
@@ -367,26 +324,6 @@ impl AppError {
         )
     }
 
-    pub fn agent_contract(code: &str) -> Self {
-        let stable_code = if (code.starts_with("agent-") || code.starts_with("agent."))
-            && !code.is_empty()
-            && code.len() <= 96
-            && code.bytes().all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || matches!(byte, b'.' | b'-' | b'_')
-            }) {
-            code.to_owned()
-        } else {
-            APP_ERROR_AGENT_CONTRACT_CODE.to_owned()
-        };
-        Self {
-            code: stable_code,
-            message_key: APP_ERROR_AGENT_CONTRACT_KEY.to_owned(),
-            diagnostic: None,
-        }
-    }
-
     pub fn provider_invalid_id() -> Self {
         Self::new(
             APP_ERROR_PROVIDER_INVALID_ID_CODE,
@@ -478,116 +415,6 @@ impl AppError {
         )
     }
 
-    pub fn workflow_run_active() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_RUN_ACTIVE_CODE,
-            APP_ERROR_WORKFLOW_RUN_ACTIVE_KEY,
-        )
-    }
-
-    pub fn workflow_invalid_state() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_INVALID_STATE_CODE,
-            APP_ERROR_WORKFLOW_INVALID_STATE_KEY,
-        )
-    }
-
-    pub fn workflow_confirmation_required() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_CONFIRMATION_REQUIRED_CODE,
-            APP_ERROR_WORKFLOW_CONFIRMATION_REQUIRED_KEY,
-        )
-    }
-
-    pub fn workflow_unavailable() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_UNAVAILABLE_CODE,
-            APP_ERROR_WORKFLOW_UNAVAILABLE_KEY,
-        )
-    }
-
-    pub fn workflow_input_invalid() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_INPUT_INVALID_CODE,
-            APP_ERROR_WORKFLOW_INPUT_INVALID_KEY,
-        )
-    }
-
-    pub fn workflow_context_changed() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_CONTEXT_CHANGED_CODE,
-            APP_ERROR_WORKFLOW_CONTEXT_CHANGED_KEY,
-        )
-    }
-
-    pub fn workflow_source_not_allowed() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_SOURCE_NOT_ALLOWED_CODE,
-            APP_ERROR_WORKFLOW_SOURCE_NOT_ALLOWED_KEY,
-        )
-    }
-    pub fn workflow_source_limit_exceeded() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_SOURCE_LIMIT_EXCEEDED_CODE,
-            APP_ERROR_WORKFLOW_SOURCE_LIMIT_EXCEEDED_KEY,
-        )
-    }
-
-    pub fn workflow_output_pending() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_OUTPUT_PENDING_CODE,
-            APP_ERROR_WORKFLOW_OUTPUT_PENDING_KEY,
-        )
-    }
-
-    pub fn workflow_output_invalid() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_OUTPUT_INVALID_CODE,
-            APP_ERROR_WORKFLOW_OUTPUT_INVALID_KEY,
-        )
-    }
-
-    pub fn workflow_repair_failed() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_REPAIR_FAILED_CODE,
-            APP_ERROR_WORKFLOW_REPAIR_FAILED_KEY,
-        )
-    }
-
-    pub fn workflow_proposal_expired() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_PROPOSAL_EXPIRED_CODE,
-            APP_ERROR_WORKFLOW_PROPOSAL_EXPIRED_KEY,
-        )
-    }
-
-    pub fn workflow_target_conflict() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_TARGET_CONFLICT_CODE,
-            APP_ERROR_WORKFLOW_TARGET_CONFLICT_KEY,
-        )
-    }
-
-    pub fn workflow_writer_required() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_WRITER_REQUIRED_CODE,
-            APP_ERROR_WORKFLOW_WRITER_REQUIRED_KEY,
-        )
-    }
-
-    pub fn workflow_recovery_required() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_RECOVERY_REQUIRED_CODE,
-            APP_ERROR_WORKFLOW_RECOVERY_REQUIRED_KEY,
-        )
-    }
-
-    pub fn workflow_validation_failed() -> Self {
-        Self::new(
-            APP_ERROR_WORKFLOW_VALIDATION_FAILED_CODE,
-            APP_ERROR_WORKFLOW_VALIDATION_FAILED_KEY,
-        )
-    }
     pub fn with_diagnostic(mut self, diagnostic: impl Into<String>) -> Self {
         let diagnostic = diagnostic.into();
         self.diagnostic = Some(if is_safe_diagnostic(&diagnostic) {

@@ -47,9 +47,7 @@ describe("NovelGainker Sprint 0 工作台", () => {
     expect(screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel })).toBeInTheDocument();
     expect(screen.getAllByText("DeepSeek").length).toBeGreaterThan(0);
     expect(screen.getAllByText("OpenAI").length).toBeGreaterThan(0);
-    expect(document.querySelector(".story-badge")).toHaveTextContent(
-      "当前 Provider · OpenAI · gpt-5.6-terra",
-    );
+    expect(screen.getByRole("region", { name: "小说创作对话消息" })).toBeInTheDocument();
   });
 
   it("未打开工程时阻塞显示项目选择弹窗，并让右栏只承载文件内容", () => {
@@ -261,7 +259,7 @@ describe("NovelGainker Sprint 0 工作台", () => {
     expect(screen.getByRole("complementary", { name: ZH_CN.files.ariaLabel })).toBeInTheDocument();
   });
 
-  it("折叠按钮支持键盘操作，未配置 Provider 时禁用发送且不会发起网络请求", async () => {
+  it("折叠按钮支持键盘操作，过渡中栏不会发起网络请求", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     render(<App />);
@@ -271,9 +269,10 @@ describe("NovelGainker Sprint 0 工作台", () => {
     await user.keyboard("{Enter}");
     expect(screen.getByRole("button", { name: ZH_CN.panels.expandApi })).toBeInTheDocument();
 
-    const sendButton = screen.getByRole("button", { name: "发送" });
-    expect(sendButton).toBeDisabled();
-    await user.click(sendButton);
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByRole("region", { name: "小说创作对话消息" })).toHaveTextContent(
+      "请先新建或打开一个小说工程。",
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toMatch(/[\uac00-\ud7af]/u);
   });

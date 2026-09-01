@@ -20,8 +20,6 @@ uuid = { version = "1", features = ["v4"] }
 serde_json = "1"
 app-core = { path = "../../../crates/app-core" }
 novelgainker-domain = { path = "../../../crates/novelgainker-domain" }
-novelgainker-agent = { path = "../../../crates/novelgainker-agent" }
-novelgainker-workflows = { path = "../../../crates/novelgainker-workflows" }
 
 [dev-dependencies]
 sha2 = "0.10"

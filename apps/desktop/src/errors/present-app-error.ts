@@ -29,7 +29,6 @@ export const APP_ERROR_CODES = {
   fileSaveFailed: "file.save_failed",
   searchInvalidQuery: "search.invalid_query",
   appStateUnavailable: "app_state.unavailable",
-  agentContract: "agent.contract",
   providerInvalidId: "provider.invalid_id",
   providerKeyInvalid: "provider.key_invalid",
   providerVaultUnavailable: "provider.vault_unavailable",
@@ -46,22 +45,6 @@ export const APP_ERROR_CODES = {
   providerNotReady: "provider.not_ready",
   providerRunActive: "provider.run_active",
   providerRunNotFound: "provider.run_not_found",
-  workflowRunActive: "workflow.run_active",
-  workflowInvalidState: "workflow.invalid_state",
-  workflowConfirmationRequired: "workflow.confirmation_required",
-  workflowUnavailable: "workflow.unavailable",
-  workflowInputInvalid: "workflow.input_invalid",
-  workflowSourceNotAllowed: "workflow.source_not_allowed",
-  workflowSourceLimitExceeded: "workflow.source_limit_exceeded",
-  workflowContextChanged: "workflow.context_changed",
-  workflowOutputPending: "workflow.output_pending",
-  workflowOutputInvalid: "workflow.output_invalid",
-  workflowRepairFailed: "workflow.repair_failed",
-  workflowProposalExpired: "workflow.proposal_expired",
-  workflowTargetConflict: "workflow.target_conflict",
-  workflowWriterRequired: "workflow.writer_required",
-  workflowRecoveryRequired: "workflow.recovery_required",
-  workflowValidationFailed: "workflow.validation_failed",
   unknown: "runtime.unknown",
 } as const;
 
@@ -93,7 +76,6 @@ export const APP_ERROR_MESSAGE_KEYS = {
   fileSaveFailed: "errors.fileSaveFailed",
   searchInvalidQuery: "errors.searchInvalidQuery",
   appStateUnavailable: "errors.appStateUnavailable",
-  agentContract: "errors.agentContract",
   providerInvalidId: "errors.providerInvalidId",
   providerKeyInvalid: "errors.providerKeyInvalid",
   providerVaultUnavailable: "errors.providerVaultUnavailable",
@@ -110,22 +92,6 @@ export const APP_ERROR_MESSAGE_KEYS = {
   providerNotReady: "errors.providerNotReady",
   providerRunActive: "errors.providerRunActive",
   providerRunNotFound: "errors.providerRunNotFound",
-  workflowRunActive: "errors.workflowRunActive",
-  workflowInvalidState: "errors.workflowInvalidState",
-  workflowConfirmationRequired: "errors.workflowConfirmationRequired",
-  workflowUnavailable: "errors.workflowUnavailable",
-  workflowInputInvalid: "errors.workflowInputInvalid",
-  workflowSourceNotAllowed: "errors.workflowSourceNotAllowed",
-  workflowSourceLimitExceeded: "errors.workflowSourceLimitExceeded",
-  workflowContextChanged: "errors.workflowContextChanged",
-  workflowOutputPending: "errors.workflowOutputPending",
-  workflowOutputInvalid: "errors.workflowOutputInvalid",
-  workflowRepairFailed: "errors.workflowRepairFailed",
-  workflowProposalExpired: "errors.workflowProposalExpired",
-  workflowTargetConflict: "errors.workflowTargetConflict",
-  workflowWriterRequired: "errors.workflowWriterRequired",
-  workflowRecoveryRequired: "errors.workflowRecoveryRequired",
-  workflowValidationFailed: "errors.workflowValidationFailed",
   unknown: "errors.unknown",
 } as const;
 
@@ -137,7 +103,6 @@ export type PresentedAppError = ErrorCopy & {
 };
 
 const SAFE_DIAGNOSTIC = /^[a-zA-Z0-9._-]{1,80}$/u;
-const SAFE_AGENT_ERROR_CODE = /^agent(?:[.-][a-z0-9_]+)+$/u;
 const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
   [APP_ERROR_MESSAGE_KEYS.runtimeUnavailable]: {
     code: APP_ERROR_CODES.runtimeUnavailable,
@@ -311,70 +276,6 @@ const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
     code: APP_ERROR_CODES.providerRunNotFound,
     copy: ZH_CN.errors.providerRunNotFound,
   },
-  [APP_ERROR_MESSAGE_KEYS.workflowRunActive]: {
-    code: APP_ERROR_CODES.workflowRunActive,
-    copy: ZH_CN.errors.workflowRunActive,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowInvalidState]: {
-    code: APP_ERROR_CODES.workflowInvalidState,
-    copy: ZH_CN.errors.workflowInvalidState,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowConfirmationRequired]: {
-    code: APP_ERROR_CODES.workflowConfirmationRequired,
-    copy: ZH_CN.errors.workflowConfirmationRequired,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowUnavailable]: {
-    code: APP_ERROR_CODES.workflowUnavailable,
-    copy: ZH_CN.errors.workflowUnavailable,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowInputInvalid]: {
-    code: APP_ERROR_CODES.workflowInputInvalid,
-    copy: ZH_CN.errors.workflowInputInvalid,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowSourceNotAllowed]: {
-    code: APP_ERROR_CODES.workflowSourceNotAllowed,
-    copy: ZH_CN.errors.workflowSourceNotAllowed,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowSourceLimitExceeded]: {
-    code: APP_ERROR_CODES.workflowSourceLimitExceeded,
-    copy: ZH_CN.errors.workflowSourceLimitExceeded,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowContextChanged]: {
-    code: APP_ERROR_CODES.workflowContextChanged,
-    copy: ZH_CN.errors.workflowContextChanged,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowOutputPending]: {
-    code: APP_ERROR_CODES.workflowOutputPending,
-    copy: ZH_CN.errors.workflowOutputPending,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowOutputInvalid]: {
-    code: APP_ERROR_CODES.workflowOutputInvalid,
-    copy: ZH_CN.errors.workflowOutputInvalid,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowRepairFailed]: {
-    code: APP_ERROR_CODES.workflowRepairFailed,
-    copy: ZH_CN.errors.workflowRepairFailed,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowProposalExpired]: {
-    code: APP_ERROR_CODES.workflowProposalExpired,
-    copy: ZH_CN.errors.workflowProposalExpired,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowTargetConflict]: {
-    code: APP_ERROR_CODES.workflowTargetConflict,
-    copy: ZH_CN.errors.workflowTargetConflict,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowWriterRequired]: {
-    code: APP_ERROR_CODES.workflowWriterRequired,
-    copy: ZH_CN.errors.workflowWriterRequired,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowRecoveryRequired]: {
-    code: APP_ERROR_CODES.workflowRecoveryRequired,
-    copy: ZH_CN.errors.workflowRecoveryRequired,
-  },
-  [APP_ERROR_MESSAGE_KEYS.workflowValidationFailed]: {
-    code: APP_ERROR_CODES.workflowValidationFailed,
-    copy: ZH_CN.errors.workflowValidationFailed,
-  },
   [APP_ERROR_MESSAGE_KEYS.unknown]: {
     code: APP_ERROR_CODES.unknown,
     copy: ZH_CN.errors.unknown,
@@ -382,16 +283,6 @@ const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
 };
 
 export function presentAppError(error: AppError): PresentedAppError {
-  if (
-    error.messageKey === APP_ERROR_MESSAGE_KEYS.agentContract &&
-    error.code.length <= 96 &&
-    SAFE_AGENT_ERROR_CODE.test(error.code)
-  ) {
-    return {
-      code: error.code,
-      ...ZH_CN.errors.agentContract,
-    };
-  }
   const known = KNOWN_ERRORS[error.messageKey];
 
   if (!known || known.code !== error.code) {

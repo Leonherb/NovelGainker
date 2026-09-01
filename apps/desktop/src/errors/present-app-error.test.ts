@@ -83,41 +83,6 @@ describe("NG-005 AppError 中文映射", () => {
     expect(JSON.stringify(presented)).not.toContain("synthetic-input");
   });
 
-  it("保留安全的 Agent 子错误码并提供可操作恢复提示", () => {
-    const presented = presentAppError({
-      code: "agent-action.repair-exhausted",
-      messageKey: "errors.agentContract",
-    });
-    expect(presented).toMatchObject({
-      code: "agent-action.repair-exhausted",
-      title: "Agent 操作格式未通过校验",
-      recovery: "原输入已恢复，可直接重试；若再次失败，请保留错误代码以便定位。",
-    });
-  });
-
-  it("呈现 NG-402 的设定来源边界且不回显路径或正文", () => {
-    const disallowed = presentAppError({
-      code: "workflow.source_not_allowed",
-      messageKey: "errors.workflowSourceNotAllowed",
-      diagnostic: String.raw`C:\private\secret.md`,
-    });
-    expect(disallowed).toMatchObject({
-      code: "workflow.source_not_allowed",
-      title: "所选设定来源不在允许范围",
-    });
-    expect(JSON.stringify(disallowed)).not.toContain("secret.md");
-
-    expect(
-      presentAppError({
-        code: "workflow.source_limit_exceeded",
-        messageKey: "errors.workflowSourceLimitExceeded",
-      }),
-    ).toMatchObject({
-      code: "workflow.source_limit_exceeded",
-      title: "设定上下文超过固定上限",
-    });
-  });
-
   it("未知或错配错误只返回通用错误且丢弃原始信息", () => {
     const rawPath = "C:\\Users\\Leon\\secret-project\\draft.md";
     const presented = presentAppError({

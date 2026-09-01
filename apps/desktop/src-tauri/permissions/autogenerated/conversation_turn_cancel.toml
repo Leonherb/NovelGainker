@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-conversation-turn-cancel"
+description = "Enables the conversation_turn_cancel command without any pre-configured scope."
+commands.allow = ["conversation_turn_cancel"]
+
+[[permission]]
+identifier = "deny-conversation-turn-cancel"
+description = "Denies the conversation_turn_cancel command without any pre-configured scope."
+commands.deny = ["conversation_turn_cancel"]

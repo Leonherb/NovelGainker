@@ -6,14 +6,24 @@ use crate::workspace::{
 };
 use crate::AppError;
 use novelgainker_validation::validate_source_bytes;
-use novelgainker_workflows::chapter_patch::ChapterPatchOperationV1;
-use novelgainker_workflows::proposal::CanonFileOperationKind;
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChapterPatchOperationV1 {
+    Create,
+    Replace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonFileOperationKind {
+    Create,
+    Replace,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanonApplyStage {

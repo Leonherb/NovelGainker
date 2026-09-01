@@ -198,30 +198,19 @@ export function ProjectWorkspace({
     dirtyRef.current = dirty;
   }, [dirty]);
 
-  const exitProjectAndCloseWindow = useCallback(
-    async (sessionId: string | null) => {
-      if (windowCloseInFlightRef.current) {
-        return;
-      }
-      windowCloseInFlightRef.current = true;
+  const commitWindowClose = useCallback(async () => {
+    if (windowCloseInFlightRef.current) {
+      return;
+    }
+    windowCloseInFlightRef.current = true;
 
-      if (sessionId) {
-        try {
-          await requestProjectClose(sessionId);
-        } catch {
-          // App shutdown must not be blocked by best-effort in-memory project cleanup.
-        }
-      }
-
-      try {
-        await windowClosePort.destroy();
-      } catch {
-        windowCloseInFlightRef.current = false;
-        setError(presentProjectError(windowCloseError()));
-      }
-    },
-    [windowClosePort],
-  );
+    try {
+      await windowClosePort.destroy();
+    } catch {
+      windowCloseInFlightRef.current = false;
+      setError(presentProjectError(windowCloseError()));
+    }
+  }, [windowClosePort]);
 
   useEffect(() => {
     if (!watchedSessionId || !watchedRelativePath || !watchedContentHash) {
@@ -280,7 +269,7 @@ export function ProjectWorkspace({
           setPendingAction({ kind: "closeWindow" });
           return;
         }
-        void exitProjectAndCloseWindow(session.sessionId);
+        void commitWindowClose();
       })
       .then((dispose) => {
         if (active) {
@@ -299,7 +288,7 @@ export function ProjectWorkspace({
       active = false;
       unlisten?.();
     };
-  }, [desktopRuntime, exitProjectAndCloseWindow, session, windowClosePort]);
+  }, [commitWindowClose, desktopRuntime, session, windowClosePort]);
 
   const resetDocument = () => {
     setDocument(null);
@@ -425,7 +414,7 @@ export function ProjectWorkspace({
     }
   };
 
-  const saveCurrentFile = async () => {
+  const saveCurrentFile = async (): Promise<boolean> => {
     if (
       !session ||
       !document ||
@@ -440,7 +429,7 @@ export function ProjectWorkspace({
       } else if (document && !document.readOnly && draft === document.content) {
         setEditorNotice(editorCopy.alreadySavedNotice);
       }
-      return;
+      return Boolean(document && !document.readOnly && draft === document.content);
     }
 
     const savingDocument = document;
@@ -491,10 +480,12 @@ export function ProjectWorkspace({
           ? diagnosticsCopy.savedWithIssues
           : diagnosticsCopy.savedValid,
       );
+      return true;
     } catch (saveFailure: unknown) {
       setSaveError(presentProjectError(saveFailure));
       setEditorNotice(editorCopy.saveFailedDraftKept);
       dirtyRef.current = true;
+      return false;
     } finally {
       saveInFlightRef.current = false;
       setBusy(null);
@@ -689,7 +680,24 @@ export function ProjectWorkspace({
       return;
     }
 
-    await exitProjectAndCloseWindow(session?.sessionId ?? null);
+    await commitWindowClose();
+  };
+
+  const confirmSaveBeforeContinuing = async () => {
+    const action = pendingAction;
+    if (!action || !(await saveCurrentFile())) {
+      return;
+    }
+    setPendingAction(null);
+    if (action.kind === "select") {
+      await loadFile(action.relativePath, action.line);
+      return;
+    }
+    if (action.kind === "closeProject") {
+      await closeProjectNow();
+      return;
+    }
+    await commitWindowClose();
   };
 
   const copyDraftToClipboard = async () => {
@@ -945,10 +953,7 @@ export function ProjectWorkspace({
                     <code>{createPreview.projectId}</code>
                   </dd>
                 </div>
-                <div>
-                  <dt>{copy.workflowPackLabel}</dt>
-                  <dd>{createPreview.workflowPackVersion}</dd>
-                </div>
+
                 <div>
                   <dt>{copy.language}</dt>
                   <dd>{createPreview.writingLanguage}</dd>
@@ -1313,14 +1318,23 @@ export function ProjectWorkspace({
                   }}
                   type="button"
                 >
-                  {editorCopy.keepEditing}
+                  {pendingAction.kind === "closeWindow" ? "取消" : editorCopy.keepEditing}
                 </button>
+                {pendingAction.kind === "closeWindow" ? (
+                  <button
+                    disabled={busy === "save"}
+                    onClick={() => void confirmSaveBeforeContinuing()}
+                    type="button"
+                  >
+                    {busy === "save" ? "保存中" : "保存"}
+                  </button>
+                ) : null}
                 <button
                   className="discard-confirm"
                   onClick={() => void confirmDiscard()}
                   type="button"
                 >
-                  {editorCopy.discard}
+                  {pendingAction.kind === "closeWindow" ? "放弃" : editorCopy.discard}
                 </button>
               </div>
             </div>
