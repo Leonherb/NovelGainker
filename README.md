@@ -2,9 +2,9 @@
 
 Windows-first、Local-first、可切换 AI Provider 的简体中文小说创作桌面应用。
 
-当前实现为 NR-1 长对话基线：三栏界面左侧管理工程、文件与 Provider，中间承载工程绑定的完整自然对话，右侧编辑真实 Markdown。Host 会在字节阈值以下直接调用一次主回复；达到阈值时先以一次内部 Compactor 增量维护派生 Memory，再调用一次主回复。两条路径均可取消、单 HTTP attempt、零重试。
+当前实现为 NR-2 Host Agent Loop 基线：三栏界面左侧管理工程、文件与 Provider，中间承载工程绑定的完整自然对话及受控内联 Task 状态，右侧编辑真实 Markdown。Host 保留完整 History、按阈值维护派生 Memory，并支持 Provider-native Tool Request/Result 的有界执行循环。
 
-NR-101～NR-106 已完成并停止在 NR-G2 技术提交，`nrG2Approved = false`。现有产品仍不加载 Novelist Skill、不读取 Canon 作为模型上下文、不调用工具、不由 AI 写入 Markdown，也未执行真实 Provider Live Smoke；未获单独批准前不进入 NR-2。
+NR-201～NR-206 与 NR-G3-R01～R03 已完成，NR-G3 已批准。NR3-D2-R01～R06 与 FR01～FR02 已在 NR-3 常驻 Novelist Capability Pack / Canon Read Context Story Packet Draft 2 Final 中获产品批准，当前停止于 Packet 批准 Gate；NR-301～NR-306 尚未获实施授权。生产 Tool Registry 仍为空，因此现有产品不加载 Novelist Skill、不读取 Canon 作为模型上下文、不实际执行 Tool、不由 AI 写入 Markdown，也未执行真实 Provider Live Smoke；NR-4～NR-7 Story Packet 尚未获授权形成。
 
 ## 开发入口
 
@@ -16,6 +16,10 @@ NR-101～NR-106 已完成并停止在 NR-G2 技术提交，`nrG2Approved = false
 - [NR-G1 技术重新提交](./docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md)
 - [NR-1 Story Packet Draft 2 Final](./docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md)
 - [NR-G2 技术提交](./docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md)
+- [NR-2 Story Packet Draft 2](./docs/stories/novelist-agent-runtime-nr2-host-agent-loop-story-packet-draft-2.zh-CN.md)
+- [NR-G3 Remediation Draft 2](./docs/stories/novelist-agent-runtime-nrg3-remediation-story-packet-draft-2.zh-CN.md)
+- [NR-G3 技术提交与批准记录](./docs/reviews/novelist-agent-runtime-nr-g3-technical-submission.zh-CN.md)
+- [NR-3 Story Packet Draft 2 Final](./docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md)
 
 ```powershell
 pnpm install --frozen-lockfile

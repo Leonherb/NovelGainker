@@ -21,6 +21,10 @@
 - `project::tests`：Project Metadata v1→v2 一次性 Clean Slate、二次打开、损坏/未知 schema、失败注入与 reparse 边界。
 - `nr_g1_r02_clean_slate.rs`：同根旧 Project ID 的全局精确清理，以及 UI/Provider/无关项目状态保留。
 - `nr-g1-gate-lib.mjs`：递归发布面、五层 IPC 闭包、临时违规生产文件与 Report 漂移负向验证。
+- `tool_runtime::tests` / `task_store::tests`：严格 Tool 合同、空生产 Registry、Task Revision/CAS、重复 Call 与中断恢复。
+- `provider_core::tests` / `conversation_runtime::tests`：双 Provider 原生续接、单 Tool Round、取消、部分文本和累计预算。
+- `ConversationView.reconciliation.test.tsx`：Task Snapshot/Event 只按更大 Revision 合并，终态不可回退。
+- `nr206-nrg3-e2e.mjs`：零合成 Tool 发布泄漏、24/3 IPC、冻结预算与 NR-G3 机器声明。
 
 ## 运行入口
 
@@ -29,7 +33,8 @@ pnpm typecheck
 pnpm test:frontend
 cargo test --workspace --locked --offline
 pnpm e2e:sprint1
+pnpm e2e:nr206
 pnpm quality
 ```
 
-`pnpm quality` 是唯一完整 Gate；它包含格式、lint、TypeScript、React、NR-001～NR-006 Evidence、Rust、离线编辑闭环、Tauri Debug/Release 构建和 Windows 离线 Smoke。真实 Provider Live Smoke 仍需单独明确授权；NR-1 Draft 2 Final 未授予该权限。
+`pnpm quality` 是唯一完整 Gate；它包含格式、lint、TypeScript、React、NR-001～NR-006、NR-106、NR-206 Evidence、Rust、离线编辑闭环、Tauri Debug/Release 构建和 Windows 离线 Smoke。真实 Provider Live Smoke 仍需单独明确授权；NR-G3 技术提交未授予该权限，也未授权进入 NR-3。

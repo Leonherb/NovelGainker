@@ -1,4 +1,8 @@
 use crate::credential_vault::ProviderId;
+use crate::tool_runtime::{
+    validate_definitions, ProviderToolCall, ToolDefinition, ToolResult,
+    MAX_TOOL_CONTINUATION_BYTES, MAX_TOOL_DEFINITIONS_BYTES,
+};
 use reqwest::blocking::{Client as BlockingClient, Response as BlockingResponse};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{redirect, Client as AsyncClient, Response as AsyncResponse, StatusCode, Url};
@@ -22,8 +26,7 @@ pub const MAX_RETRIES: u8 = 2;
 const CONNECT_TIMEOUT_SECONDS: u64 = 15;
 #[cfg(test)]
 const TEST_REQUEST_TIMEOUT_MILLIS: u64 = 250;
-pub const CONVERSATION_SYSTEM_INSTRUCTION: &str =
-    "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。本阶段不调用工具或修改文件。";
+pub const CONVERSATION_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。仅当当前请求提供工具且确有必要时才可调用；没有工具时继续正常回复。不得声称已经修改或保存文件。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -95,9 +98,53 @@ pub struct NormalizedMessage {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub enum OpenAiMessageContent {
+    OutputText { text: String },
+    Refusal { refusal: String },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum OpenAiContinuationItem {
+    OutputMessage {
+        item_id: String,
+        status: String,
+        role: String,
+        content: Vec<OpenAiMessageContent>,
+        phase: Option<String>,
+    },
+    FunctionCall {
+        item_id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+        status: String,
+        phase: Option<String>,
+    },
+    EncryptedReasoning {
+        item_id: String,
+        encrypted_content: String,
+        phase: Option<String>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ProviderContinuation {
+    Deepseek {
+        assistant_text: String,
+        call: ProviderToolCall,
+    },
+    Openai {
+        items: Vec<OpenAiContinuationItem>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct NormalizedRequest {
     pub messages: Vec<NormalizedMessage>,
     pub max_output_tokens: u32,
+    pub tool_definitions: Vec<ToolDefinition>,
+    pub continuation: Option<ProviderContinuation>,
+    pub tool_result: Option<ToolResult>,
 }
 
 impl NormalizedRequest {
@@ -114,6 +161,9 @@ impl NormalizedRequest {
                 },
             ],
             max_output_tokens,
+            tool_definitions: Vec::new(),
+            continuation: None,
+            tool_result: None,
         };
         request.validate()?;
         Ok(request)
@@ -132,6 +182,9 @@ impl NormalizedRequest {
                 },
             ],
             max_output_tokens: 8,
+            tool_definitions: Vec::new(),
+            continuation: None,
+            tool_result: None,
         }
     }
 
@@ -169,6 +222,46 @@ impl NormalizedRequest {
         let request = Self {
             messages: normalized,
             max_output_tokens,
+            tool_definitions: Vec::new(),
+            continuation: None,
+            tool_result: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn with_tool_definitions(
+        mut self,
+        definitions: Vec<ToolDefinition>,
+    ) -> Result<Self, ProviderError> {
+        if definitions.is_empty() {
+            return Ok(self);
+        }
+        validate_definitions(&definitions).map_err(|_| ProviderError::invalid_request())?;
+        self.tool_definitions = definitions;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn continue_after_tool(
+        &self,
+        continuation: ProviderContinuation,
+        result: ToolResult,
+        max_output_tokens: u32,
+    ) -> Result<Self, ProviderError> {
+        result
+            .validate()
+            .map_err(|_| ProviderError::invalid_request())?;
+        let call = continuation_tool_call(&continuation)?;
+        if call.call_id != result.call_id || call.name != result.name {
+            return Err(ProviderError::invalid_request());
+        }
+        let request = Self {
+            messages: self.messages.clone(),
+            max_output_tokens,
+            tool_definitions: Vec::new(),
+            continuation: Some(continuation),
+            tool_result: Some(result),
         };
         request.validate()?;
         Ok(request)
@@ -187,6 +280,25 @@ impl NormalizedRequest {
                 .filter(|message| message.role == MessageRole::System)
                 .count()
                 != 1
+            || validate_definitions(&self.tool_definitions).is_err()
+            || self
+                .tool_definitions
+                .iter()
+                .fold(0usize, |total, definition| {
+                    total
+                        .saturating_add(definition.description.len())
+                        .saturating_add(
+                            serde_json::to_vec(&definition.input_schema)
+                                .map_or(usize::MAX, |bytes| bytes.len()),
+                        )
+                })
+                > MAX_TOOL_DEFINITIONS_BYTES
+            || self.continuation.is_some() != self.tool_result.is_some()
+            || (self.continuation.is_some() && !self.tool_definitions.is_empty())
+            || self
+                .continuation
+                .as_ref()
+                .is_some_and(|continuation| validate_continuation_bounds(continuation).is_err())
         {
             return Err(ProviderError::invalid_request());
         }
@@ -204,6 +316,95 @@ impl NormalizedRequest {
             return Err(ProviderError::invalid_request());
         }
         Ok(())
+    }
+
+    pub fn validate_for(&self, provider: ProviderId) -> Result<(), ProviderError> {
+        self.validate()?;
+        match (&self.continuation, provider) {
+            (Some(ProviderContinuation::Deepseek { .. }), ProviderId::Deepseek)
+            | (Some(ProviderContinuation::Openai { .. }), ProviderId::Openai)
+            | (None, _) => Ok(()),
+            _ => Err(ProviderError::invalid_request()),
+        }
+    }
+}
+
+fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(), ProviderError> {
+    match continuation {
+        ProviderContinuation::Deepseek {
+            assistant_text,
+            call,
+        } => {
+            if assistant_text.len() > MAX_MESSAGE_BYTES {
+                return Err(ProviderError::response_too_large());
+            }
+            call.validate_envelope()
+                .map_err(|_| ProviderError::protocol())?;
+            let bytes = serde_json::to_vec(&json!({
+                "assistantText": assistant_text,
+                "callId": call.call_id,
+                "name": call.name,
+                "arguments": call.arguments_json
+            }))
+            .map_err(|_| ProviderError::protocol())?;
+            if bytes.len() > MAX_TOOL_CONTINUATION_BYTES {
+                return Err(ProviderError::response_too_large());
+            }
+        }
+        ProviderContinuation::Openai { items } => {
+            if items.is_empty() {
+                return Err(ProviderError::protocol());
+            }
+            let mut total = 0usize;
+            for item in items {
+                let bytes = serde_json::to_vec(&openai_continuation_value(item))
+                    .map_err(|_| ProviderError::protocol())?;
+                let item_limit = match item {
+                    OpenAiContinuationItem::FunctionCall { .. } => MAX_TOOL_CONTINUATION_BYTES,
+                    _ => 32 * 1024,
+                };
+                if bytes.len() > item_limit {
+                    return Err(ProviderError::response_too_large());
+                }
+                total = total.saturating_add(bytes.len());
+                if total > MAX_TOOL_CONTINUATION_BYTES {
+                    return Err(ProviderError::response_too_large());
+                }
+            }
+            continuation_tool_call(continuation)?;
+        }
+    }
+    Ok(())
+}
+
+fn continuation_tool_call(
+    continuation: &ProviderContinuation,
+) -> Result<ProviderToolCall, ProviderError> {
+    match continuation {
+        ProviderContinuation::Deepseek { call, .. } => Ok(call.clone()),
+        ProviderContinuation::Openai { items } => {
+            let mut calls = items.iter().filter_map(|item| match item {
+                OpenAiContinuationItem::FunctionCall {
+                    call_id,
+                    name,
+                    arguments,
+                    ..
+                } => Some((call_id, name, arguments)),
+                _ => None,
+            });
+            let (call_id, name, arguments) = calls.next().ok_or_else(ProviderError::protocol)?;
+            if calls.next().is_some() {
+                return Err(ProviderError::protocol());
+            }
+            let call = ProviderToolCall {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                arguments_json: arguments.clone(),
+            };
+            call.validate_envelope()
+                .map_err(|_| ProviderError::protocol())?;
+            Ok(call)
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -225,13 +426,30 @@ pub enum FinishReason {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NormalizedResponse {
     pub text: String,
     pub usage: Option<Usage>,
     pub finish_reason: FinishReason,
     pub provider_id: ProviderId,
     pub model: &'static str,
+    pub tool_call: Option<ProviderToolCall>,
+    pub continuation: Option<ProviderContinuation>,
+}
+
+impl std::fmt::Debug for NormalizedResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NormalizedResponse")
+            .field("text_bytes", &self.text.len())
+            .field("usage", &self.usage)
+            .field("finish_reason", &self.finish_reason)
+            .field("provider_id", &self.provider_id)
+            .field("model", &self.model)
+            .field("has_tool_call", &self.tool_call.is_some())
+            .field("has_continuation", &self.continuation.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
@@ -317,6 +535,14 @@ impl ProviderError {
         Self::new(ProviderErrorKind::Protocol, "provider.protocol", false)
     }
 
+    pub const fn agent_tool_round_limit() -> Self {
+        Self::new(ProviderErrorKind::Protocol, "agent.tool_round_limit", false)
+    }
+
+    pub const fn agent_tool_unknown() -> Self {
+        Self::new(ProviderErrorKind::Protocol, "agent.tool_unknown", false)
+    }
+
     pub const fn response_too_large() -> Self {
         Self::new(
             ProviderErrorKind::ResponseTooLarge,
@@ -382,9 +608,106 @@ impl CancellationToken {
 
 enum AdapterStreamEvent {
     Delta(String),
+    ToolCallDelta {
+        index: u32,
+        call_id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    },
+    ToolEnvelope {
+        call: ProviderToolCall,
+        continuation: ProviderContinuation,
+    },
     Usage(Usage),
     Finished(FinishReason),
     Done,
+}
+
+#[derive(Default)]
+struct ToolCallAccumulator {
+    index: Option<u32>,
+    call_id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+    envelope: Option<(ProviderToolCall, ProviderContinuation)>,
+}
+
+impl ToolCallAccumulator {
+    fn push_delta(
+        &mut self,
+        index: u32,
+        call_id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    ) -> Result<(), ProviderError> {
+        if self.envelope.is_some()
+            || self.index.is_some_and(|current| current != index)
+            || index != 0
+            || call_id
+                .as_ref()
+                .is_some_and(|next| self.call_id.as_ref().is_some_and(|current| current != next))
+            || name
+                .as_ref()
+                .is_some_and(|next| self.name.as_ref().is_some_and(|current| current != next))
+            || self.arguments.len().saturating_add(arguments_delta.len())
+                > MAX_TOOL_CONTINUATION_BYTES
+        {
+            return Err(ProviderError::protocol());
+        }
+        self.index = Some(index);
+        if call_id.is_some() {
+            self.call_id = call_id;
+        }
+        if name.is_some() {
+            self.name = name;
+        }
+        self.arguments.push_str(&arguments_delta);
+        Ok(())
+    }
+
+    fn set_envelope(
+        &mut self,
+        call: ProviderToolCall,
+        continuation: ProviderContinuation,
+    ) -> Result<(), ProviderError> {
+        if self.index.is_some() || self.envelope.is_some() {
+            return Err(ProviderError::protocol());
+        }
+        self.envelope = Some((call, continuation));
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        provider: ProviderId,
+        assistant_text: &str,
+    ) -> Result<(Option<ProviderToolCall>, Option<ProviderContinuation>), ProviderError> {
+        if let Some((call, continuation)) = self.envelope {
+            call.validate_envelope()
+                .map_err(|_| ProviderError::protocol())?;
+            validate_continuation_bounds(&continuation)?;
+            return Ok((Some(call), Some(continuation)));
+        }
+        if self.index.is_none() {
+            return Ok((None, None));
+        }
+        let call = ProviderToolCall {
+            call_id: self.call_id.ok_or_else(ProviderError::protocol)?,
+            name: self.name.ok_or_else(ProviderError::protocol)?,
+            arguments_json: self.arguments,
+        };
+        call.validate_envelope()
+            .map_err(|_| ProviderError::protocol())?;
+        if provider != ProviderId::Deepseek {
+            return Err(ProviderError::protocol());
+        }
+        let continuation = ProviderContinuation::Deepseek {
+            assistant_text: assistant_text.to_owned(),
+            call: call.clone(),
+        };
+        validate_continuation_bounds(&continuation)?;
+        Ok((Some(call), Some(continuation)))
+    }
 }
 
 trait ProviderAdapter: Sync {
@@ -425,19 +748,179 @@ fn message_values(request: &NormalizedRequest) -> Vec<Value> {
         .collect()
 }
 
+fn deepseek_messages(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError> {
+    let mut messages = message_values(request);
+    if let (
+        Some(ProviderContinuation::Deepseek {
+            assistant_text,
+            call,
+        }),
+        Some(result),
+    ) = (&request.continuation, &request.tool_result)
+    {
+        messages.push(json!({
+            "role": "assistant",
+            "content": assistant_text,
+            "tool_calls": [{
+                "id": call.call_id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": call.arguments_json
+                }
+            }]
+        }));
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": result.call_id,
+            "content": serde_json::to_string(&result.provider_payload())
+                .map_err(|_| ProviderError::protocol())?
+        }));
+    } else if request.continuation.is_some() {
+        return Err(ProviderError::invalid_request());
+    }
+    Ok(messages)
+}
+
+fn deepseek_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
+    definitions
+        .iter()
+        .map(|definition| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": definition.name,
+                    "description": definition.description,
+                    "parameters": definition.input_schema
+                }
+            })
+        })
+        .collect()
+}
+
+fn openai_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
+    definitions
+        .iter()
+        .map(|definition| {
+            json!({
+                "type": "function",
+                "name": definition.name,
+                "description": definition.description,
+                "parameters": definition.input_schema,
+                "strict": true
+            })
+        })
+        .collect()
+}
+
+fn openai_continuation_value(item: &OpenAiContinuationItem) -> Value {
+    match item {
+        OpenAiContinuationItem::OutputMessage {
+            item_id,
+            status,
+            role,
+            content,
+            phase,
+        } => {
+            let mut value = json!({
+                "type": "message",
+                "id": item_id,
+                "status": status,
+                "role": role,
+                "content": content.iter().map(|part| match part {
+                    OpenAiMessageContent::OutputText { text } =>
+                        json!({"type": "output_text", "text": text}),
+                    OpenAiMessageContent::Refusal { refusal } =>
+                        json!({"type": "refusal", "refusal": refusal}),
+                }).collect::<Vec<_>>()
+            });
+            if let Some(phase) = phase {
+                value["phase"] = Value::String(phase.clone());
+            }
+            value
+        }
+        OpenAiContinuationItem::FunctionCall {
+            item_id,
+            call_id,
+            name,
+            arguments,
+            status,
+            phase,
+        } => {
+            let mut value = json!({
+                "type": "function_call",
+                "id": item_id,
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments,
+                "status": status
+            });
+            if let Some(phase) = phase {
+                value["phase"] = Value::String(phase.clone());
+            }
+            value
+        }
+        OpenAiContinuationItem::EncryptedReasoning {
+            item_id,
+            encrypted_content,
+            phase,
+        } => {
+            let mut value = json!({
+                "type": "reasoning",
+                "id": item_id,
+                "encrypted_content": encrypted_content
+            });
+            if let Some(phase) = phase {
+                value["phase"] = Value::String(phase.clone());
+            }
+            value
+        }
+    }
+}
+
+fn openai_input(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError> {
+    let mut input = message_values(request)
+        .into_iter()
+        .skip(1)
+        .collect::<Vec<_>>();
+    if let (Some(ProviderContinuation::Openai { items }), Some(result)) =
+        (&request.continuation, &request.tool_result)
+    {
+        input.extend(items.iter().map(openai_continuation_value));
+        input.push(json!({
+            "type": "function_call_output",
+            "call_id": result.call_id,
+            "output": serde_json::to_string(&result.provider_payload())
+                .map_err(|_| ProviderError::protocol())?
+        }));
+    } else if request.continuation.is_some() {
+        return Err(ProviderError::invalid_request());
+    }
+    Ok(input)
+}
+
 impl ProviderAdapter for DeepseekAdapter {
     fn preset(&self) -> &'static ProviderPreset {
         &DEEPSEEK_PRESET
     }
 
     fn streaming_body(&self, request: &NormalizedRequest) -> Value {
-        json!({
+        let mut body = json!({
             "model": self.preset().model,
-            "messages": message_values(request),
+            "messages": deepseek_messages(request).unwrap_or_default(),
             "max_tokens": request.max_output_tokens,
             "stream": true,
             "stream_options": { "include_usage": true }
-        })
+        });
+        if !request.tool_definitions.is_empty() {
+            body["tools"] = Value::Array(deepseek_tool_values(&request.tool_definitions));
+            body["tool_choice"] = Value::String("auto".to_owned());
+            body["thinking"] = json!({"type": "disabled"});
+        } else if request.continuation.is_some() {
+            body["tool_choice"] = Value::String("none".to_owned());
+            body["thinking"] = json!({"type": "disabled"});
+        }
+        body
     }
 
     fn completion_body(&self, request: &NormalizedRequest) -> Value {
@@ -477,6 +960,36 @@ impl ProviderAdapter for DeepseekAdapter {
             {
                 events.push(AdapterStreamEvent::Delta(delta.to_owned()));
             }
+            if let Some(tool_calls) = choice
+                .pointer("/delta/tool_calls")
+                .and_then(Value::as_array)
+            {
+                if tool_calls.len() != 1 {
+                    return Err(ProviderError::protocol());
+                }
+                let tool_call = &tool_calls[0];
+                let index = tool_call
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(ProviderError::protocol)?;
+                events.push(AdapterStreamEvent::ToolCallDelta {
+                    index,
+                    call_id: tool_call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    name: tool_call
+                        .pointer("/function/name")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    arguments_delta: tool_call
+                        .pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                });
+            }
             if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
                 events.push(AdapterStreamEvent::Finished(map_finish_reason(reason)));
             }
@@ -496,18 +1009,33 @@ impl ProviderAdapter for DeepseekAdapter {
         let text = choice
             .pointer("/message/content")
             .and_then(Value::as_str)
-            .ok_or_else(ProviderError::protocol)?;
+            .unwrap_or_default();
         let finish_reason = choice
             .get("finish_reason")
             .and_then(Value::as_str)
             .map(map_finish_reason)
             .unwrap_or(FinishReason::Unknown);
+        let tool_call = parse_deepseek_tool_call(choice.pointer("/message/tool_calls"))?;
+        if (finish_reason == FinishReason::ToolCall) != tool_call.is_some() {
+            return Err(ProviderError::protocol());
+        }
+        let continuation = tool_call
+            .as_ref()
+            .map(|call| ProviderContinuation::Deepseek {
+                assistant_text: text.to_owned(),
+                call: call.clone(),
+            });
+        if let Some(continuation) = &continuation {
+            validate_continuation_bounds(continuation)?;
+        }
         Ok(NormalizedResponse {
             text: text.to_owned(),
             usage: value.get("usage").and_then(parse_deepseek_usage),
             finish_reason,
             provider_id: ProviderId::Deepseek,
             model: self.preset().model,
+            tool_call,
+            continuation,
         })
     }
 }
@@ -518,17 +1046,23 @@ impl ProviderAdapter for OpenaiAdapter {
     }
 
     fn streaming_body(&self, request: &NormalizedRequest) -> Value {
-        json!({
+        let mut body = json!({
             "model": self.preset().model,
             "instructions": request.messages[0].content,
-            "input": message_values(request)
-                .into_iter()
-                .skip(1)
-                .collect::<Vec<_>>(),
+            "input": openai_input(request).unwrap_or_default(),
             "max_output_tokens": request.max_output_tokens,
             "store": false,
             "stream": true
-        })
+        });
+        if !request.tool_definitions.is_empty() {
+            body["tools"] = Value::Array(openai_tool_values(&request.tool_definitions));
+            body["tool_choice"] = Value::String("auto".to_owned());
+            body["parallel_tool_calls"] = Value::Bool(false);
+            body["include"] = json!(["reasoning.encrypted_content"]);
+        } else if request.continuation.is_some() {
+            body["tool_choice"] = Value::String("none".to_owned());
+        }
+        body
     }
 
     fn completion_body(&self, request: &NormalizedRequest) -> Value {
@@ -564,7 +1098,13 @@ impl ProviderAdapter for OpenaiAdapter {
                 if let Some(usage) = response.get("usage").and_then(parse_openai_usage) {
                     events.push(AdapterStreamEvent::Usage(usage));
                 }
-                events.push(AdapterStreamEvent::Finished(FinishReason::Stop));
+                let (_, tool_call, continuation) = parse_openai_output(response)?;
+                if let (Some(call), Some(continuation)) = (tool_call, continuation) {
+                    events.push(AdapterStreamEvent::ToolEnvelope { call, continuation });
+                    events.push(AdapterStreamEvent::Finished(FinishReason::ToolCall));
+                } else {
+                    events.push(AdapterStreamEvent::Finished(FinishReason::Stop));
+                }
                 events.push(AdapterStreamEvent::Done);
                 events
             }
@@ -582,30 +1122,24 @@ impl ProviderAdapter for OpenaiAdapter {
         if value.get("model").and_then(Value::as_str) != Some(self.preset().model) {
             return Err(ProviderError::model_unavailable());
         }
-        let text = value
-            .get("output")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item.get("content").and_then(Value::as_array))
-            .flatten()
-            .find_map(|part| {
-                (part.get("type").and_then(Value::as_str) == Some("output_text"))
-                    .then(|| part.get("text").and_then(Value::as_str))
-                    .flatten()
-            })
-            .ok_or_else(ProviderError::protocol)?;
-        let finish_reason = match value.get("status").and_then(Value::as_str) {
-            Some("completed") => FinishReason::Stop,
-            Some("incomplete") => FinishReason::Length,
+        let (text, tool_call, continuation) = parse_openai_output(value)?;
+        let finish_reason = match (
+            value.get("status").and_then(Value::as_str),
+            tool_call.is_some(),
+        ) {
+            (Some("completed"), true) => FinishReason::ToolCall,
+            (Some("completed"), false) => FinishReason::Stop,
+            (Some("incomplete"), _) => FinishReason::Length,
             _ => FinishReason::Unknown,
         };
         Ok(NormalizedResponse {
-            text: text.to_owned(),
+            text,
             usage: value.get("usage").and_then(parse_openai_usage),
             finish_reason,
             provider_id: ProviderId::Openai,
             model: self.preset().model,
+            tool_call,
+            continuation,
         })
     }
 }
@@ -624,6 +1158,215 @@ fn parse_openai_usage(value: &Value) -> Option<Usage> {
         output_tokens: value.get("output_tokens")?.as_u64()?,
         total_tokens: value.get("total_tokens")?.as_u64()?,
     })
+}
+
+fn parse_openai_output(
+    response: &Value,
+) -> Result<
+    (
+        String,
+        Option<ProviderToolCall>,
+        Option<ProviderContinuation>,
+    ),
+    ProviderError,
+> {
+    let Some(output) = response.get("output").and_then(Value::as_array) else {
+        return Ok((String::new(), None, None));
+    };
+    let mut text = String::new();
+    for item in output {
+        if item.get("type").and_then(Value::as_str) == Some("message") {
+            for part in item
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("output_text") => text.push_str(
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .ok_or_else(ProviderError::protocol)?,
+                    ),
+                    Some("refusal") => text.push_str(
+                        part.get("refusal")
+                            .and_then(Value::as_str)
+                            .ok_or_else(ProviderError::protocol)?,
+                    ),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let function_calls = output
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .collect::<Vec<_>>();
+    if function_calls.is_empty() {
+        return Ok((text, None, None));
+    }
+    if function_calls.len() != 1 {
+        return Err(ProviderError::protocol());
+    }
+
+    let mut items = Vec::with_capacity(output.len());
+    let mut total_bytes = 0usize;
+    for item in output {
+        let item_bytes = serde_json::to_vec(item)
+            .map_err(|_| ProviderError::protocol())?
+            .len();
+        let item_limit = if item.get("type").and_then(Value::as_str) == Some("function_call") {
+            MAX_TOOL_CONTINUATION_BYTES
+        } else {
+            32 * 1024
+        };
+        if item_bytes > item_limit {
+            return Err(ProviderError::response_too_large());
+        }
+        total_bytes = total_bytes.saturating_add(item_bytes);
+        if total_bytes > 48 * 1024 {
+            return Err(ProviderError::response_too_large());
+        }
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(ProviderError::protocol)?
+            .to_owned();
+        let phase = parse_optional_phase(item)?;
+        match item.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let content = item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .ok_or_else(ProviderError::protocol)?
+                    .iter()
+                    .map(|part| match part.get("type").and_then(Value::as_str) {
+                        Some("output_text") => Ok(OpenAiMessageContent::OutputText {
+                            text: part
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .ok_or_else(ProviderError::protocol)?
+                                .to_owned(),
+                        }),
+                        Some("refusal") => Ok(OpenAiMessageContent::Refusal {
+                            refusal: part
+                                .get("refusal")
+                                .and_then(Value::as_str)
+                                .ok_or_else(ProviderError::protocol)?
+                                .to_owned(),
+                        }),
+                        _ => Err(ProviderError::protocol()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                items.push(OpenAiContinuationItem::OutputMessage {
+                    item_id,
+                    status: required_string(item, "status")?,
+                    role: required_string(item, "role")?,
+                    content,
+                    phase,
+                });
+            }
+            Some("function_call") => {
+                let arguments = required_raw_string(item, "arguments")?;
+                let call = ProviderToolCall {
+                    call_id: required_string(item, "call_id")?,
+                    name: required_string(item, "name")?,
+                    arguments_json: arguments.clone(),
+                };
+                call.validate_envelope()
+                    .map_err(|_| ProviderError::protocol())?;
+                if item.get("status").and_then(Value::as_str) != Some("completed") {
+                    return Err(ProviderError::protocol());
+                }
+                items.push(OpenAiContinuationItem::FunctionCall {
+                    item_id,
+                    call_id: call.call_id,
+                    name: call.name,
+                    arguments,
+                    status: required_string(item, "status")?,
+                    phase,
+                });
+            }
+            Some("reasoning") => {
+                items.push(OpenAiContinuationItem::EncryptedReasoning {
+                    item_id,
+                    encrypted_content: required_string(item, "encrypted_content")?,
+                    phase,
+                });
+            }
+            _ => return Err(ProviderError::protocol()),
+        }
+    }
+    let call = continuation_tool_call(&ProviderContinuation::Openai {
+        items: items.clone(),
+    })?;
+    Ok((
+        text,
+        Some(call),
+        Some(ProviderContinuation::Openai { items }),
+    ))
+}
+
+fn required_string(value: &Value, key: &str) -> Result<String, ProviderError> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(ProviderError::protocol)
+}
+
+fn required_raw_string(value: &Value, key: &str) -> Result<String, ProviderError> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(ProviderError::protocol)
+}
+
+fn parse_optional_phase(value: &Value) -> Result<Option<String>, ProviderError> {
+    match value.get("phase") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(phase)) if !phase.is_empty() && phase.len() <= 64 => {
+            Ok(Some(phase.clone()))
+        }
+        _ => Err(ProviderError::protocol()),
+    }
+}
+
+fn parse_deepseek_tool_call(
+    value: Option<&Value>,
+) -> Result<Option<ProviderToolCall>, ProviderError> {
+    let Some(calls) = value.and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    if calls.len() != 1 {
+        return Err(ProviderError::protocol());
+    }
+    let call = &calls[0];
+    if call.get("type").and_then(Value::as_str) != Some("function") {
+        return Err(ProviderError::protocol());
+    }
+    let call = ProviderToolCall {
+        call_id: call
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(ProviderError::protocol)?
+            .to_owned(),
+        name: call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .ok_or_else(ProviderError::protocol)?
+            .to_owned(),
+        arguments_json: call
+            .pointer("/function/arguments")
+            .and_then(Value::as_str)
+            .ok_or_else(ProviderError::protocol)?
+            .to_owned(),
+    };
+    call.validate_envelope()
+        .map_err(|_| ProviderError::protocol())?;
+    Ok(Some(call))
 }
 
 fn map_finish_reason(reason: &str) -> FinishReason {
@@ -707,7 +1450,7 @@ impl ProviderHttpClient {
         request: &NormalizedRequest,
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
-        request.validate()?;
+        request.validate_for(provider)?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
@@ -730,7 +1473,7 @@ impl ProviderHttpClient {
         request: &NormalizedRequest,
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
-        request.validate()?;
+        request.validate_for(provider)?;
         let adapter = adapter(provider);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
@@ -771,7 +1514,7 @@ impl ProviderHttpClient {
         request: &NormalizedRequest,
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
-        request.validate()?;
+        request.validate_for(provider)?;
         let adapter = adapter(provider);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
@@ -820,7 +1563,7 @@ impl ProviderHttpClient {
         request: &NormalizedRequest,
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
-        request.validate()?;
+        request.validate_for(provider)?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
@@ -859,7 +1602,7 @@ impl ProviderHttpClient {
         cancellation: &CancellationToken,
         sink: &mut dyn FnMut(NormalizedEvent) -> Result<(), ProviderError>,
     ) -> Result<NormalizedResponse, ProviderError> {
-        request.validate()?;
+        request.validate_for(provider)?;
         let adapter = adapter(provider);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
@@ -909,7 +1652,7 @@ impl ProviderHttpClient {
     where
         F: FnMut(NormalizedEvent) -> Result<(), ProviderError> + Send,
     {
-        request.validate()?;
+        request.validate_for(provider)?;
         let adapter = adapter(provider);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
@@ -987,7 +1730,7 @@ impl ProviderHttpClient {
     where
         F: FnMut(NormalizedEvent) -> Result<(), ProviderError> + Send,
     {
-        request.validate()?;
+        request.validate_for(provider)?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
@@ -1040,6 +1783,9 @@ impl ProviderHttpClient {
         body: &[u8],
         accept: &'static str,
     ) -> Result<BlockingResponse, ProviderError> {
+        if body.len() > MAX_REQUEST_BYTES {
+            return Err(ProviderError::invalid_request());
+        }
         let endpoint = self.endpoint(provider)?;
         let mut authorization = Vec::with_capacity(key.len() + 7);
         authorization.extend_from_slice(b"Bearer ");
@@ -1069,6 +1815,9 @@ impl ProviderHttpClient {
         body: &[u8],
         accept: &'static str,
     ) -> Result<AsyncResponse, ProviderError> {
+        if body.len() > MAX_REQUEST_BYTES {
+            return Err(ProviderError::invalid_request());
+        }
         let endpoint = self.endpoint(provider)?;
         let mut authorization = Vec::with_capacity(key.len() + 7);
         authorization.extend_from_slice(b"Bearer ");
@@ -1215,6 +1964,7 @@ fn consume_stream(
     let mut done = false;
     let mut sequence = 0u32;
     let mut event_count = 0usize;
+    let mut tool_state = ToolCallAccumulator::default();
     let mut response_bytes = 0usize;
     let mut chunk = [0u8; 8 * 1024];
 
@@ -1242,6 +1992,7 @@ fn consume_stream(
                 &mut done,
                 &mut sequence,
                 &mut event_count,
+                &mut tool_state,
                 sink,
             )?;
         }
@@ -1260,6 +2011,7 @@ fn consume_stream(
                 &mut done,
                 &mut sequence,
                 &mut event_count,
+                &mut tool_state,
                 sink,
             )?;
         }
@@ -1271,12 +2023,18 @@ fn consume_stream(
         return Err(ProviderError::protocol());
     }
 
+    let (tool_call, continuation) = tool_state.finish(provider, &aggregate)?;
+    if (finish_reason == Some(FinishReason::ToolCall)) != tool_call.is_some() {
+        return Err(ProviderError::protocol());
+    }
     Ok(NormalizedResponse {
         text: aggregate,
         usage,
         finish_reason: finish_reason.unwrap_or(FinishReason::Unknown),
         provider_id: provider,
         model: preset(provider).model,
+        tool_call,
+        continuation,
     })
 }
 
@@ -1303,6 +2061,7 @@ where
     let mut done = false;
     let mut sequence = 0u32;
     let mut event_count = 0usize;
+    let mut tool_state = ToolCallAccumulator::default();
     let mut response_bytes = 0usize;
 
     loop {
@@ -1327,6 +2086,7 @@ where
                 &mut done,
                 &mut sequence,
                 &mut event_count,
+                &mut tool_state,
                 sink,
             )?;
         }
@@ -1345,6 +2105,7 @@ where
                 &mut done,
                 &mut sequence,
                 &mut event_count,
+                &mut tool_state,
                 sink,
             )?;
         }
@@ -1356,12 +2117,18 @@ where
         return Err(ProviderError::protocol());
     }
 
+    let (tool_call, continuation) = tool_state.finish(provider, &aggregate)?;
+    if (finish_reason == Some(FinishReason::ToolCall)) != tool_call.is_some() {
+        return Err(ProviderError::protocol());
+    }
     Ok(NormalizedResponse {
         text: aggregate,
         usage,
         finish_reason: finish_reason.unwrap_or(FinishReason::Unknown),
         provider_id: provider,
         model: preset(provider).model,
+        tool_call,
+        continuation,
     })
 }
 
@@ -1375,6 +2142,7 @@ fn apply_stream_data(
     done: &mut bool,
     sequence: &mut u32,
     event_count: &mut usize,
+    tool_state: &mut ToolCallAccumulator,
     sink: &mut dyn FnMut(NormalizedEvent) -> Result<(), ProviderError>,
 ) -> Result<(), ProviderError> {
     for event in adapter.parse_stream_data(data)? {
@@ -1397,6 +2165,17 @@ fn apply_stream_data(
                     sequence: *sequence,
                     delta,
                 })?;
+            }
+            AdapterStreamEvent::ToolCallDelta {
+                index,
+                call_id,
+                name,
+                arguments_delta,
+            } => {
+                tool_state.push_delta(index, call_id, name, arguments_delta)?;
+            }
+            AdapterStreamEvent::ToolEnvelope { call, continuation } => {
+                tool_state.set_envelope(call, continuation)?;
             }
             AdapterStreamEvent::Usage(next_usage) => {
                 *usage = Some(next_usage);
@@ -1672,6 +2451,468 @@ mod tests {
     }
 
     #[test]
+    fn both_adapters_capture_native_tool_requests_and_typed_continuations() {
+        let initial = NormalizedRequest::user_text("执行测试操作".to_owned(), 512)
+            .unwrap()
+            .with_tool_definitions(vec![
+                crate::canon_context::novelist_read_context_definition(),
+            ])
+            .unwrap();
+        let deepseek_initial = capture_outbound_json(ProviderId::Deepseek, &initial, true);
+        assert_eq!(
+            deepseek_initial["tools"][0]["function"]["name"],
+            "novelist.read_context"
+        );
+        assert_eq!(deepseek_initial["tool_choice"], "auto");
+        assert_eq!(deepseek_initial["thinking"]["type"], "disabled");
+
+        let openai_initial = capture_outbound_json(ProviderId::Openai, &initial, true);
+        assert_eq!(openai_initial["tools"][0]["name"], "novelist.read_context");
+        assert_eq!(openai_initial["tools"][0]["strict"], true);
+        assert_eq!(
+            deepseek_initial["tools"][0]["function"]["parameters"],
+            openai_initial["tools"][0]["parameters"]
+        );
+        assert_eq!(openai_initial["parallel_tool_calls"], false);
+        assert_eq!(
+            openai_initial["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+
+        let result = ToolResult {
+            call_id: "call_1".to_owned(),
+            name: "novelist.read_context".to_owned(),
+            version: 1,
+            status: crate::tool_runtime::ToolResultStatus::Succeeded,
+            output_json: Some(json!({"schemaVersion": 1})),
+            error_code: None,
+        };
+        let call = ProviderToolCall {
+            call_id: "call_1".to_owned(),
+            name: "novelist.read_context".to_owned(),
+            arguments_json: r#"{"capabilityId":"novel-story-telling","capabilityResources":[],"canonOperations":[]}"#.to_owned(),
+        };
+        let deepseek_continuation = initial
+            .continue_after_tool(
+                ProviderContinuation::Deepseek {
+                    assistant_text: "我先处理。".to_owned(),
+                    call: call.clone(),
+                },
+                result.clone(),
+                512,
+            )
+            .unwrap();
+        let deepseek_body =
+            capture_outbound_json(ProviderId::Deepseek, &deepseek_continuation, true);
+        assert_eq!(deepseek_body["tool_choice"], "none");
+        assert_eq!(deepseek_body["thinking"]["type"], "disabled");
+        assert_eq!(
+            deepseek_body["messages"][deepseek_body["messages"].as_array().unwrap().len() - 1]
+                ["tool_call_id"],
+            "call_1"
+        );
+
+        let openai_continuation = initial
+            .continue_after_tool(
+                ProviderContinuation::Openai {
+                    items: vec![
+                        OpenAiContinuationItem::OutputMessage {
+                            item_id: "msg_1".to_owned(),
+                            status: "completed".to_owned(),
+                            role: "assistant".to_owned(),
+                            content: vec![OpenAiMessageContent::OutputText {
+                                text: "我先处理。".to_owned(),
+                            }],
+                            phase: Some("commentary".to_owned()),
+                        },
+                        OpenAiContinuationItem::EncryptedReasoning {
+                            item_id: "rs_1".to_owned(),
+                            encrypted_content: "encrypted".to_owned(),
+                            phase: None,
+                        },
+                        OpenAiContinuationItem::FunctionCall {
+                            item_id: "fc_1".to_owned(),
+                            call_id: call.call_id,
+                            name: call.name,
+                            arguments: call.arguments_json,
+                            status: "completed".to_owned(),
+                            phase: Some("commentary".to_owned()),
+                        },
+                    ],
+                },
+                result,
+                512,
+            )
+            .unwrap();
+        let openai_body = capture_outbound_json(ProviderId::Openai, &openai_continuation, true);
+        assert_eq!(openai_body["tool_choice"], "none");
+        assert!(openai_body.get("tools").is_none());
+        let input = openai_body["input"].as_array().unwrap();
+        assert_eq!(input[input.len() - 1]["type"], "function_call_output");
+        assert_eq!(input[input.len() - 1]["call_id"], "call_1");
+        assert_eq!(input[input.len() - 4]["phase"], "commentary");
+    }
+
+    #[test]
+    fn both_adapters_capture_the_fixed_novelist_tool_and_catalog_within_body_limit() {
+        let addendum = crate::capability_pack::embedded_pack()
+            .unwrap()
+            .agent_system_addendum();
+        let request = NormalizedRequest::with_system(
+            format!("{CONVERSATION_SYSTEM_INSTRUCTION}\n\n{addendum}"),
+            vec![NormalizedMessage {
+                role: MessageRole::User,
+                content: "我们随便聊聊，再由你判断是否需要查看小说资料。".to_owned(),
+            }],
+            512,
+        )
+        .unwrap()
+        .with_tool_definitions(vec![
+            crate::canon_context::novelist_read_context_definition(),
+        ])
+        .unwrap();
+
+        let deepseek = capture_outbound_json(ProviderId::Deepseek, &request, true);
+        let openai = capture_outbound_json(ProviderId::Openai, &request, true);
+        assert_eq!(deepseek["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            deepseek["tools"][0]["function"]["name"],
+            "novelist.read_context"
+        );
+        assert_eq!(openai["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(openai["tools"][0]["name"], "novelist.read_context");
+        assert_eq!(deepseek["tool_choice"], "auto");
+        assert_eq!(openai["tool_choice"], "auto");
+        assert!(deepseek.to_string().contains("novel-story-telling"));
+        assert!(openai.to_string().contains("novel-story-telling"));
+        assert!(serde_json::to_vec(&deepseek).unwrap().len() <= MAX_REQUEST_BYTES);
+        assert!(serde_json::to_vec(&openai).unwrap().len() <= MAX_REQUEST_BYTES);
+        assert!(!deepseek.to_string().contains("novelist.read_context@1"));
+        assert!(!openai.to_string().contains("novelist.read_context@1"));
+    }
+
+    #[test]
+    fn large_history_memory_user_and_tool_result_fit_both_continuation_body_limits() {
+        let addendum = crate::capability_pack::embedded_pack()
+            .unwrap()
+            .agent_system_addendum();
+        let system = format!(
+            "{CONVERSATION_SYSTEM_INSTRUCTION}\n\n{addendum}\n\n派生 Memory：{}",
+            "忆".repeat(4_000)
+        );
+        let initial = NormalizedRequest::with_system(
+            system,
+            vec![
+                NormalizedMessage {
+                    role: MessageRole::Assistant,
+                    content: "史".repeat(2_000),
+                },
+                NormalizedMessage {
+                    role: MessageRole::User,
+                    content: "用".repeat(10_000),
+                },
+            ],
+            512,
+        )
+        .unwrap()
+        .with_tool_definitions(vec![
+            crate::canon_context::novelist_read_context_definition(),
+        ])
+        .unwrap();
+        let call = ProviderToolCall {
+            call_id: "call_large_nr3".to_owned(),
+            name: "novelist.read_context".to_owned(),
+            arguments_json: r#"{"capabilityId":"novel-story-telling","capabilityResources":[],"canonOperations":[]}"#.to_owned(),
+        };
+        let result = ToolResult {
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            version: 1,
+            status: crate::tool_runtime::ToolResultStatus::Succeeded,
+            output_json: Some(json!({
+                "schemaVersion": 1,
+                "sourceType": "canon_snapshot",
+                "content": "x".repeat(crate::tool_runtime::MAX_TOOL_RESULT_BYTES - 256)
+            })),
+            error_code: None,
+        };
+        result.validate().unwrap();
+
+        let deepseek = initial
+            .clone()
+            .continue_after_tool(
+                ProviderContinuation::Deepseek {
+                    assistant_text: "查阅中。".to_owned(),
+                    call: call.clone(),
+                },
+                result.clone(),
+                512,
+            )
+            .unwrap();
+        let openai = initial
+            .continue_after_tool(
+                ProviderContinuation::Openai {
+                    items: vec![OpenAiContinuationItem::FunctionCall {
+                        item_id: "fc_large_nr3".to_owned(),
+                        call_id: call.call_id,
+                        name: call.name,
+                        arguments: call.arguments_json,
+                        status: "completed".to_owned(),
+                        phase: Some("commentary".to_owned()),
+                    }],
+                },
+                result,
+                512,
+            )
+            .unwrap();
+        let deepseek_body = capture_outbound_json(ProviderId::Deepseek, &deepseek, true);
+        let openai_body = capture_outbound_json(ProviderId::Openai, &openai, true);
+        assert!(serde_json::to_vec(&deepseek_body).unwrap().len() <= MAX_REQUEST_BYTES);
+        assert!(serde_json::to_vec(&openai_body).unwrap().len() <= MAX_REQUEST_BYTES);
+        assert_eq!(deepseek_body["tool_choice"], "none");
+        assert_eq!(openai_body["tool_choice"], "none");
+    }
+
+    #[test]
+    fn native_tool_parsers_reject_multiple_or_unknown_required_items() {
+        let deepseek_calls = json!([
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "test.echo", "arguments": "{}"}
+            },
+            {
+                "id": "call_2",
+                "type": "function",
+                "function": {"name": "test.echo", "arguments": "{}"}
+            }
+        ]);
+        assert_eq!(
+            parse_deepseek_tool_call(Some(&deepseek_calls))
+                .err()
+                .unwrap()
+                .code,
+            "provider.protocol"
+        );
+
+        let openai_response = json!({
+            "output": [
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "test.echo",
+                    "arguments": "{}",
+                    "status": "completed"
+                },
+                {"type": "future_required_item", "id": "future_1"}
+            ]
+        });
+        assert_eq!(
+            parse_openai_output(&openai_response).err().unwrap().code,
+            "provider.protocol"
+        );
+    }
+
+    #[test]
+    fn both_provider_stream_and_completion_parsers_preserve_pairable_raw_arguments() {
+        for raw in [
+            r#"{"capabilityId":"novel-story-telling""#.to_owned(),
+            r#"["not-an-object"]"#.to_owned(),
+            format!(r#"{{"padding":"{}"}}"#, "x".repeat(40 * 1024)),
+        ] {
+            let deepseek_completion = json!({
+                "model": DEEPSEEK_PRESET.model,
+                "choices": [{
+                    "message": {
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_raw",
+                            "type": "function",
+                            "function": {
+                                "name": "novelist.read_context",
+                                "arguments": raw
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            });
+            let parsed = DEEPSEEK_ADAPTER
+                .parse_completion(&deepseek_completion)
+                .unwrap();
+            assert_eq!(parsed.tool_call.unwrap().arguments_json, raw);
+
+            let deepseek_stream = json!({
+                "model": DEEPSEEK_PRESET.model,
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_raw",
+                            "function": {
+                                "name": "novelist.read_context",
+                                "arguments": raw
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            })
+            .to_string();
+            let mut accumulator = ToolCallAccumulator::default();
+            let mut finish_reason = None;
+            for event in DEEPSEEK_ADAPTER
+                .parse_stream_data(&deepseek_stream)
+                .unwrap()
+            {
+                match event {
+                    AdapterStreamEvent::ToolCallDelta {
+                        index,
+                        call_id,
+                        name,
+                        arguments_delta,
+                    } => accumulator
+                        .push_delta(index, call_id, name, arguments_delta)
+                        .unwrap(),
+                    AdapterStreamEvent::Finished(reason) => finish_reason = Some(reason),
+                    _ => {}
+                }
+            }
+            assert_eq!(finish_reason, Some(FinishReason::ToolCall));
+            let (call, continuation) = accumulator.finish(ProviderId::Deepseek, "").unwrap();
+            assert_eq!(call.unwrap().arguments_json, raw);
+            assert!(continuation.is_some());
+
+            let openai_response = json!({
+                "model": OPENAI_PRESET.model,
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "id": "fc_raw",
+                    "call_id": "call_raw",
+                    "name": "novelist.read_context",
+                    "arguments": raw,
+                    "status": "completed",
+                    "phase": "commentary"
+                }]
+            });
+            let parsed = OPENAI_ADAPTER.parse_completion(&openai_response).unwrap();
+            assert_eq!(parsed.tool_call.unwrap().arguments_json, raw);
+            let stream_event = json!({
+                "type": "response.completed",
+                "response": openai_response
+            })
+            .to_string();
+            let events = OPENAI_ADAPTER.parse_stream_data(&stream_event).unwrap();
+            let streamed = events.into_iter().find_map(|event| match event {
+                AdapterStreamEvent::ToolEnvelope { call, .. } => Some(call),
+                _ => None,
+            });
+            assert_eq!(streamed.unwrap().arguments_json, raw);
+        }
+    }
+
+    #[test]
+    fn provider_parsers_keep_damaged_envelopes_unpairable() {
+        let mut accumulator = ToolCallAccumulator::default();
+        accumulator
+            .push_delta(
+                0,
+                Some("call_raw".to_owned()),
+                None,
+                r#"{"partial":"#.to_owned(),
+            )
+            .unwrap();
+        assert_eq!(
+            accumulator
+                .finish(ProviderId::Deepseek, "")
+                .err()
+                .unwrap()
+                .code,
+            "provider.protocol"
+        );
+
+        let incomplete_openai = json!({
+            "model": OPENAI_PRESET.model,
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_raw",
+                "call_id": "call_raw",
+                "name": "novelist.read_context",
+                "arguments": "{",
+                "status": "in_progress"
+            }]
+        });
+        assert_eq!(
+            OPENAI_ADAPTER
+                .parse_completion(&incomplete_openai)
+                .unwrap_err()
+                .code,
+            "provider.protocol"
+        );
+    }
+
+    #[test]
+    fn continuation_bounds_and_provider_identity_reject_before_outbound() {
+        let initial = NormalizedRequest::user_text("执行测试操作".to_owned(), 512).unwrap();
+        let result = ToolResult {
+            call_id: "call_1".to_owned(),
+            name: "test.echo".to_owned(),
+            version: 1,
+            status: crate::tool_runtime::ToolResultStatus::Succeeded,
+            output_json: Some(json!({"text": "ok"})),
+            error_code: None,
+        };
+        let deepseek = initial
+            .continue_after_tool(
+                ProviderContinuation::Deepseek {
+                    assistant_text: "我先处理。".to_owned(),
+                    call: ProviderToolCall {
+                        call_id: "call_1".to_owned(),
+                        name: "test.echo".to_owned(),
+                        arguments_json: "{}".to_owned(),
+                    },
+                },
+                result.clone(),
+                512,
+            )
+            .unwrap();
+        assert_eq!(
+            deepseek.validate_for(ProviderId::Openai).unwrap_err().code,
+            "provider.invalid_request"
+        );
+
+        let oversized = initial.continue_after_tool(
+            ProviderContinuation::Openai {
+                items: vec![
+                    OpenAiContinuationItem::OutputMessage {
+                        item_id: "msg_1".to_owned(),
+                        status: "completed".to_owned(),
+                        role: "assistant".to_owned(),
+                        content: vec![OpenAiMessageContent::OutputText {
+                            text: "x".repeat(33 * 1024),
+                        }],
+                        phase: None,
+                    },
+                    OpenAiContinuationItem::FunctionCall {
+                        item_id: "fc_1".to_owned(),
+                        call_id: "call_1".to_owned(),
+                        name: "test.echo".to_owned(),
+                        arguments: "{}".to_owned(),
+                        status: "completed".to_owned(),
+                        phase: None,
+                    },
+                ],
+            },
+            result,
+            512,
+        );
+        assert_eq!(oversized.err().unwrap().code, "provider.invalid_request");
+    }
+
+    #[test]
     fn conversation_request_adds_only_the_fixed_system_instruction() {
         let request = NormalizedRequest::conversation(
             vec![
@@ -1794,6 +3035,9 @@ mod tests {
                     },
                 ],
                 max_output_tokens: 128,
+                tool_definitions: Vec::new(),
+                continuation: None,
+                tool_result: None,
             },
             NormalizedRequest {
                 messages: vec![
@@ -1811,6 +3055,9 @@ mod tests {
                     },
                 ],
                 max_output_tokens: 128,
+                tool_definitions: Vec::new(),
+                continuation: None,
+                tool_result: None,
             },
             NormalizedRequest {
                 messages: vec![
@@ -1824,6 +3071,9 @@ mod tests {
                     },
                 ],
                 max_output_tokens: 128,
+                tool_definitions: Vec::new(),
+                continuation: None,
+                tool_result: None,
             },
         ];
         for request in invalid_requests {

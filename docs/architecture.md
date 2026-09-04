@@ -1,8 +1,8 @@
-# NovelGainker Architecture (NR-1)
+# NovelGainker Architecture (NR-2)
 
 NovelGainker is a Windows-first, local-first Tauri 2 application for Chinese novel writing. Its persistent three-column workspace keeps project/files/provider settings on the left, natural conversation in the center, and the real Markdown editor on the right. Creating or opening a project is the only startup requirement.
 
-NR-1 adds long-conversation continuity to the reliable NR-0 conversation path. It still does not load Novelist Skills, read manuscript Canon into model context, call tools, or let AI mutate Markdown. Any later capability requires a separately approved Story Packet and gate.
+NR-2 adds a bounded Host Agent Loop, Provider-native Tool Request/Result, an independent Task Store, and inline Task Activity projection to the NR-1 long-conversation baseline. The production Tool Registry remains empty, so the current release still does not execute tools, load Novelist Skills, read manuscript Canon into model context, or let AI mutate Markdown.
 
 ## Runtime
 
@@ -13,8 +13,10 @@ Rust Tauri Host
   -> project/session registry
   -> project-bound Conversation Store (complete visible History)
   -> derived Memory Store + Context assembler
-  -> optional one-attempt Compactor -> one-attempt streaming main reply
-  -> DeepSeek/OpenAI adapters + Windows CredentialVault
+  -> optional one-attempt Compactor
+  -> Agent Attempt 1 -> zero-or-one Tool -> zero-or-one Agent Attempt 2
+  -> empty production Tool Registry + independent Task Store
+  -> DeepSeek/OpenAI Provider-native adapters + Windows CredentialVault
   -> atomic persistence and general safety kernels
 ```
 
@@ -26,13 +28,15 @@ Visible conversation is stored at `.novelgainker/conversation/session.json` and 
 
 Derived Memory is stored separately at `.novelgainker/memory/state.json`. It binds to project/session, a continuous UTF-8-safe Segment Cursor interval, and a hash of the covered History bytes. Missing, corrupt, mismatched, or stale Memory is discarded without changing History or manuscript files. Memory is not Canon and is never rendered as a Conversation message.
 
+Independent Task state is stored at `.novelgainker/tasks/session.json`. It contains only bounded hashes, byte counts, controlled labels, stable error codes, status, and monotonic revisions—never raw arguments, results, Provider Continuation, credentials, or absolute paths. Tool protocol data does not become visible Conversation or Memory.
+
 Before a main reply, the Host assembles fixed system instructions, valid Memory, the newest exact History after Memory, and the current user message exactly once. Recent exact History wins over a conflicting summary. Failed or cancelled turns contribute only actual nonempty output and its incomplete state; generated placeholder text does not become semantic Memory.
 
 ## Provider path and frozen profile
 
-Below the 64 KiB context trigger, a turn makes zero Compactor attempts and at most one streaming main attempt. At or above the trigger, it may make one non-streaming Compactor attempt before one streaming main attempt. Both primitives are cancellable in flight, perform exactly one outbound HTTP attempt, and never retry. An ordinary Compactor failure is invisible and falls back to the last valid Memory plus bounded recent History; cancellation stops the entire turn before main starts.
+Below the 64 KiB context trigger, a no-tool turn makes zero Compactor attempts and at most one streaming main attempt. At or above the trigger, it may make one non-streaming Compactor attempt before the main attempt. With an eligible test Tool Registry, the main path allows one Tool execution and one continuation attempt. Each primitive performs exactly one outbound HTTP attempt and never retries; the per-turn ceiling is three Provider attempts including Compactor.
 
-The NR-G2 technical submission freezes a 24 KiB exact tail, 6 KiB segments, 72 KiB Compactor input, 8 KiB Backfill reserve, 12 KiB Memory summary, 1,024 Compactor output tokens, 4,096 main output tokens, and a 5,120 cumulative requested-output ceiling. Provider hard limits remain 64 messages, 96 KiB per request, 32 KiB per input message, and 8 MiB per response.
+The frozen profile keeps a 24 KiB exact tail, 6 KiB segments, 72 KiB Compactor input, 8 KiB Backfill reserve, 12 KiB Memory summary, 1,024 Compactor output tokens, and 4,096 tokens for each of at most two Agent attempts. The maximum cumulative requested output is 9,216 tokens. Provider hard limits remain 64 messages, 96 KiB per request, 32 KiB per input message, and 8 MiB per response.
 
 ## Conversation reconciliation and close
 
@@ -46,4 +50,4 @@ Current Project Metadata uses the generic `schemaVersion = 2`. A v1 project is d
 
 ## Gates
 
-NR-G1 is product-approved. NR-101 through NR-106 are implemented and currently stopped at `NR-G2-technical-submission`; `nrG2Approved = false`. The NR-G2 gate combines local Loopback state-machine tests, long-history/Segment tests, frozen budget checks, the existing release/IPC closure, and full `pnpm quality`. It does not claim real Provider summary semantics: no real Provider Live Smoke was run, and NR-2 is not authorized.
+NR-G1, NR-G2, and NR-G3 are product-approved. NR-201 through NR-206 and NR-G3-R01 through NR-G3-R03 are implemented, and the runtime remains stopped at the passed NR-G3 Gate. NR3-D2-R01 through NR3-D2-R06 and FR01 through FR02 are approved in the NR-3 Story Packet Draft 2 Final, and the workflow is stopped at the Packet approval Gate. NR-301 through NR-306 are not authorized for implementation. The production Registry therefore remains empty and no Skill or Canon-read capability is active. No real Provider Live Smoke was run, and no NR-4 through NR-7 Story Packet has been formed.

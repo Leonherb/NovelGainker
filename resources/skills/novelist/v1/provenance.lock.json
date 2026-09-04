@@ -1,5 +1,10 @@
 {
   "schemaVersion": 1,
+  "sourcePackageId": "novelist",
+  "sourcePackageVersion": "0.2.0",
+  "projectionId": "novelgainker.novelist",
+  "projectionSchemaVersion": 1,
+  "projectionContentVersion": "1.0.0",
   "sourceRepository": "https://github.com/comfuture/novelist",
   "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
   "sourceSubtree": "plugins/novelist",

@@ -9,12 +9,15 @@ import {
 import type { ProviderStateSnapshot } from "../lib/tauri/provider";
 import {
   listenConversationTurnEvents,
+  mergeTaskActivity,
   requestConversationSession,
   requestConversationTurnCancel,
   requestConversationTurnStart,
   type ConversationSession,
+  type ConversationRuntimeView,
   type ConversationTurnEvent,
   type ConversationTurnStatus,
+  type TaskActivity,
 } from "../lib/tauri/conversation";
 import { normalizeAppError, type AppError } from "../lib/tauri/health";
 import { PROVIDER_PRESENTATION } from "./provider-settings-model";
@@ -45,12 +48,21 @@ const STATUS_LABELS: Record<ConversationTurnStatus, string> = {
   not_generated: "未生成",
 };
 
+const TASK_STATUS_LABELS: Record<TaskActivity["status"], string> = {
+  queued: "正在处理……",
+  running: "正在处理……",
+  succeeded: "已完成相关操作。",
+  failed: "相关操作未完成。",
+  cancelled: "相关操作未完成。",
+};
+
 export function ConversationView({
   projectSessionId,
   providerState,
   onRunActiveChange = () => undefined,
 }: ConversationViewProps) {
   const [session, setSession] = useState<ConversationSession | null>(null);
+  const [taskActivities, setTaskActivities] = useState<TaskActivity[]>([]);
   const [draft, setDraft] = useState("");
   const [activeTurn, setActiveTurn] = useState<ActiveTurn | null>(null);
   const [trackedTurnId, setTrackedTurnId] = useState<string | null>(null);
@@ -83,24 +95,27 @@ export function ConversationView({
   const loadSession = useCallback(async () => {
     if (!projectSessionId) {
       setSession(null);
+      setTaskActivities([]);
       return null;
     }
     const loaded = await requestConversationSession(projectSessionId);
-    setSession(loaded);
+    setSession(loaded.conversation);
+    setTaskActivities((current) => loaded.taskActivities.reduce(mergeTaskActivity, current));
     return loaded;
   }, [projectSessionId]);
 
   const applyLoadedSession = useCallback(
-    (loaded: ConversationSession, expectedTurnId: string | null) => {
+    (loaded: ConversationRuntimeView, expectedTurnId: string | null) => {
+      const conversation = loaded.conversation;
       const expectedTurn = expectedTurnId
-        ? loaded.turns.find((turn) => turn.turnId === expectedTurnId)
+        ? conversation.turns.find((turn) => turn.turnId === expectedTurnId)
         : undefined;
       const runningTurn =
         expectedTurn?.status === "running"
           ? expectedTurn
           : expectedTurnId
             ? undefined
-            : [...loaded.turns].reverse().find((turn) => turn.status === "running");
+            : [...conversation.turns].reverse().find((turn) => turn.status === "running");
 
       setSynchronizationFailure(null);
       setStarting(false);
@@ -184,6 +199,12 @@ export function ConversationView({
       }
 
       if (event.kind === "usage") {
+        return;
+      }
+
+      if (event.kind === "taskActivity") {
+        trackTurn(event.turnId);
+        setTaskActivities((current) => mergeTaskActivity(current, event.taskActivity));
         return;
       }
 
@@ -379,6 +400,11 @@ export function ConversationView({
                 ? "AI 正在回复。"
                 : "Enter 发送，Shift + Enter 换行";
 
+  const taskForTurn = (turnId: string) =>
+    taskActivities
+      .filter((activity) => activity.turnId === turnId)
+      .sort((left, right) => right.taskRevision - left.taskRevision)[0];
+
   return (
     <section className="conversation-runtime" aria-label="小说创作对话消息">
       <div className="message-canvas" ref={messageCanvasRef}>
@@ -409,7 +435,14 @@ export function ConversationView({
                 </header>
                 <p>{message.content}</p>
                 {message.role === "assistant" && index === turn.messages.length - 1 ? (
-                  <footer>{STATUS_LABELS[turn.status]}</footer>
+                  <>
+                    {taskForTurn(turn.turnId) ? (
+                      <div className="conversation-task-activity">
+                        {TASK_STATUS_LABELS[taskForTurn(turn.turnId).status]}
+                      </div>
+                    ) : null}
+                    <footer>{STATUS_LABELS[turn.status]}</footer>
+                  </>
                 ) : null}
               </article>
             )),
@@ -428,6 +461,16 @@ export function ConversationView({
                 </span>
               </header>
               <p>{activeTurn.text || "…"}</p>
+              {taskForTurn(activeTurn.turnId) ? (
+                <div
+                  className="conversation-task-activity"
+                  aria-atomic="true"
+                  aria-live="polite"
+                  role="status"
+                >
+                  {TASK_STATUS_LABELS[taskForTurn(activeTurn.turnId).status]}
+                </div>
+              ) : null}
             </article>
           ) : null}
         </div>

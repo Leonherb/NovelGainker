@@ -1,14 +1,22 @@
 {
   "schemaVersion": 1,
-  "packId": "novelgainker.novelist-compatible",
-  "skillPackVersion": "1.0.0",
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false,
+  "sourcePackage": {
+    "id": "novelist",
+    "version": "0.2.0",
+    "repository": "https://github.com/comfuture/novelist",
+    "commit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
+    "archiveSha256": "8b7c53e1832ee91fab29a320effe11efff9d3f07735b4ce8b3a541266bae85b8"
+  },
+  "projection": {
+    "id": "novelgainker.novelist",
+    "schemaVersion": 1,
+    "contentVersion": "1.0.0"
+  },
   "provenanceResource": "provenance.lock.json",
   "licenseResource": "LICENSE.upstream",
   "attributionResource": "ATTRIBUTION.md",
   "inventoryResource": "inventory.json",
-  "skillManifests": [
+  "capabilityManifests": [
     "manifests/create-novel-project.json",
     "manifests/create-setting.json",
     "manifests/create-character.json",

@@ -1,51 +1,19 @@
 {
+  "schemaVersion": 1,
   "id": "create-setting",
-  "version": 1,
-  "description": "创建或完善世界、地点、时代、社会规则、限制与氛围设定。",
-  "triggerSummary": "用户要求生成、整理、保存或修改小说设定时使用。",
-  "instructionResources": [
-    "instructions/create-setting.md"
-  ],
+  "description": "分析和完善世界、地点、时代、社会规则、限制与氛围。",
+  "usage": "当对话涉及世界观、地点、时代或规则的一致性时采用。",
+  "instructionResource": "instructions/create-setting.md",
   "templateResources": [
     "fixtures/setting.template.md"
   ],
   "referenceResources": [],
-  "allowedTools": [
-    "project.create_markdown",
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "characters/*.md",
-    "materials/*.md",
-    "plot/*.md",
-    "project.md",
-    "style/*.md",
-    "world/*.md"
-  ],
-  "writeScopes": [
-    "world/*.md"
-  ],
-  "riskClass": "mixed",
-  "alwaysConfirmActions": [
-    "document.replace_whole",
-    "metadata.update_critical"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "fixtures/setting.template.md": "309b12fe0c1f74b02d96fe92aaed651351b869d01a392b26b048620dcc37a438",
-    "instructions/create-setting.md": "d810a33064b5ef3ae198aa11f24a274dddfc99d084d5ed2a541fefddfe4e819e"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "characters",
+    "materials",
+    "plot",
+    "style",
+    "world"
+  ]
 }

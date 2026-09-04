@@ -1,55 +1,56 @@
-# NovelGainker 当前架构（NR-1）
+# NovelGainker 当前架构（NR-2）
 
 ## 产品边界
 
-NovelGainker 是 Windows-first、local-first 的 Tauri 2 中文小说写作应用。界面保持三栏：左栏管理工程、文件与 Provider；中栏只承载自然对话；右栏显示真实 Markdown 文件编辑器。启动时只要求新建或打开工程，不要求预先建立人物、世界或章节。
+NovelGainker 是 Windows-first、local-first 的 Tauri 2 中文小说写作应用。界面保持三栏：左栏管理工程、文件与 Provider；中栏只承载自然对话；右栏显示真实 Markdown 编辑器。启动时只要求新建或打开工程，不要求预先建立人物、世界或章节。
 
-NR-1 在可靠自然对话上增加完整 History、派生 Memory、按阈值压缩和长对话 Context。它仍不加载 Novelist Skill，不读取小说 Canon 作为模型上下文，不调用 Tool，也不由 AI 写入 Markdown。后续能力必须经过新的 Story Packet 和 Gate。
+NR-2 在 NR-1 的完整 History、派生 Memory 和长对话 Context 上增加 Host Agent Loop / Tool Request-Result 基础设施。生产 Tool Registry 仍为空，因此当前版本不会执行 Tool，不加载 Novelist Skill，不读取小说 Canon 作为模型上下文，也不由 AI 写入 Markdown。
 
 ## 运行结构
 
 ```text
-React UI
-  ├─ Project / Markdown editor
-  ├─ Provider settings
-  └─ Conversation view
-          │ 3 typed commands + 1 event
-          ▼
+React 三栏 UI
+  └─ Conversation View（自然语言 + 当前 Turn 内联 Task 状态）
+       │ 3 typed commands + conversation-turn-event
+       ▼
 Rust Tauri Host
-  ├─ Project/session registry
   ├─ Conversation Store（完整可见 History）
-  ├─ 派生 Memory Store / Context Assembler
-  ├─ 可选一次 Compactor → 一次流式主回复
-  ├─ Provider adapters / CredentialVault
-  └─ atomic persistence / recovery / validation kernels
+  ├─ Memory Store / Context Assembler / 0..1 Compactor
+  ├─ Agent Attempt 1 → 0..1 Tool → 0..1 Agent Attempt 2
+  ├─ 空生产 Tool Registry / 严格 Tool Contract
+  ├─ 独立 Task Store / Revision CAS / recovery
+  ├─ DeepSeek 与 OpenAI Provider-native adapters
+  └─ CredentialVault / atomic persistence / validation kernels
 ```
 
-生产 Command 固定为 24 条，其中 Conversation Command 固定为 `conversation_session_load`、`conversation_turn_start`、`conversation_turn_cancel`。流式事件为 `conversation-turn-event`。Command Manifest、Handler、Permission、Capability 与所有生产 TypeScript Client 必须严格相等。
+生产 Command 固定为 24 条；Conversation Command 仍只有 `conversation_session_load`、`conversation_turn_start`、`conversation_turn_cancel`。Load 返回独立 `ConversationRuntimeView`，其中嵌套原样 Conversation 与有界 Task Activity。Event Channel 不新增，只扩展严格 `taskActivity` Variant。
 
-## History、Memory 与 Context
+## Conversation、Memory 与 Task
 
-工程内完整可见对话保存在 `.novelgainker/conversation/session.json`，始终是 Conversation 事实源。Host 在任何 Provider attempt 前先保存用户消息与 `running`；流式字符只保留在进程内，终态时一次保存完整结果。遗留 `running` 在重新打开时变成 `本次回复未生成。`，不会自动重试。
+`.novelgainker/conversation/session.json` 是完整可见对话事实源，每 Turn 仍只有一条用户消息和一条助手自然语言消息。Tool Request、Result、Arguments、Continuation 和 Task JSON 不进入 Conversation。
 
-派生 Memory 独立保存在 `.novelgainker/memory/state.json`，绑定 Project/Session、连续的 UTF-8 安全 Segment Cursor 区间和覆盖 History 的源 Hash。文件缺失、损坏、绑定错误、区间无效或 Hash 不一致时直接丢弃，不改变 History 或小说 Markdown。Memory 不是 Canon，也不生成 Conversation 气泡。
+`.novelgainker/memory/state.json` 是可丢弃派生摘要。它只读取可见 History，不读取 Task Store；固定五栏目、Segment Cursor、源 Hash、阈值与回填规则保持 NR-G2 不变。
 
-主回复前，Host 依次组装固定系统指令、有效 Memory、Memory 之后的最近精确 History 和只出现一次的当前用户消息。最近精确 History 与摘要冲突时以前者为准。失败/取消 Turn 只提供真实非空输出及其未完成状态；`本次回复未生成。` 和 UI 附加提示不进入语义摘要。
+`.novelgainker/tasks/session.json` 是独立、工程绑定、原子替换的运行状态。记录只包含关联 Hash、字节数、受控标签、稳定错误码和 `queued/running/succeeded/failed/cancelled`；Revision 从 1 单调增加，终态不可回退。重开时遗留 `queued/running` 只转为 `cancelled + runtime.interrupted`，不重放 Tool 或 Provider。
 
-## Provider 与冻结 Profile
+## Provider-native Agent Loop
 
-预测 Context 低于 64 KiB 时，Compactor attempt 为 0，主回复最多 1 次。达到阈值且存在可压缩输入时，先最多进行 1 次非流式 Compactor，再最多进行 1 次流式主回复。两条路径共享 Cancellation Token，均可中断在途 HTTP、每条严格 1 attempt、零重试。Compactor 普通失败不会产生失败气泡，Host 保留旧 Memory 并用受限最近 History 继续；Compactor 阶段停止则取消整个 Turn，不启动主回复。
+普通无 Tool Registry 请求继续走 NR-1 单次主回复路径。存在测试注入 Registry 时，Adapter 可从 Provider 原生结构归一化一个 Tool Call：DeepSeek 使用 Chat `tools/tool_calls/tool_call_id`，OpenAI Responses 使用 Function Tool、类型化 Output Item 白名单和 `function_call_output`。Host 不解析自然语言、Markdown、XML 或尾部 JSON 来猜测动作。
 
-NR-G2 技术提交冻结：24 KiB 最近精确尾部、6 KiB Segment、72 KiB Compactor 输入、8 KiB Backfill 预留、12 KiB Memory 摘要、1,024 Compactor 输出 tokens、4,096 主回复输出 tokens、5,120 累计请求输出上限。Provider 硬边界保持 64 条消息、96 KiB 请求、32 KiB 输入单消息和 8 MiB 响应。
+合法调用先通过本地定义、严格 Schema、参数、Continuation、完整 96 KiB 请求体和取消检查，再由 Host 唯一执行。每 Turn 最多一个 Tool、一个 Round、两次 Agent Attempt；第二次 Attempt 不提供 Tool，若仍返回 Tool Call 则零执行并以 `agent.tool_round_limit` 终止。Provider Continuation 仅存在于当前 Turn 内存，不写 Store、IPC、日志或 Evidence。
 
-## Event 对账与关闭
+## 预算、取消与 UI
 
-Event 只负责低延迟 Delta 和终态通知，Store 是最终事实源。UI 完成 listener 注册后才允许发送；活动 Turn 使用单一非重叠的 1000ms Session reconciliation。Event 丢失、延迟、重复或乱序不会产生第二个 Provider Turn 或永久活动状态。
+Compactor 最多 1 次、Agent HTTP Attempt 最多 2 次，单 Turn Provider HTTP Attempt 最多 3 次，全部零自动重试。请求输出预算固定为 `1024 + 4096 + 4096 = 9216` tokens。Tool Deadline 为 30 秒，用户停止后的 Executor 取消确认不超过 2 秒。
 
-原始窗口关闭请求只检查手动 Markdown 是否未保存。只有这种情况显示 `保存 / 放弃 / 取消`。确认关窗后直接销毁窗口，不等待项目关闭、Compactor、主回复或 Conversation flush；窗口销毁取消共享 Token，遗留 `running` 在下次打开时对账。Compactor 半成品永不提交。
+Task 与 Conversation 终态独立：Task 失败可由 Attempt 2 解释为自然语言；Task 已成功而 Attempt 2 失败时 Task 不回滚。任何非空助手文本都保留。中栏只显示受控本地映射：`正在处理……`、`已完成相关操作。`、`相关操作未完成。`；不显示 Tool 名称、参数、结果、JSON 或技术卡片。活动状态使用唯一 `aria-live="polite"`，不抢输入焦点。
 
-## Project Metadata 与一次性切换
+Event 是低延迟路径，Store 是事实源。Snapshot/Event 仅按更大的 `taskRevision` 合并，相等冲突或更旧 Revision 被拒绝，终态不会被迟到的活动态覆盖。
 
-Project Metadata 当前通用格式为 `schemaVersion = 2`。v1 表示可丢弃旧应用状态，只在 writer lease、规范化项目根和递归 reparse 检查通过后重置一次。小说 Markdown、素材、图片、Provider 设置、UI 偏好、无关项目与 Windows 凭据不变。
+## Project 与关闭边界
+
+Project Metadata 仍为严格 `schemaVersion = 2`。原始关闭请求只会被未保存的手动 Markdown 阻断，并显示 `保存 / 放弃 / 取消`；确认关闭后取消活动 Turn，不等待 Provider 或 Tool 自身超时。重开只对账，不自动续跑或重复副作用。
 
 ## Gate 状态
 
-NR-G1 已获产品批准。NR-101～NR-106 已完成，当前停止在 `NR-G2-technical-submission`，`nrG2Approved = false`。NR-G2 只以本地 Loopback、长 History/Segment 规模测试、预算检查、发布/IPC 闭包与完整 `pnpm quality` 形成技术证据；未执行真实 Provider Live Smoke，不声明真实模型摘要语义质量，不进入 NR-2。
+NR-201～NR-206 与 NR-G3-R01～R03 Remediation 已完成，NR-G3 已获产品批准，当前实现仍停止于通过后的 Gate。Task Store 已闭合 Result 严格配对和非法恢复拒绝；测试 Registry 只允许已验证的具体 Executor；同一核心 Turn 编排已覆盖 Compactor + Tool 三次调用和新 Memory 消费。两秒取消保证仅适用于封闭 Registry 中经验证的实现，不代表 Host 能强制终止任意进程内代码。自动化仅使用本地 Loopback、离线 Cargo、Debug/Release Build 和本地窗口 Smoke；真实 Provider Live Smoke 未执行。NR3-D2-R01～R06 与 FR01～FR02 已在 NR-3 Story Packet Draft 2 Final 中获产品批准，当前停止于 Packet 批准 Gate；NR-301～NR-306 未获实施授权，所以当前运行时仍不加载 Skill、不读写 Canon；NR-4～NR-7 Story Packet 未形成。

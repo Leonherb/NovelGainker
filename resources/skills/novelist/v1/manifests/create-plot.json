@@ -1,51 +1,21 @@
 {
+  "schemaVersion": 1,
   "id": "create-plot",
-  "version": 1,
-  "description": "创建或完善主剧情、支线、转折、揭示、回收和未决问题。",
-  "triggerSummary": "用户要求规划、整理、保存或修改小说剧情时使用。",
-  "instructionResources": [
-    "instructions/create-plot.md"
-  ],
+  "description": "分析和完善主剧情、支线、转折、揭示、回收与未决问题。",
+  "usage": "当对话涉及情节因果、结构、转折或回收时采用。",
+  "instructionResource": "instructions/create-plot.md",
   "templateResources": [
     "fixtures/plot.template.md"
   ],
   "referenceResources": [],
-  "allowedTools": [
-    "project.create_markdown",
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "characters/*.md",
-    "materials/*.md",
-    "plot/*.md",
-    "project.md",
-    "world/*.md"
-  ],
-  "writeScopes": [
-    "plot/main.md",
-    "plot/*.md"
-  ],
-  "riskClass": "mixed",
-  "alwaysConfirmActions": [
-    "document.replace_whole",
-    "metadata.update_critical"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "fixtures/plot.template.md": "f76035bfbb9d4dc4b29ffa757ffccf984a8be3c557ac8d19319736242b415ffe",
-    "instructions/create-plot.md": "b54a3e3c9d38e5aebd96505cfd2bf588b2e4eb8246ea68d3934858a1ccce57ea"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "characters",
+    "materials",
+    "macguffins",
+    "plot",
+    "outlines",
+    "world",
+    "chapters"
+  ]
 }

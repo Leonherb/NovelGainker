@@ -25,6 +25,13 @@ const blankSession: conversationApi.ConversationSession = {
   sessionId: CONVERSATION_SESSION_ID,
   turns: [],
 };
+const runtimeView = (
+  conversation: conversationApi.ConversationSession,
+): conversationApi.ConversationRuntimeView => ({
+  schemaVersion: 1,
+  conversation,
+  taskActivities: [],
+});
 const runningSession: conversationApi.ConversationSession = {
   ...blankSession,
   turns: [
@@ -65,27 +72,29 @@ describe("NR-005 ConversationView", () => {
     const user = userEvent.setup();
     const load = vi
       .spyOn(conversationApi, "requestConversationSession")
-      .mockResolvedValueOnce(blankSession)
-      .mockResolvedValueOnce(runningSession)
-      .mockResolvedValueOnce({
-        ...runningSession,
-        turns: [
-          {
-            ...runningSession.turns[0],
-            status: "completed",
-            updatedAtMs: 2,
-            messages: [
-              ...runningSession.turns[0].messages,
-              {
-                messageId: ASSISTANT_MESSAGE_ID,
-                role: "assistant",
-                content: "今天适合聊故事。",
-                createdAtMs: 2,
-              },
-            ],
-          },
-        ],
-      });
+      .mockResolvedValueOnce(runtimeView(blankSession))
+      .mockResolvedValueOnce(runtimeView(runningSession))
+      .mockResolvedValueOnce(
+        runtimeView({
+          ...runningSession,
+          turns: [
+            {
+              ...runningSession.turns[0],
+              status: "completed",
+              updatedAtMs: 2,
+              messages: [
+                ...runningSession.turns[0].messages,
+                {
+                  messageId: ASSISTANT_MESSAGE_ID,
+                  role: "assistant",
+                  content: "今天适合聊故事。",
+                  createdAtMs: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      );
     vi.spyOn(conversationApi, "requestConversationTurnStart").mockResolvedValue({
       sessionId: PROJECT_SESSION_ID,
       conversationSessionId: CONVERSATION_SESSION_ID,
@@ -122,6 +131,45 @@ describe("NR-005 ConversationView", () => {
         providerId: "openai",
         model: "gpt-5.6-terra",
         sequence: 2,
+        kind: "taskActivity",
+        taskActivity: {
+          taskId: "70000000-0000-4000-8000-000000000007",
+          sessionId: CONVERSATION_SESSION_ID,
+          turnId: TURN_ID,
+          status: "running",
+          displayLabel: "不会直接显示的技术标签",
+          taskRevision: 2,
+        },
+      });
+    });
+    expect(screen.getByText("正在处理……")).toBeInTheDocument();
+    expect(screen.queryByText("不会直接显示的技术标签")).not.toBeInTheDocument();
+    act(() => {
+      emit?.({
+        sessionId: PROJECT_SESSION_ID,
+        turnId: TURN_ID,
+        providerId: "openai",
+        model: "gpt-5.6-terra",
+        sequence: 3,
+        kind: "taskActivity",
+        taskActivity: {
+          taskId: "70000000-0000-4000-8000-000000000007",
+          sessionId: CONVERSATION_SESSION_ID,
+          turnId: TURN_ID,
+          status: "succeeded",
+          displayLabel: "不会直接显示的技术标签",
+          taskRevision: 3,
+        },
+      });
+    });
+    expect(screen.getByText("已完成相关操作。")).toBeInTheDocument();
+    act(() => {
+      emit?.({
+        sessionId: PROJECT_SESSION_ID,
+        turnId: TURN_ID,
+        providerId: "openai",
+        model: "gpt-5.6-terra",
+        sequence: 4,
         kind: "completed",
         finishReason: "stop",
       });
@@ -133,27 +181,29 @@ describe("NR-005 ConversationView", () => {
   it("requests idempotent stop and keeps the visible incomplete text", async () => {
     const user = userEvent.setup();
     vi.spyOn(conversationApi, "requestConversationSession")
-      .mockResolvedValueOnce(blankSession)
-      .mockResolvedValueOnce(runningSession)
-      .mockResolvedValueOnce({
-        ...runningSession,
-        turns: [
-          {
-            ...runningSession.turns[0],
-            status: "cancelled",
-            updatedAtMs: 2,
-            messages: [
-              ...runningSession.turns[0].messages,
-              {
-                messageId: ASSISTANT_MESSAGE_ID,
-                role: "assistant",
-                content: "已经写下半句。\n\n本次内容未生成完成。",
-                createdAtMs: 2,
-              },
-            ],
-          },
-        ],
-      });
+      .mockResolvedValueOnce(runtimeView(blankSession))
+      .mockResolvedValueOnce(runtimeView(runningSession))
+      .mockResolvedValueOnce(
+        runtimeView({
+          ...runningSession,
+          turns: [
+            {
+              ...runningSession.turns[0],
+              status: "cancelled",
+              updatedAtMs: 2,
+              messages: [
+                ...runningSession.turns[0].messages,
+                {
+                  messageId: ASSISTANT_MESSAGE_ID,
+                  role: "assistant",
+                  content: "已经写下半句。\n\n本次内容未生成完成。",
+                  createdAtMs: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      );
     vi.spyOn(conversationApi, "requestConversationTurnStart").mockResolvedValue({
       sessionId: PROJECT_SESSION_ID,
       conversationSessionId: CONVERSATION_SESSION_ID,

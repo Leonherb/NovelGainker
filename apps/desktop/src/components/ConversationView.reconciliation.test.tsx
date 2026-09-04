@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationView } from "./ConversationView";
 import { DEFAULT_PROVIDER_STATE } from "./provider-settings-model";
 import * as conversationApi from "../lib/tauri/conversation";
+import { mergeTaskActivity } from "../lib/tauri/conversation";
 
 const PROJECT_SESSION_ID = "10000000-0000-4000-8000-000000000001";
 const CONVERSATION_SESSION_ID = "20000000-0000-4000-8000-000000000002";
@@ -27,6 +28,14 @@ const blankSession: conversationApi.ConversationSession = {
   sessionId: CONVERSATION_SESSION_ID,
   turns: [],
 };
+
+const runtimeView = (
+  conversation: conversationApi.ConversationSession,
+): conversationApi.ConversationRuntimeView => ({
+  schemaVersion: 1,
+  conversation,
+  taskActivities: [],
+});
 
 const runningSession: conversationApi.ConversationSession = {
   ...blankSession,
@@ -94,6 +103,24 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
     vi.restoreAllMocks();
   });
 
+  it("merges Task snapshots and events only by a greater taskRevision", () => {
+    const base: conversationApi.TaskActivity = {
+      taskId: "70000000-0000-4000-8000-000000000007",
+      sessionId: CONVERSATION_SESSION_ID,
+      turnId: TURN_ID,
+      status: "running",
+      displayLabel: "处理相关内容",
+      taskRevision: 2,
+    };
+    const stale = { ...base, status: "queued" as const, taskRevision: 1 };
+    const conflictingEqual = { ...base, status: "failed" as const };
+    const terminal = { ...base, status: "succeeded" as const, taskRevision: 3 };
+    expect(mergeTaskActivity([base], stale)).toEqual([base]);
+    expect(mergeTaskActivity([base], conflictingEqual)).toEqual([base]);
+    expect(mergeTaskActivity([base], terminal)).toEqual([terminal]);
+    expect(mergeTaskActivity([terminal], base)).toEqual([terminal]);
+  });
+
   it("keeps sending disabled until the Event listener is ready", async () => {
     let resolveListener: ((dispose: () => void) => void) | undefined;
     const listenerReady = new Promise<() => void>((resolve) => {
@@ -102,7 +129,7 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
     vi.spyOn(conversationApi, "listenConversationTurnEvents").mockReturnValue(listenerReady);
     const load = vi
       .spyOn(conversationApi, "requestConversationSession")
-      .mockResolvedValue(blankSession);
+      .mockResolvedValue(runtimeView(blankSession));
 
     render(
       <ConversationView projectSessionId={PROJECT_SESSION_ID} providerState={configuredProvider} />,
@@ -134,9 +161,9 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
       vi.spyOn(conversationApi, "listenConversationTurnEvents").mockResolvedValue(() => undefined);
       const load = vi
         .spyOn(conversationApi, "requestConversationSession")
-        .mockResolvedValueOnce(blankSession)
-        .mockResolvedValueOnce(runningSession)
-        .mockResolvedValueOnce(terminalSession(status));
+        .mockResolvedValueOnce(runtimeView(blankSession))
+        .mockResolvedValueOnce(runtimeView(runningSession))
+        .mockResolvedValueOnce(runtimeView(terminalSession(status)));
       const start = vi
         .spyOn(conversationApi, "requestConversationTurnStart")
         .mockResolvedValue(startedTurn);
@@ -158,9 +185,9 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
     const user = userEvent.setup();
     vi.spyOn(conversationApi, "listenConversationTurnEvents").mockResolvedValue(() => undefined);
     vi.spyOn(conversationApi, "requestConversationSession")
-      .mockResolvedValueOnce(blankSession)
-      .mockResolvedValueOnce(runningSession)
-      .mockResolvedValueOnce(terminalSession("cancelled"));
+      .mockResolvedValueOnce(runtimeView(blankSession))
+      .mockResolvedValueOnce(runtimeView(runningSession))
+      .mockResolvedValueOnce(runtimeView(terminalSession("cancelled")));
     vi.spyOn(conversationApi, "requestConversationTurnStart").mockResolvedValue(startedTurn);
     const cancel = vi
       .spyOn(conversationApi, "requestConversationTurnCancel")
@@ -181,13 +208,13 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
     vi.spyOn(conversationApi, "listenConversationTurnEvents").mockResolvedValue(() => undefined);
     const load = vi
       .spyOn(conversationApi, "requestConversationSession")
-      .mockResolvedValueOnce(blankSession)
-      .mockResolvedValueOnce(runningSession)
+      .mockResolvedValueOnce(runtimeView(blankSession))
+      .mockResolvedValueOnce(runtimeView(runningSession))
       .mockRejectedValueOnce({
         code: "runtime.unknown",
         messageKey: "errors.runtimeUnknown",
       })
-      .mockResolvedValueOnce(terminalSession("completed"));
+      .mockResolvedValueOnce(runtimeView(terminalSession("completed")));
     const start = vi
       .spyOn(conversationApi, "requestConversationTurnStart")
       .mockResolvedValue(startedTurn);
@@ -216,7 +243,9 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
         messageKey: "errors.runtimeUnknown",
       })
       .mockResolvedValueOnce(() => undefined);
-    vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(blankSession);
+    vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(
+      runtimeView(blankSession),
+    );
     const start = vi.spyOn(conversationApi, "requestConversationTurnStart");
 
     render(

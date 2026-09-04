@@ -5,6 +5,7 @@ import {
   CONVERSATION_TURN_EVENT_CHANNEL,
   CONVERSATION_TURN_START_COMMAND,
   listenConversationTurnEvents,
+  parseConversationRuntimeView,
   parseConversationSession,
   parseConversationTurnEvent,
   parseConversationTurnStarted,
@@ -64,6 +65,30 @@ describe("Conversation IPC contract", () => {
     expect(() => parseConversationTurnStarted({ ...started, apiKey: "secret" })).toThrow();
   });
 
+  it("strictly parses the independent Runtime View and Task Activity", () => {
+    const conversation = {
+      schemaVersion: 1 as const,
+      projectId: PROJECT_ID,
+      sessionId: CONVERSATION_SESSION_ID,
+      turns: [],
+    };
+    expect(
+      parseConversationRuntimeView({
+        schemaVersion: 1,
+        conversation,
+        taskActivities: [],
+      }),
+    ).toEqual({ schemaVersion: 1, conversation, taskActivities: [] });
+    expect(() =>
+      parseConversationRuntimeView({
+        schemaVersion: 1,
+        conversation,
+        taskActivities: [],
+        rawToolResult: {},
+      }),
+    ).toThrow();
+  });
+
   it("strictly parses natural text, usage and unique terminal events", () => {
     expect(
       parseConversationTurnEvent({ ...IDENTITY, sequence: 1, kind: "textDelta", delta: "你好" }),
@@ -76,6 +101,21 @@ describe("Conversation IPC contract", () => {
         usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
       }),
     ).toMatchObject({ kind: "usage" });
+    expect(
+      parseConversationTurnEvent({
+        ...IDENTITY,
+        sequence: 3,
+        kind: "taskActivity",
+        taskActivity: {
+          taskId: "70000000-0000-4000-8000-000000000007",
+          sessionId: CONVERSATION_SESSION_ID,
+          turnId: TURN_ID,
+          status: "running",
+          displayLabel: "处理相关内容",
+          taskRevision: 2,
+        },
+      }),
+    ).toMatchObject({ kind: "taskActivity" });
     expect(
       parseConversationTurnEvent({
         ...IDENTITY,
@@ -115,7 +155,11 @@ describe("Conversation IPC contract", () => {
     const started = { ...IDENTITY, conversationSessionId: CONVERSATION_SESSION_ID };
     const invokeCommand = vi
       .fn()
-      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce({
+        schemaVersion: 1,
+        conversation: session,
+        taskActivities: [],
+      })
       .mockResolvedValueOnce(started)
       .mockResolvedValueOnce({ cancelRequested: true });
     await requestConversationSession(PROJECT_SESSION_ID, invokeCommand);

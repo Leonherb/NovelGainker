@@ -1,65 +1,15 @@
 {
+  "schemaVersion": 1,
   "id": "create-novel-project",
-  "version": 1,
-  "description": "创建安全、自包含且符合 NovelGainker Canon 约定的 Markdown 小说项目。",
-  "triggerSummary": "用户要求创建、初始化或搭建小说项目时使用。",
-  "instructionResources": [
-    "instructions/create-novel-project.md"
-  ],
+  "description": "规划安全、自包含的 Markdown 小说工程结构与初始约束。",
+  "usage": "当对话需要讨论新工程结构、初始元数据或目录约定时采用。",
+  "instructionResource": "instructions/create-novel-project.md",
   "templateResources": [
-    "fixtures/chapter.template.md",
-    "fixtures/character.template.md",
-    "fixtures/material.template.md",
-    "fixtures/plot.template.md",
-    "fixtures/project.template.md",
-    "fixtures/setting.template.md"
+    "fixtures/project.template.md"
   ],
   "referenceResources": [],
-  "allowedTools": [
-    "project.create_markdown",
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "project.md",
-    "style/*.md"
-  ],
-  "writeScopes": [
-    "chapters/*.md",
-    "characters/*.md",
-    "materials/*.md",
-    "outlines/*.md",
-    "plot/*.md",
-    "project.md",
-    "style/*.md",
-    "world/*.md"
-  ],
-  "riskClass": "high",
-  "alwaysConfirmActions": [
-    "document.replace_whole",
-    "metadata.update_critical",
-    "project.create_scaffold"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "fixtures/chapter.template.md": "3b43ea80cce52e8ce657668612a2a895d59f8361f88e3ef10230bb4f3631ce25",
-    "fixtures/character.template.md": "07d43eddd6c1b0fa26641c2896c2a2e99f41db2b9585764513759c24ea309cc5",
-    "fixtures/material.template.md": "85fe7d5ae6fcaea7b3ac57b963fe19f43fab3b6c8b9033925ee35661497c58b7",
-    "fixtures/plot.template.md": "f76035bfbb9d4dc4b29ffa757ffccf984a8be3c557ac8d19319736242b415ffe",
-    "fixtures/project.template.md": "f2c02d35a0bcef2828ca6684ccf7a909623d65bc76e0245af65ab0731bbc3083",
-    "fixtures/setting.template.md": "309b12fe0c1f74b02d96fe92aaed651351b869d01a392b26b048620dcc37a438",
-    "instructions/create-novel-project.md": "5b1cff351e2eb08d4180a274ad19ff9a2c344fb5adbd230b6583e75d9a15f7c9"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "style"
+  ]
 }

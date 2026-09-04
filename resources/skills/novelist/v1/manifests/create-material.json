@@ -1,51 +1,19 @@
 {
+  "schemaVersion": 1,
   "id": "create-material",
-  "version": 1,
-  "description": "创建或完善主题、物件、线索、研究笔记和可复用场景素材。",
-  "triggerSummary": "用户要求生成、整理、保存或修改小说素材时使用。",
-  "instructionResources": [
-    "instructions/create-material.md"
-  ],
+  "description": "分析和整理主题、物件、线索、研究笔记及场景素材。",
+  "usage": "当对话产生或检查可复用小说素材时采用。",
+  "instructionResource": "instructions/create-material.md",
   "templateResources": [
     "fixtures/material.template.md"
   ],
   "referenceResources": [],
-  "allowedTools": [
-    "project.create_markdown",
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "characters/*.md",
-    "materials/*.md",
-    "plot/*.md",
-    "project.md",
-    "world/*.md"
-  ],
-  "writeScopes": [
-    "materials/*.md"
-  ],
-  "riskClass": "mixed",
-  "alwaysConfirmActions": [
-    "document.replace_whole",
-    "metadata.update_critical",
-    "story_ledger.update"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "fixtures/material.template.md": "85fe7d5ae6fcaea7b3ac57b963fe19f43fab3b6c8b9033925ee35661497c58b7",
-    "instructions/create-material.md": "64c43f10fff61cde4907b41e115d689b7ec1731f1fffeb4cba56877ed67ddf97"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "characters",
+    "materials",
+    "macguffins",
+    "plot",
+    "world"
+  ]
 }

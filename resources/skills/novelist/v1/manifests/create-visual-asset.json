@@ -1,47 +1,16 @@
 {
+  "schemaVersion": 1,
   "id": "create-visual-asset",
-  "version": 1,
-  "description": "规划封面与插图 Prompt、视觉风格，并登记未来受控的本地资产导入。",
-  "triggerSummary": "用户要求规划、生成规格、导入或登记封面与插图时使用。",
-  "instructionResources": [
-    "instructions/create-visual-asset.md"
-  ],
+  "description": "规划封面、插图、视觉风格、构图与提示词。",
+  "usage": "当对话需要视觉规格或提示词规划时采用；本阶段不生成或导入资产。",
+  "instructionResource": "instructions/create-visual-asset.md",
   "templateResources": [],
   "referenceResources": [],
-  "allowedTools": [
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "assets/**",
-    "project.md",
-    "style/*.md"
-  ],
-  "writeScopes": [
-    "assets/cover/*",
-    "assets/illustrations/*",
-    "style/visual-style-guide.md"
-  ],
-  "riskClass": "high/mixed",
-  "alwaysConfirmActions": [
-    "asset.import",
-    "asset.replace",
-    "document.replace_whole"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "instructions/create-visual-asset.md": "235e6206e317e5d82084fc57da5185a23b9f967c777194812ce083bec2b933a1"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "characters",
+    "chapters",
+    "style",
+    "world"
+  ]
 }

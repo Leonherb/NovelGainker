@@ -1,6 +1,8 @@
 #[path = "app_state_current.rs"]
 pub mod app_state;
 pub mod canon_apply;
+pub mod canon_context;
+pub mod capability_pack;
 pub mod conversation;
 pub mod conversation_runtime;
 pub mod coordination;
@@ -11,6 +13,8 @@ pub mod provider_core;
 pub mod provider_state;
 pub mod recovery;
 pub mod search;
+pub mod task_store;
+pub mod tool_runtime;
 pub mod workspace;
 
 use serde::{Deserialize, Serialize};

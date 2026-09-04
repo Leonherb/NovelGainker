@@ -2387,6 +2387,12 @@ textarea:focus-visible {
   white-space: pre-wrap;
 }
 
+.conversation-task-activity {
+  color: var(--quiet);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
 .conversation-message > footer {
   padding-top: 7px;
   border-top: 1px solid var(--border);

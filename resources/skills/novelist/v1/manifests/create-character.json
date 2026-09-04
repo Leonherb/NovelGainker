@@ -1,51 +1,19 @@
 {
+  "schemaVersion": 1,
   "id": "create-character",
-  "version": 1,
-  "description": "创建或完善人物、关系、动机、秘密、冲突和剧情功能。",
-  "triggerSummary": "用户要求设计、命名、保存或修改小说人物时使用。",
-  "instructionResources": [
-    "instructions/create-character.md"
-  ],
+  "description": "分析和完善人物、关系、动机、秘密、冲突与剧情功能。",
+  "usage": "当对话涉及人物设计、人物变化或人物连续性时采用。",
+  "instructionResource": "instructions/create-character.md",
   "templateResources": [
     "fixtures/character.template.md"
   ],
   "referenceResources": [],
-  "allowedTools": [
-    "project.create_markdown",
-    "project.get_diff",
-    "project.list_files",
-    "project.patch_markdown",
-    "project.read_markdown",
-    "project.search_markdown",
-    "project.validate_markdown"
-  ],
   "readScopes": [
-    "characters/*.md",
-    "materials/*.md",
-    "plot/*.md",
-    "project.md",
-    "style/*.md",
-    "world/*.md"
-  ],
-  "writeScopes": [
-    "characters/*.md"
-  ],
-  "riskClass": "mixed",
-  "alwaysConfirmActions": [
-    "document.replace_whole",
-    "metadata.update_critical"
-  ],
-  "contextBudget": {
-    "maxRequestBytes": 98304,
-    "maxUniqueFiles": 24,
-    "maxModifiedFiles": 8
-  },
-  "outputContract": "AgentActionPayloadV1",
-  "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
-  "resourceHashes": {
-    "fixtures/character.template.md": "07d43eddd6c1b0fa26641c2896c2a2e99f41db2b9585764513759c24ea309cc5",
-    "instructions/create-character.md": "aff85593dcc543c1966491396ae91c1617d427c45cfdb772767418bf9cf6820b"
-  },
-  "featureGate": "agent_migration_skill_runtime_v1",
-  "enabledAtRuntime": false
+    "project",
+    "characters",
+    "materials",
+    "plot",
+    "style",
+    "world"
+  ]
 }

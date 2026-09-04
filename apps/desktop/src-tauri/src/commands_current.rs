@@ -1,9 +1,9 @@
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
 use app_core::conversation::{
     finish_conversation_turn, load_conversation, read_conversation, start_conversation_turn,
-    ConversationProviderTerminalState, ConversationSession, ConversationTerminalKind,
+    ConversationProviderTerminalState, ConversationTerminalKind,
 };
-use app_core::conversation_runtime::execute_memory_managed_turn;
+use app_core::conversation_runtime::{execute_memory_managed_turn, AgentRuntimeEvent};
 use app_core::coordination::{try_acquire_project_write_lease, ProjectWriteLease};
 use app_core::credential_vault::{CredentialVault, ProviderId, WindowsCredentialVault};
 
@@ -22,6 +22,7 @@ use app_core::provider_state::{
 };
 use app_core::recovery::{RecoveryReport, RecoveryStatus, RecoveryStore};
 use app_core::search::{search_project_sources, SearchReport};
+use app_core::task_store::{runtime_view, ConversationRuntimeView, TaskActivity};
 use app_core::workspace::{
     check_project_file, list_project_files, read_project_file, save_project_file_recoverable,
     validate_project_draft, ProjectFileDocument, ProjectFileIndex, ProjectFileSaveResult,
@@ -267,6 +268,14 @@ enum ConversationTurnEvent {
         sequence: u32,
         usage: Usage,
     },
+    TaskActivity {
+        session_id: String,
+        turn_id: String,
+        provider_id: ProviderId,
+        model: String,
+        sequence: u32,
+        task_activity: TaskActivity,
+    },
     Completed {
         session_id: String,
         turn_id: String,
@@ -318,13 +327,15 @@ pub fn app_state_save_ui(
 pub fn conversation_session_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
-) -> Result<ConversationSession, AppError> {
+) -> Result<ConversationRuntimeView, AppError> {
     let handle = session_handle(&state, &session_id)?;
-    if state.has_active_turn_for_session(&session_id) {
-        read_conversation(&handle)
+    let active = state.has_active_turn_for_session(&session_id);
+    let conversation = if active {
+        read_conversation(&handle)?
     } else {
-        load_conversation(&handle, now_ms()?)
-    }
+        load_conversation(&handle, now_ms()?)?
+    };
+    runtime_view(&handle, conversation, now_ms()?, !active)
 }
 
 #[tauri::command]
@@ -826,36 +837,50 @@ fn run_conversation_provider(
                     &cancellation,
                     now_ms()?,
                     |event| match event {
-                        NormalizedEvent::TextDelta { sequence, delta } => {
-                            last_sequence = last_sequence.max(sequence);
+                        AgentRuntimeEvent::Provider(event) => match event {
+                            NormalizedEvent::TextDelta { delta, .. } => {
+                                last_sequence = last_sequence.saturating_add(1);
+                                let _ = app.emit(
+                                    "conversation-turn-event",
+                                    ConversationTurnEvent::TextDelta {
+                                        session_id: session_id.clone(),
+                                        turn_id: turn_id.clone(),
+                                        provider_id,
+                                        model: model.clone(),
+                                        sequence: last_sequence,
+                                        delta,
+                                    },
+                                );
+                            }
+                            NormalizedEvent::Usage { usage, .. } => {
+                                last_sequence = last_sequence.saturating_add(1);
+                                let _ = app.emit(
+                                    "conversation-turn-event",
+                                    ConversationTurnEvent::Usage {
+                                        session_id: session_id.clone(),
+                                        turn_id: turn_id.clone(),
+                                        provider_id,
+                                        model: model.clone(),
+                                        sequence: last_sequence,
+                                        usage,
+                                    },
+                                );
+                            }
+                            NormalizedEvent::Completed { .. } => {}
+                        },
+                        AgentRuntimeEvent::Task(task_activity) => {
+                            last_sequence = last_sequence.saturating_add(1);
                             let _ = app.emit(
                                 "conversation-turn-event",
-                                ConversationTurnEvent::TextDelta {
+                                ConversationTurnEvent::TaskActivity {
                                     session_id: session_id.clone(),
                                     turn_id: turn_id.clone(),
                                     provider_id,
                                     model: model.clone(),
-                                    sequence,
-                                    delta,
+                                    sequence: last_sequence,
+                                    task_activity,
                                 },
                             );
-                        }
-                        NormalizedEvent::Usage { sequence, usage } => {
-                            last_sequence = last_sequence.max(sequence);
-                            let _ = app.emit(
-                                "conversation-turn-event",
-                                ConversationTurnEvent::Usage {
-                                    session_id: session_id.clone(),
-                                    turn_id: turn_id.clone(),
-                                    provider_id,
-                                    model: model.clone(),
-                                    sequence,
-                                    usage,
-                                },
-                            );
-                        }
-                        NormalizedEvent::Completed { sequence, .. } => {
-                            last_sequence = last_sequence.max(sequence);
                         }
                     },
                 ));

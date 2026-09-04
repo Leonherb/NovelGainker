@@ -37,6 +37,31 @@ export type ConversationSession = {
   turns: ConversationTurn[];
 };
 
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export type TaskActivity = {
+  taskId: string;
+  sessionId: string;
+  turnId: string;
+  status: TaskStatus;
+  displayLabel: string;
+  taskRevision: number;
+};
+
+export function mergeTaskActivity(current: TaskActivity[], incoming: TaskActivity): TaskActivity[] {
+  const index = current.findIndex((activity) => activity.taskId === incoming.taskId);
+  if (index < 0) return [...current, incoming];
+  const existing = current[index];
+  if (incoming.taskRevision <= existing.taskRevision) return current;
+  return current.map((activity, activityIndex) => (activityIndex === index ? incoming : activity));
+}
+
+export type ConversationRuntimeView = {
+  schemaVersion: 1;
+  conversation: ConversationSession;
+  taskActivities: TaskActivity[];
+};
+
 export type ConversationTurnStarted = {
   sessionId: string;
   conversationSessionId: string;
@@ -65,6 +90,7 @@ type ConversationEventBase = {
 export type ConversationTurnEvent =
   | (ConversationEventBase & { kind: "textDelta"; delta: string })
   | (ConversationEventBase & { kind: "usage"; usage: ProviderUsage })
+  | (ConversationEventBase & { kind: "taskActivity"; taskActivity: TaskActivity })
   | (ConversationEventBase & {
       kind: "completed";
       finishReason: ProviderFinishReason;
@@ -93,6 +119,13 @@ const TURN_STATUSES: readonly ConversationTurnStatus[] = [
   "failed",
   "not_generated",
 ];
+const TASK_STATUSES: readonly TaskStatus[] = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+];
 const FINISH_REASONS: readonly ProviderFinishReason[] = [
   "stop",
   "length",
@@ -114,6 +147,15 @@ const TURN_REQUIRED_KEYS = [
   "updatedAtMs",
 ] as const;
 const SESSION_KEYS = ["projectId", "schemaVersion", "sessionId", "turns"] as const;
+const RUNTIME_VIEW_KEYS = ["conversation", "schemaVersion", "taskActivities"] as const;
+const TASK_ACTIVITY_KEYS = [
+  "displayLabel",
+  "sessionId",
+  "status",
+  "taskId",
+  "taskRevision",
+  "turnId",
+] as const;
 const START_KEYS = ["conversationSessionId", "model", "providerId", "sessionId", "turnId"] as const;
 const EVENT_BASE_KEYS = ["kind", "model", "providerId", "sequence", "sessionId", "turnId"] as const;
 
@@ -212,6 +254,50 @@ export function parseConversationSession(value: unknown): ConversationSession {
   return { ...(value as ConversationSession), turns: value.turns.map(parseTurn) };
 }
 
+export function parseTaskActivity(value: unknown): TaskActivity {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, TASK_ACTIVITY_KEYS) ||
+    !isUuid(value.taskId) ||
+    !isUuid(value.sessionId) ||
+    !isUuid(value.turnId) ||
+    typeof value.status !== "string" ||
+    !TASK_STATUSES.includes(value.status as TaskStatus) ||
+    typeof value.displayLabel !== "string" ||
+    value.displayLabel.trim().length === 0 ||
+    value.displayLabel.length > 160 ||
+    /[\0\r\n]/u.test(value.displayLabel) ||
+    !isSafeSequence(value.taskRevision)
+  ) {
+    throw new Error("Invalid Task activity contract");
+  }
+  return value as TaskActivity;
+}
+
+export function parseConversationRuntimeView(value: unknown): ConversationRuntimeView {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, RUNTIME_VIEW_KEYS) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.taskActivities)
+  ) {
+    throw new Error("Invalid Conversation runtime view contract");
+  }
+  const conversation = parseConversationSession(value.conversation);
+  const taskActivities = value.taskActivities.map(parseTaskActivity);
+  if (
+    taskActivities.some(
+      (activity) =>
+        activity.sessionId !== conversation.sessionId ||
+        !conversation.turns.some((turn) => turn.turnId === activity.turnId),
+    ) ||
+    new Set(taskActivities.map((activity) => activity.taskId)).size !== taskActivities.length
+  ) {
+    throw new Error("Invalid Conversation runtime view relationship");
+  }
+  return { schemaVersion: 1, conversation, taskActivities };
+}
+
 export function parseConversationTurnStarted(value: unknown): ConversationTurnStarted {
   if (
     !isRecord(value) ||
@@ -264,6 +350,12 @@ export function parseConversationTurnEvent(value: unknown): ConversationTurnEven
   if (value.kind === "usage" && hasExactKeys(value, [...EVENT_BASE_KEYS, "usage"])) {
     const usage = parseUsage(value.usage);
     if (usage) return { ...(value as ConversationEventBase), kind: "usage", usage };
+  }
+  if (value.kind === "taskActivity" && hasExactKeys(value, [...EVENT_BASE_KEYS, "taskActivity"])) {
+    const taskActivity = parseTaskActivity(value.taskActivity);
+    if (taskActivity.turnId === value.turnId) {
+      return { ...(value as ConversationEventBase), kind: "taskActivity", taskActivity };
+    }
   }
   if (
     value.kind === "completed" &&
@@ -322,11 +414,11 @@ async function invokeConversation<T>(
 export function requestConversationSession(
   sessionId: string,
   invokeCommand: InvokeCommand = invokeTauri,
-): Promise<ConversationSession> {
+): Promise<ConversationRuntimeView> {
   return invokeConversation(
     CONVERSATION_SESSION_LOAD_COMMAND,
     { sessionId },
-    parseConversationSession,
+    parseConversationRuntimeView,
     invokeCommand,
   );
 }

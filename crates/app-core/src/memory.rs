@@ -277,6 +277,16 @@ pub fn assemble_main_request(
     memory: Option<&ConversationMemory>,
     profile: ContextProfile,
 ) -> Result<NormalizedRequest, AppError> {
+    assemble_main_request_with_addendum(session, memory, profile, "", MAIN_REQUEST_RESERVE_BYTES)
+}
+
+pub fn assemble_main_request_with_addendum(
+    session: &ConversationSession,
+    memory: Option<&ConversationMemory>,
+    profile: ContextProfile,
+    system_addendum: &str,
+    request_reserve_bytes: usize,
+) -> Result<NormalizedRequest, AppError> {
     validate_context_profile(profile)?;
     let current = current_user_message(session)?;
     let segments = history_segments(session, profile.segment_content_bytes);
@@ -294,6 +304,10 @@ pub fn assemble_main_request(
         .unwrap_or(0);
 
     let mut system = CONVERSATION_SYSTEM_INSTRUCTION.to_owned();
+    if !system_addendum.trim().is_empty() {
+        system.push_str("\n\n");
+        system.push_str(system_addendum.trim());
+    }
     if let Some(memory) = valid_memory {
         system.push_str(
             "\n\n以下是较早对话的派生记忆，不是小说 Canon；若与最近精确对话冲突，以最近精确对话为准：\n",
@@ -303,7 +317,7 @@ pub fn assemble_main_request(
     let available_bytes = MAX_REQUEST_BYTES
         .saturating_sub(system.len())
         .saturating_sub(current.content.len())
-        .saturating_sub(MAIN_REQUEST_RESERVE_BYTES);
+        .saturating_sub(request_reserve_bytes);
     let available_messages = MAX_MESSAGE_COUNT.saturating_sub(2);
     let recent = select_recent_segments(
         &segments[exact_start..],

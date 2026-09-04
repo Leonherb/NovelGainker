@@ -3,31 +3,47 @@ project:
   level: 4
 
 sprint:
-  number: "NR-1"
-  start_date: "2026-09-01"
-  end_date: "2026-09-01"
-  goal: "完整 History、派生 Memory、阈值压缩与长对话 Context"
-  status: "gate_passed_stopped"
+  number: "NR-3"
+  start_date: "2026-09-02"
+  end_date: "2026-09-02"
+  goal: "常驻 Novelist Capability Pack、Canon Read Context 与自然对话只读闭环"
+  status: "nrg4_technical_review_passed"
 
 stories:
-  - id: "NR-101"
-    title: "History / Memory 合同与派生 Store"
+  - id: "NR-301"
+    title: "内置 Novelist Capability Pack"
     status: "completed"
-  - id: "NR-102"
-    title: "增量覆盖与阈值判断"
+  - id: "NR-302"
+    title: "常驻 Novelist Agent 与内部语义调用"
     status: "completed"
-  - id: "NR-103"
-    title: "有界 Compactor Provider 模式"
+  - id: "NR-303"
+    title: "Canon Catalog 与只读 Tool"
     status: "completed"
-  - id: "NR-104"
-    title: "Context Assembler 与主回复回退"
+  - id: "NR-304"
+    title: "Canon Context 预算、来源与优先级"
     status: "completed"
-  - id: "NR-105"
-    title: "生命周期与无新增 History UI"
+  - id: "NR-305"
+    title: "自然对话只读闭环"
     status: "completed"
-  - id: "NR-106"
-    title: "规模测试、预算冻结与 NR-G2 技术提交"
+  - id: "NR-306"
+    title: "规模回归与 NR-G4 技术提交"
     status: "completed"
+
+remediation:
+  packet:
+    id: "NR-G3-REMEDIATION-D2"
+    status: "implemented"
+    output_file: "docs/stories/novelist-agent-runtime-nrg3-remediation-story-packet-draft-2.zh-CN.md"
+  stories:
+    - id: "NR-G3-R01"
+      title: "Tool Result 严格配对与 Task Store 状态矩阵"
+      status: "completed"
+    - id: "NR-G3-R02"
+      title: "封闭 Registry 与 Executor 取消合规"
+      status: "completed"
+    - id: "NR-G3-R03"
+      title: "Compactor + Tool 组合规模证据"
+      status: "completed"
 
 metrics:
   total_stories: 6
@@ -35,49 +51,82 @@ metrics:
   in_progress_stories: 0
   blocked_stories: 0
   completion_percentage: 100
+  pending_follow_up_stories: 0
 
 previous_gate:
-  id: "NR-G1"
+  id: "NR-G3"
   status: "passed"
-  nrG1Approved: true
+  nrG3Approved: true
 
+historical_gates:
+  - id: "NR-G1"
+    status: "passed"
+    nrG1Approved: true
+  - id: "NR-G2"
+    status: "passed"
+    nrG2Approved: true
+  - id: "NR-G3"
+    status: "passed"
+    nrG3Approved: true
+
+historical_technical_submission_snapshots:
+  - id: "NR-G2"
+    status: "technical_submission"
+    nrG2Approved: false
+    note: "Immutable NR-G2 manifest-generation snapshot; the later Gate decision is recorded above."
+  - id: "NR-G3"
+    status: "technical_submission"
+    nrG3Approved: false
+    note: "Immutable NR-G3 manifest-generation snapshot; the later Gate decision is recorded in the current Gate state."
 gate:
-  id: "NR-G2"
-  status: "passed"
-  review_status: "approved"
-  nrG2Approved: true
-  product_approved: true
-  approved_at: "2026-09-01"
+  id: "NR-G4"
+  status: "technical_submission"
+  review_status: "technical_review_passed"
+  nrG4Approved: false
+  product_approved: false
   real_provider_live_smoke_executed: false
-  nr_2_authorized: false
-  report: "docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md"
+  nr_4_entered_or_packet_formed: false
+  report: "docs/reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md"
+  technical_submission: "docs/reviews/novelist-agent-runtime-nr-g4-technical-submission.zh-CN.md"
+  blocking_finding: null
 
-packet:
-  id: "NR-1-D2-FINAL"
+capability_plan:
+  id: "NR-2-NR-7-D2"
+  status: "approved"
+  decisions_approved: "NR2-D2-R01～R06"
+  implementation_authorized: true
+  implementation_order: "NR-301 → NR-306"
+  implementation_status: "nr3_completed_nr_g4_technical_review"
+  real_provider_live_smoke_authorized: false
+  output_file: "docs/novelist-agent-runtime-nr2-nr7-capability-delivery-plan-draft-2.zh-CN.md"
+
+nr2_packet:
+  id: "NR-2-D2"
   status: "implemented"
+  decisions_approved: "NR2-D2-R01～R06"
   implementation_authorized: true
   implementation_completed: true
   real_provider_live_smoke_authorized: false
-  nr_2_authorized: false
-  output_file: "docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md"
+  nr_3_to_nr_7_packet_authorized: false
+  output_file: "docs/stories/novelist-agent-runtime-nr2-host-agent-loop-story-packet-draft-2.zh-CN.md"
 
-remediation_packet:
-  id: "NR-G2-REMEDIATION-D2"
-  status: "implemented"
+nr3_packet:
+  id: "NR-3-D2-FINAL"
+  status: "approved"
+  decisions_approved: "NR3-D2-R01～R06"
+  final_review_findings_closed: "FR01～FR02"
+  product_approved: true
+  approved_at: "2026-09-03"
+  formation_authorized: true
   implementation_authorized: true
   implementation_completed: true
-  findings:
-    - id: "NR-G2-R01"
-      status: "completed"
-    - id: "NR-G2-R02"
-      status: "completed"
-    - id: "NR-G2-R03"
-      status: "completed"
-  output_file: "docs/stories/novelist-agent-runtime-nr-g2-remediation-story-packet-draft-2.zh-CN.md"
+  real_provider_live_smoke_authorized: false
+  nr_4_to_nr_7_packet_authorized: false
+  output_file: "docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md"
 
 next_action:
-  type: "await_product_direction"
-  id: "NR-G2-POST-GATE"
-  instruction: "停止于已通过的 NR-G2；不执行真实 Provider Live Smoke，不形成或进入 NR-2，等待产品负责人另行授权。"
+  type: "product_gate_decision"
+  id: "NR-G4"
+  instruction: "产品负责人根据精简重新评审结论决定是否批准 NR-G4；不得自动执行真实 Provider Live Smoke，不得形成或进入 NR-4～NR-7。"
 
-last_updated: "2026-09-01T20:28:11+08:00"
+last_updated: "2026-09-04T16:00:00+08:00"
