@@ -1,3 +1,6 @@
+use crate::canon_context::{
+    deepseek_novelist_read_context_input_schema, NOVELIST_READ_CONTEXT_TOOL_NAME,
+};
 use crate::credential_vault::ProviderId;
 use crate::tool_runtime::{
     validate_definitions, ProviderToolCall, ToolDefinition, ToolResult,
@@ -724,19 +727,18 @@ struct OpenaiAdapter;
 static DEEPSEEK_ADAPTER: DeepseekAdapter = DeepseekAdapter;
 static OPENAI_ADAPTER: OpenaiAdapter = OpenaiAdapter;
 
-const NOVELIST_READ_CONTEXT_INTERNAL_NAME: &str = "novelist.read_context";
 const NOVELIST_READ_CONTEXT_PROVIDER_NAME: &str = "novelist_read_context";
 
 fn provider_tool_name(name: &str) -> &str {
     match name {
-        NOVELIST_READ_CONTEXT_INTERNAL_NAME => NOVELIST_READ_CONTEXT_PROVIDER_NAME,
+        NOVELIST_READ_CONTEXT_TOOL_NAME => NOVELIST_READ_CONTEXT_PROVIDER_NAME,
         _ => name,
     }
 }
 
 fn internal_tool_name(name: &str) -> &str {
     match name {
-        NOVELIST_READ_CONTEXT_PROVIDER_NAME => NOVELIST_READ_CONTEXT_INTERNAL_NAME,
+        NOVELIST_READ_CONTEXT_PROVIDER_NAME => NOVELIST_READ_CONTEXT_TOOL_NAME,
         _ => name,
     }
 }
@@ -808,11 +810,19 @@ fn deepseek_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
                 "function": {
                     "name": provider_tool_name(&definition.name),
                     "description": definition.description,
-                    "parameters": definition.input_schema
+                    "parameters": deepseek_tool_parameters(definition)
                 }
             })
         })
         .collect()
+}
+
+fn deepseek_tool_parameters(definition: &ToolDefinition) -> Value {
+    if definition.name == NOVELIST_READ_CONTEXT_TOOL_NAME {
+        deepseek_novelist_read_context_input_schema()
+    } else {
+        definition.input_schema.clone()
+    }
 }
 
 fn openai_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
@@ -2471,7 +2481,7 @@ mod tests {
     #[test]
     fn both_adapters_capture_native_tool_requests_and_typed_continuations() {
         assert_eq!(
-            NOVELIST_READ_CONTEXT_INTERNAL_NAME,
+            NOVELIST_READ_CONTEXT_TOOL_NAME,
             crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME
         );
         assert!(NOVELIST_READ_CONTEXT_PROVIDER_NAME
@@ -2498,8 +2508,22 @@ mod tests {
         );
         assert_eq!(openai_initial["tools"][0]["strict"], true);
         assert_eq!(
-            deepseek_initial["tools"][0]["function"]["parameters"],
-            openai_initial["tools"][0]["parameters"]
+            deepseek_initial["tools"][0]["function"]["parameters"]["required"],
+            json!(["capabilityId"])
+        );
+        assert_eq!(
+            deepseek_initial["tools"][0]["function"]["parameters"]["properties"]
+                ["capabilityResources"]["items"]["required"],
+            json!(["resourceId"])
+        );
+        assert_eq!(
+            deepseek_initial["tools"][0]["function"]["parameters"]["properties"]["canonOperations"]
+                ["items"]["required"],
+            json!(["kind"])
+        );
+        assert_eq!(
+            openai_initial["tools"][0]["parameters"],
+            crate::canon_context::novelist_read_context_definition().input_schema
         );
         assert_eq!(openai_initial["parallel_tool_calls"], false);
         assert_eq!(
@@ -2782,7 +2806,7 @@ mod tests {
                 .parse_completion(&deepseek_completion)
                 .unwrap();
             let parsed_call = parsed.tool_call.unwrap();
-            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_TOOL_NAME);
             assert_eq!(parsed_call.arguments_json, raw);
 
             let deepseek_stream = json!({
@@ -2824,7 +2848,7 @@ mod tests {
             assert_eq!(finish_reason, Some(FinishReason::ToolCall));
             let (call, continuation) = accumulator.finish(ProviderId::Deepseek, "").unwrap();
             let call = call.unwrap();
-            assert_eq!(call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(call.name, NOVELIST_READ_CONTEXT_TOOL_NAME);
             assert_eq!(call.arguments_json, raw);
             assert!(continuation.is_some());
 
@@ -2843,7 +2867,7 @@ mod tests {
             });
             let parsed = OPENAI_ADAPTER.parse_completion(&openai_response).unwrap();
             let parsed_call = parsed.tool_call.unwrap();
-            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_TOOL_NAME);
             assert_eq!(parsed_call.arguments_json, raw);
             let stream_event = json!({
                 "type": "response.completed",
@@ -2856,7 +2880,7 @@ mod tests {
                 _ => None,
             });
             let streamed = streamed.unwrap();
-            assert_eq!(streamed.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(streamed.name, NOVELIST_READ_CONTEXT_TOOL_NAME);
             assert_eq!(streamed.arguments_json, raw);
         }
     }

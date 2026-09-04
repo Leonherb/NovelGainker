@@ -1,4 +1,4 @@
-# NovelGainker NR-3 交付与 NR-G4 技术评审状态
+# NovelGainker NR-3 / NR-G4 与 Pre-NR-4 修复评审状态
 
 更新时间：2026-09-04
 
@@ -14,6 +14,10 @@ NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批�
 - `nrG4Approved = true`
 - `realProviderLiveSmokeExecuted = false`
 - `nr4EnteredOrPacketFormed = false`
+- `PRE-NR4-PTC-001.reviewDecision = ready_for_product_decision`
+- `PRE-NR4-PTC-001.productApproved = false`
+- `PRE-NR4-PTC-001.implementationAuthorized = false`
+- `PRE-NR4-PTC-001.directMinimalFix = implemented / offline-quality-passed / formal-live-pending`
 
 产品负责人已批准 `NR-3 Story Packet Draft 2 Final` 与 NR-301 → NR-306。九项 Novelist Capability 继续以应用自有、编译期嵌入的只读 Pack 运行；当前实现中的严格 Schema、可继续分页和可配对失败续聊均作为 NR-3 基线行为评审，不再拆成 Gate 后补丁编号。测试通过不等于 NR-G4 产品批准。
 
@@ -28,6 +32,26 @@ NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批�
 - 真实 Provider Live Smoke：`not executed`
 - NR-4～NR-7：`not entered / no Packet formed`
 - 文档：`docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md`
+
+## Pre-NR-4 Provider Tool Compatibility Repair
+
+- Story：`PRE-NR4-PTC-001`
+- 定位：独立 Preflight Repair，不计入 NR-301～NR-306，不占用 NR-401，不重开 NR-G4
+- 形成状态：`formation_authorized = true`
+- 独立技术评审：`completed / ready_for_product_decision`
+- 宽范围 Story 的产品批准 / 实施授权 / 实施完成：`false / false / false`
+- 用户直接授权的窄修复（DeepSeek 空人物检查）：`implemented / offline-quality-passed / manual-recheck-pending`
+- 用户主动 Live 观察：`partial_failed`，不是正式 Provider Live Smoke
+- 正式 Live 授权 / 执行：`false / false`
+- 默认 NR-4 入口阻断：`true`
+- 风险豁免：`false`
+
+真实观察证明 Provider 已产生 Tool request，但参数以 `agent.tool_arguments_invalid` 在执行前失败；Task 未进入 `running`，Executor、Pack Resource 与 Canon I/O 均为 0。受控失败 Result 后 Conversation 仍完成，因此这是 Provider Tool 兼容问题，不是“工具已经调用后执行报错”，也不是聊天失败续接问题。
+
+Story 冻结 internal/wire identity 分离、OpenAI strict 与 DeepSeek normal endpoint 的 schema projection、白名单纯语法规范化、Capability-only/空工程正例、内容无关诊断，以及双 Provider Live 或书面风险豁免两条后续路径。当前只等待产品范围与离线实施决定。
+
+- Story：`docs/stories/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story.zh-CN.md`
+- 独立评审：`docs/reviews/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story-review.zh-CN.md`
 
 ## 已完成 Story
 
@@ -95,4 +119,4 @@ NR-3 只增加常驻 Novelist Capability Pack 与 Agent 自主请求的 Canon �
 - 当前唯一机器 Manifest：`target/qa/nr-306/nr-g4-manifest.json`
 - 完整验收入口：`pnpm quality`
 
-NR-G4 Manifest 中的 `nrG4Approved = false` 保留为批准前技术证据快照；当前 BMAD 状态与精简重新评审记录正式产品批准。流程停止于已通过的 NR-G4；不执行真实 Provider Live Smoke，也不进入或形成 NR-4～NR-7 Story Packet。
+NR-G4 Manifest 中的 `nrG4Approved = false` 保留为批准前技术证据快照；当前 BMAD 状态与精简重新评审记录正式产品批准。`PRE-NR4-PTC-001` 的宽范围 Story 仍等待产品决定；用户随后直接授权的 DeepSeek 空人物检查窄修复已离线实现并通过质量门，待在应用中手工复测。NR-G4 继续保持已通过。未获对应独立授权前，不执行正式 Provider Live Smoke，也不进入或形成 NR-4～NR-7 Story Packet。

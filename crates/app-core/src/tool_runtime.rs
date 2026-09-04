@@ -284,13 +284,17 @@ impl ToolRegistry {
         call: &ProviderToolCall,
         definition: &ToolDefinition,
     ) -> Result<Value, ToolContractError> {
+        let arguments = self.parse_arguments(call)?;
+        definition.validate_arguments(&arguments)?;
+        Ok(arguments)
+    }
+
+    pub fn parse_arguments(&self, call: &ProviderToolCall) -> Result<Value, ToolContractError> {
         call.validate_envelope()?;
         if call.arguments_json.len() > MAX_TOOL_ARGUMENTS_BYTES {
             return Err(ToolContractError::ArgumentsTooLarge);
         }
-        let arguments = call.arguments()?;
-        definition.validate_arguments(&arguments)?;
-        Ok(arguments)
+        call.arguments()
     }
 }
 

@@ -2,11 +2,11 @@ project:
   name: "NovelGainker"
   level: 4
   initialized: "2026-08-29T18:12:34Z"
-  last_updated: "2026-09-04T16:00:00+08:00"
+  last_updated: "2026-09-04T23:30:02+08:00"
 
 current_phase: 4
-current_workflow: "stopped-at-nr-g4-passed"
-baseline_note: "NR-301～NR-306 已完成，单一 NR-G4 技术提交及精简重新评审已获产品批准。NR-G4 后续补丁链已清理，其有效行为与回归已吸收到 NR-3 实现基线。真实 Provider Live Smoke 与 NR-4～NR-7 仍未授权。"
+current_workflow: "pre-nr4-deepseek-narrow-repair-offline-verified-awaiting-manual-recheck"
+baseline_note: "NR-301～NR-306 已完成且 NR-G4 继续保持 passed/approved。用户主动真实使用暴露 Provider Tool 兼容失败：Tool request 已产生，但参数校验失败且 Executor/Canon I/O 为 0；Conversation 仍 completed。单一 PRE-NR4-PTC-001 已形成并完成独立技术评审；随后用户明确要求仅修复 DeepSeek 空人物检查，已离线实现并通过回归。更广 Story 未获产品批准、实施授权或正式 Live 授权；NR-4～NR-7 仍未进入。"
 
 phases:
   phase_1_analysis:
@@ -59,7 +59,7 @@ metrics:
   progress_percentage: 100
   estimated_stories: 6
   completed_stories: 6
-  pending_follow_up_stories: 0
+  pending_follow_up_stories: 1
 
 previous_gate:
   id: "NR-G3"
@@ -134,7 +134,35 @@ nr3_packet:
   nr_4_to_nr_7_packet_authorized: false
   output_file: "docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md"
 
+pre_nr4_repair:
+  id: "PRE-NR4-PTC-001"
+  title: "Provider Tool 传输身份、参数合同与真实兼容性修复"
+  version: "Draft 2"
+  status: "narrow_fix_implemented_offline_live_pending"
+  formation_authorized: true
+  review_status: "completed"
+  review_decision: "ready_for_product_decision"
+  product_approved: false
+  implementation_authorized: false
+  implementation_completed: false
+  direct_minimal_fix:
+    scope: "DeepSeek 对 novelist_read_context 省略无关字段时的兼容，以及空人物列表后的自然语言答复"
+    direct_user_authorized: true
+    implementation_completed: true
+    offline_quality_gate: "passed"
+    formal_provider_live_smoke_executed: false
+    manual_recheck_requested: true
+  manual_live_observation: "partial_failed"
+  formal_provider_live_smoke_authorized: false
+  formal_provider_live_smoke_executed: false
+  entry_blocker_for_nr4: true
+  risk_waiver_granted: false
+  nr_g4_reopened: false
+  nr_4_entered_or_packet_formed: false
+  output_file: "docs/stories/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story.zh-CN.md"
+  review_file: "docs/reviews/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story-review.zh-CN.md"
+
 next_action:
-  type: "await_product_direction"
-  id: "NR-G4"
-  instruction: "停止于已通过的 NR-G4；等待产品负责人另行授权。不得执行真实 Provider Live Smoke，不得形成或进入 NR-4～NR-7。"
+  type: "await_manual_provider_recheck"
+  id: "PRE-NR4-PTC-001"
+  instruction: "在真实应用中以 DeepSeek 重复“检查当前小说工程中是否存在人物资料”的空工程请求；预期工具成功且仅自然答复未发现人物资料。此手工复测不是正式 Provider Live Smoke，不改变宽范围 Story、NR-G4 或 NR-4～NR-7 的授权状态。"

@@ -1,3 +1,6 @@
+use crate::canon_context::{
+    normalize_deepseek_novelist_read_context_arguments, NOVELIST_READ_CONTEXT_TOOL_NAME,
+};
 use crate::capability_pack::{
     embedded_pack, CapabilityPackError, ValidatedCapabilityPack, NOVELIST_AGENT_FALLBACK_ADDENDUM,
 };
@@ -16,8 +19,11 @@ use crate::provider_core::{
     ProviderErrorKind, ProviderHttpClient,
 };
 use crate::task_store::{create_queued_task, transition_task, TaskActivity, TaskStatus};
-use crate::tool_runtime::{ToolExecutionContext, ToolRegistry, ToolResult, ToolResultStatus};
+use crate::tool_runtime::{
+    ToolContractError, ToolExecutionContext, ToolRegistry, ToolResult, ToolResultStatus,
+};
 use crate::AppError;
+use serde_json::Value;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,6 +40,18 @@ struct AgentRuntimeBinding {
     registry: ToolRegistry,
     system_addendum: String,
     request_reserve_bytes: usize,
+}
+
+fn normalize_provider_tool_arguments(
+    provider_id: ProviderId,
+    definition: &crate::tool_runtime::ToolDefinition,
+    arguments: Value,
+) -> Result<Value, ToolContractError> {
+    if provider_id == ProviderId::Deepseek && definition.name == NOVELIST_READ_CONTEXT_TOOL_NAME {
+        normalize_deepseek_novelist_read_context_arguments(arguments)
+    } else {
+        Ok(arguments)
+    }
 }
 
 fn bind_novelist_runtime(
@@ -349,8 +367,18 @@ where
     )?;
     on_event(AgentRuntimeEvent::Task(TaskActivity::from(&queued)));
     let arguments = registry
-        .decode_arguments(&call, definition)
+        .parse_arguments(&call)
         .map_err(|error| error.code())
+        .and_then(|arguments| {
+            normalize_provider_tool_arguments(provider_id, definition, arguments)
+                .map_err(|error| error.code())
+        })
+        .and_then(|arguments| {
+            definition
+                .validate_arguments(&arguments)
+                .map(|_| arguments)
+                .map_err(|error| error.code())
+        })
         .and_then(|arguments| executor.validate_arguments(&arguments).map(|_| arguments));
     let result = match arguments {
         Err(error_code) => {
@@ -651,9 +679,9 @@ fn terminalize_cancelled_turn_with_text(
 mod tests {
     use super::{
         bind_novelist_runtime, execute_agent_turn, execute_with_profile,
-        execute_with_profile_and_registry, AgentRuntimeEvent, ContextProfile,
-        NR2_AGENT_ATTEMPT_OUTPUT_BUDGET, NR2_COMPACTOR_OUTPUT_BUDGET, NR2_CUMULATIVE_OUTPUT_BUDGET,
-        TOOL_CANCELLATION_ACK_DEADLINE,
+        execute_with_profile_and_registry, normalize_provider_tool_arguments, AgentRuntimeEvent,
+        ContextProfile, NR2_AGENT_ATTEMPT_OUTPUT_BUDGET, NR2_COMPACTOR_OUTPUT_BUDGET,
+        NR2_CUMULATIVE_OUTPUT_BUDGET, TOOL_CANCELLATION_ACK_DEADLINE,
     };
     use crate::conversation::{
         finish_conversation_turn, read_conversation, start_conversation_turn,
@@ -764,6 +792,8 @@ mod tests {
         ToolStreamInterrupted,
         NovelistToolStream,
         NovelistToolStreamInvalidArguments,
+        DeepseekCharacterListWithOmittedFields,
+        DeepseekNoCharactersReply,
         Unavailable,
     }
 
@@ -835,6 +865,12 @@ mod tests {
                             &mut stream,
                             r#"{"capabilityId":"novel-story-telling","capabilityResources":[{"resourceId":"references/storytelling/drama.md","cursor":null},{"resourceId":"references/storytelling/mystery.md","cursor":null},{"resourceId":"references/storytelling/romantic-entanglement.md","cursor":null},{"resourceId":"references/storytelling/science-fiction.md","cursor":null},{"resourceId":"references/storytelling/story-flow.md","cursor":null},{"resourceId":"references/storytelling/time-travel-and-loop.md","cursor":null},{"resourceId":"references/storytelling/wuxia.md","cursor":null},{"resourceId":"references/storytelling/drama.md","cursor":null},{"resourceId":"references/storytelling/mystery.md","cursor":null}],"canonOperations":[]}"#,
                         )
+                    }
+                    LoopbackReply::DeepseekCharacterListWithOmittedFields => {
+                        write_deepseek_character_list_with_omitted_fields(&mut stream)
+                    }
+                    LoopbackReply::DeepseekNoCharactersReply => {
+                        write_deepseek_no_characters_reply(&mut stream)
                     }
                     LoopbackReply::Unavailable => {
                         stream
@@ -1047,6 +1083,51 @@ mod tests {
         stream.write_all(response.as_bytes()).unwrap();
     }
 
+    fn write_deepseek_character_list_with_omitted_fields(stream: &mut std::net::TcpStream) {
+        let arguments = r#"{"capabilityId":"create-character","canonOperations":[{"kind":"list","scopes":["characters"],"limit":64}]}"#;
+        let chunk = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_deepseek_characters",
+                        "type": "function",
+                        "function": {
+                            "name": "novelist_read_context",
+                            "arguments": arguments
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    }
+
+    fn write_deepseek_no_characters_reply(stream: &mut std::net::TcpStream) {
+        let delta = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "delta": {"content": "当前工程未发现人物资料。"},
+                "finish_reason": "stop"
+            }]
+        });
+        let body = format!("data: {delta}\n\ndata: [DONE]\n\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    }
+
     #[test]
     fn production_runtime_exposes_catalog_and_one_tool_without_keyword_routing() {
         let fixture = Fixture::new();
@@ -1086,6 +1167,46 @@ mod tests {
         assert!(instructions.contains("novel-story-telling"));
         assert!(!body.to_string().contains("selectedCapability"));
         assert!(body.to_string().contains("请继续"));
+    }
+
+    #[test]
+    fn deepseek_omitted_read_context_fields_are_normalized_before_strict_validation() {
+        let definition = crate::canon_context::novelist_read_context_definition();
+        let arguments = normalize_provider_tool_arguments(
+            ProviderId::Deepseek,
+            &definition,
+            serde_json::json!({
+                "capabilityId": "create-character",
+                "canonOperations": [{
+                    "kind": "list",
+                    "scopes": ["characters"],
+                    "limit": 64
+                }]
+            }),
+        )
+        .unwrap();
+
+        definition.validate_arguments(&arguments).unwrap();
+        assert_eq!(arguments["capabilityResources"], serde_json::json!([]));
+        assert_eq!(
+            arguments["canonOperations"][0]["query"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            arguments["canonOperations"][0]["cursor"],
+            serde_json::Value::Null
+        );
+
+        let incomplete = normalize_provider_tool_arguments(
+            ProviderId::Deepseek,
+            &definition,
+            serde_json::json!({
+                "capabilityId": "create-character",
+                "canonOperations": [{"kind": "list"}]
+            }),
+        )
+        .unwrap();
+        assert!(definition.validate_arguments(&incomplete).is_err());
     }
 
     #[test]
@@ -1162,6 +1283,84 @@ mod tests {
         let tasks = find_turn_tasks(&fixture.handle, &turn_id).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, TaskStatus::Succeeded);
+    }
+
+    #[test]
+    fn deepseek_empty_character_check_executes_and_replies_with_the_actual_empty_result() {
+        let fixture = Fixture::new();
+        let canon_before = fs::read(fixture.root.join("project.md")).unwrap();
+        let turn_id = fixture.start_turn(100);
+        let (endpoint, attempts, requests) = spawn_sequence_with_capture(vec![
+            LoopbackReply::DeepseekCharacterListWithOmittedFields,
+            LoopbackReply::DeepseekNoCharactersReply,
+        ]);
+        let client = ProviderHttpClient::for_test(ProviderId::Deepseek, endpoint).unwrap();
+        let mut task_statuses = Vec::new();
+
+        let terminal = execute_with_profile(
+            &client,
+            &fixture.handle,
+            &turn_id,
+            ProviderId::Deepseek,
+            b"synthetic-loopback-key",
+            &CancellationToken::default(),
+            101,
+            profile(),
+            |event| {
+                if let AgentRuntimeEvent::Task(activity) = event {
+                    task_statuses.push(activity.status);
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            task_statuses,
+            vec![
+                TaskStatus::Queued,
+                TaskStatus::Running,
+                TaskStatus::Succeeded
+            ]
+        );
+        assert_eq!(terminal.state, ConversationProviderTerminalState::Completed);
+        assert_eq!(
+            terminal.session.turns.last().unwrap().messages[1].content,
+            "当前工程未发现人物资料。"
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("project.md")).unwrap(),
+            canon_before
+        );
+        let task = find_turn_tasks(&fixture.handle, &turn_id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(task.status, TaskStatus::Succeeded);
+
+        let captured = requests.lock().unwrap();
+        let initial = captured_json(&captured[0]);
+        assert_eq!(
+            initial["tools"][0]["function"]["parameters"]["required"],
+            serde_json::json!(["capabilityId"])
+        );
+        assert_eq!(
+            initial["tools"][0]["function"]["name"],
+            "novelist_read_context"
+        );
+        let continuation = captured_json(&captured[1]);
+        assert_eq!(continuation["tool_choice"], "none");
+        let tool_message = continuation["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .unwrap();
+        assert_eq!(tool_message["role"], "tool");
+        let tool_payload: serde_json::Value =
+            serde_json::from_str(tool_message["content"].as_str().unwrap()).unwrap();
+        assert_eq!(tool_payload["status"], "succeeded");
+        assert_eq!(
+            tool_payload["output"]["canon"][0]["paths"],
+            serde_json::json!([])
+        );
     }
 
     #[test]

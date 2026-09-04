@@ -2,8 +2,8 @@ use crate::capability_pack::{ValidatedCapabilityPack, MAX_CAPABILITY_INSTRUCTION
 use crate::project::ProjectHandle;
 use crate::provider_core::CancellationToken;
 use crate::tool_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolExecutionOutput, ToolExecutor, ToolResultStatus,
-    MAX_TOOL_RESULT_BYTES,
+    ToolContractError, ToolDefinition, ToolExecutionContext, ToolExecutionOutput, ToolExecutor,
+    ToolResultStatus, MAX_TOOL_RESULT_BYTES,
 };
 use crate::workspace::{
     check_project_file, list_project_files, read_project_file, ProjectFileDocument,
@@ -105,6 +105,98 @@ impl NovelistReadContextRequestV1 {
     }
 }
 
+pub fn deepseek_novelist_read_context_input_schema() -> Value {
+    let mut schema = NovelistReadContextRequestV1::input_schema();
+    schema["required"] = json!(["capabilityId"]);
+    schema["properties"]["capabilityResources"]["items"]["required"] = json!(["resourceId"]);
+    schema["properties"]["canonOperations"]["items"]["required"] = json!(["kind"]);
+    schema["description"] = Value::String(
+        "capabilityResources 与 canonOperations 都可省略，分别表示空数组。".to_owned(),
+    );
+    schema["properties"]["canonOperations"]["items"]["description"] = Value::String(
+        "list 必须提供非空 scopes 和 limit；search 必须提供非空 scopes、query、caseSensitive、limit；read 初次读取必须提供 relativePath、startLine、maxBytes，分页继续必须提供 relativePath、cursor、maxBytes。无关字段可省略或为 null。"
+            .to_owned(),
+    );
+    schema
+}
+
+pub fn normalize_deepseek_novelist_read_context_arguments(
+    mut arguments: Value,
+) -> Result<Value, ToolContractError> {
+    let root = arguments
+        .as_object_mut()
+        .ok_or(ToolContractError::ArgumentsInvalid)?;
+    root.entry("capabilityResources".to_owned())
+        .or_insert_with(|| json!([]));
+    root.entry("canonOperations".to_owned())
+        .or_insert_with(|| json!([]));
+
+    let resources = root
+        .get_mut("capabilityResources")
+        .and_then(Value::as_array_mut)
+        .ok_or(ToolContractError::ArgumentsInvalid)?;
+    for resource in resources {
+        let resource = resource
+            .as_object_mut()
+            .ok_or(ToolContractError::ArgumentsInvalid)?;
+        resource.entry("cursor".to_owned()).or_insert(Value::Null);
+    }
+
+    let operations = root
+        .get_mut("canonOperations")
+        .and_then(Value::as_array_mut)
+        .ok_or(ToolContractError::ArgumentsInvalid)?;
+    for operation in operations {
+        let operation = operation
+            .as_object_mut()
+            .ok_or(ToolContractError::ArgumentsInvalid)?;
+        match operation.get("kind").and_then(Value::as_str) {
+            Some("list") => {
+                insert_nulls(
+                    operation,
+                    &[
+                        "query",
+                        "caseSensitive",
+                        "relativePath",
+                        "startLine",
+                        "maxBytes",
+                        "cursor",
+                    ],
+                );
+            }
+            Some("search") => {
+                insert_nulls(
+                    operation,
+                    &["relativePath", "startLine", "maxBytes", "cursor"],
+                );
+            }
+            Some("read") => {
+                insert_nulls(operation, &["query", "caseSensitive", "limit"]);
+                operation
+                    .entry("scopes".to_owned())
+                    .or_insert_with(|| json!([]));
+                let has_cursor = operation
+                    .get("cursor")
+                    .is_some_and(|cursor| !cursor.is_null());
+                let has_start_line = operation.contains_key("startLine");
+                if has_cursor && !has_start_line {
+                    operation.insert("startLine".to_owned(), Value::Null);
+                } else if has_start_line && !operation.contains_key("cursor") {
+                    operation.insert("cursor".to_owned(), Value::Null);
+                }
+            }
+            _ => return Err(ToolContractError::ArgumentsInvalid),
+        }
+    }
+    Ok(arguments)
+}
+
+fn insert_nulls(object: &mut serde_json::Map<String, Value>, keys: &[&str]) {
+    for key in keys {
+        object.entry((*key).to_owned()).or_insert(Value::Null);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityResourceRequestV1 {
@@ -140,6 +232,9 @@ pub fn novelist_read_context_definition() -> ToolDefinition {
         version: NOVELIST_READ_CONTEXT_TOOL_VERSION,
         description: concat!(
             "按需读取内置 Novelist 能力说明与当前小说工程的只读 Canon 上下文。",
+            "选择一个有效 capabilityId；capabilityResources 可以为空。",
+            "只检查当前工程时可直接请求 canonOperations，不需要虚构能力资源。",
+            "例如检查是否存在人物资料：使用 list、scopes=[characters] 和合法 limit；空列表就是实际结果。",
             "只在确有必要时调用一次；不能创建、修改或删除文件。"
         )
         .to_owned(),
@@ -1995,6 +2090,30 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].name, NOVELIST_READ_CONTEXT_TOOL_NAME);
         assert_eq!(definitions[0].version, NOVELIST_READ_CONTEXT_TOOL_VERSION);
+    }
+
+    #[test]
+    fn deepseek_omitted_list_fields_normalize_to_an_empty_character_result_without_writes() {
+        let fixture = Fixture::new();
+        fs::remove_file(fixture.root.join("characters/lu-chen.md")).unwrap();
+        let before = fixture.canon_snapshot();
+        let arguments = normalize_deepseek_novelist_read_context_arguments(json!({
+            "capabilityId": "create-character",
+            "canonOperations": [{
+                "kind": "list",
+                "scopes": ["characters"],
+                "limit": 64
+            }]
+        }))
+        .unwrap();
+
+        novelist_read_context_definition()
+            .validate_arguments(&arguments)
+            .unwrap();
+        let output = execute_context(&fixture, &arguments);
+        assert_eq!(output.status, ToolResultStatus::Succeeded);
+        assert_eq!(output.output_json.unwrap()["canon"][0]["paths"], json!([]));
+        assert_eq!(fixture.canon_snapshot(), before);
     }
 
     #[test]
