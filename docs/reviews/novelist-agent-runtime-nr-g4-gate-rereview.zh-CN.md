@@ -5,8 +5,9 @@
 - Gate：`NR-G4`
 - 评审对象：已批准的 NR-3 Story Packet 与当前 NR-301～NR-306 实现
 - 技术评审：**通过**
-- 产品批准：**待产品负责人决定**
-- `nrG4Approved = false`
+- 产品批准：**已批准**
+- 批准日期：`2026-09-04`
+- `nrG4Approved = true`
 - 真实 Provider Live Smoke：**未执行、未授权**
 - `NR-4～NR-7`：**未进入、未形成 Story Packet**
 
@@ -76,14 +77,14 @@
 
 仍有一个明确的非阻断边界：真实 DeepSeek/OpenAI 对 Tool Schema 与 Tool Call 行为的线上兼容性没有执行 Live Smoke。这不是当前授权范围，技术评审不把离线 Loopback 证据描述为真实 Provider 验证。
 
-## 5. Gate 建议
+## 5. Gate 决定
 
-技术评审建议：**批准 NR-G4**。
+产品负责人已批准 NR-G4 技术提交，确认 **NR-G4 通过**。
 
-本报告不代替产品负责人批准，因此当前仍保持：
+当前正式状态：
 
-- `NR-G4.status = technical_submission`；
-- `NR-G4.reviewStatus = technical_review_passed`；
-- `nrG4Approved = false`。
+- `NR-G4.status = passed`；
+- `NR-G4.reviewStatus = approved`；
+- `nrG4Approved = true`。
 
-下一步唯一动作是产品负责人对 NR-G4 作出批准或不批准决定；不形成新的评审 Packet，不执行真实 Provider Live Smoke，不进入 NR-4。
+流程停止于已通过的 NR-G4。该批准不授权真实 Provider Live Smoke，也不授权进入或形成 NR-4～NR-7 Story Packet；后续动作等待产品负责人另行授权。

@@ -350,10 +350,12 @@ if (!prepare) {
   }
   for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"]) {
     const status = read(relative);
+    const gateState = status.match(/^gate:\r?\n(?:^[ \t].*(?:\r?\n|$))+/gmu)?.[0] ?? "";
     if (
-      !status.includes('id: "NR-G4"') ||
-      !status.includes('status: "technical_submission"') ||
-      !status.includes("nrG4Approved: false") ||
+      !gateState.includes('id: "NR-G4"') ||
+      !gateState.includes('status: "passed"') ||
+      !gateState.includes('review_status: "approved"') ||
+      !gateState.includes("nrG4Approved: true") ||
       !status.includes("implementation_completed: true") ||
       status.includes("real_provider_live_smoke_executed: true") ||
       status.includes("nr_4_entered_or_packet_formed: true")

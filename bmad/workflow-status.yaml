@@ -5,8 +5,8 @@ project:
   last_updated: "2026-09-04T16:00:00+08:00"
 
 current_phase: 4
-current_workflow: "nr-g4-product-gate-decision"
-baseline_note: "NR-301～NR-306 已完成并形成单一 NR-G4 技术提交。NR-G4 后续 Remediation/Follow-up/Corrigendum 补丁链已清理，其有效行为与回归已吸收到 NR-3 实现基线。nrG4Approved=false，真实 Provider Live Smoke 与 NR-4～NR-7 仍未授权。"
+current_workflow: "stopped-at-nr-g4-passed"
+baseline_note: "NR-301～NR-306 已完成，单一 NR-G4 技术提交及精简重新评审已获产品批准。NR-G4 后续补丁链已清理，其有效行为与回归已吸收到 NR-3 实现基线。真实 Provider Live Smoke 与 NR-4～NR-7 仍未授权。"
 
 phases:
   phase_1_analysis:
@@ -20,7 +20,7 @@ phases:
     status: "completed"
   phase_4_implementation:
     name: "实现"
-    status: "NR-G4-technical-review-passed"
+    status: "NR-G4-passed"
     packet:
       id: "NR-3-D2-FINAL"
       status: "implemented"
@@ -89,10 +89,11 @@ historical_technical_submission_snapshots:
     note: "Immutable NR-G3 manifest-generation snapshot; the later Gate decision is recorded in the current Gate state."
 gate:
   id: "NR-G4"
-  status: "technical_submission"
-  review_status: "technical_review_passed"
-  nrG4Approved: false
-  product_approved: false
+  status: "passed"
+  review_status: "approved"
+  nrG4Approved: true
+  product_approved: true
+  approved_at: "2026-09-04"
   real_provider_live_smoke_executed: false
   nr_4_entered_or_packet_formed: false
   report: "docs/reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md"
@@ -105,7 +106,7 @@ capability_plan:
   decisions_approved: "NR2-D2-R01～R06"
   implementation_authorized: true
   implementation_order: "NR-301 → NR-306"
-  implementation_status: "nr3_completed_nr_g4_technical_review"
+  implementation_status: "nr3_completed_nr_g4_passed"
   real_provider_live_smoke_authorized: false
   output_file: "docs/novelist-agent-runtime-nr2-nr7-capability-delivery-plan-draft-2.zh-CN.md"
 
@@ -134,6 +135,6 @@ nr3_packet:
   output_file: "docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md"
 
 next_action:
-  type: "product_gate_decision"
+  type: "await_product_direction"
   id: "NR-G4"
-  instruction: "产品负责人根据精简重新评审结论决定是否批准 NR-G4；不得自动执行真实 Provider Live Smoke，不得形成或进入 NR-4～NR-7。"
+  instruction: "停止于已通过的 NR-G4；等待产品负责人另行授权。不得执行真实 Provider Live Smoke，不得形成或进入 NR-4～NR-7。"

@@ -4,14 +4,14 @@
 
 ## 当前结论
 
-NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批准顺序完成。NR-G3 已获产品批准；当前 NR-3 实现作为一个完整基线提交 NR-G4 评审。NR-G4 后续 Remediation、Follow-up、Second Remediation 与 Corrigendum 补丁链已清理，不再作为独立产品 Story、证据入口或历史评审层级：
+NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批准顺序完成。NR-G3 与 NR-G4 均已获产品批准。NR-G4 后续 Remediation、Follow-up、Second Remediation 与 Corrigendum 补丁链已清理，不再作为独立产品 Story、证据入口或历史评审层级：
 
 - `NR-G3.status = passed`
 - `NR-G3.reviewStatus = approved`
 - `nrG3Approved = true`
-- `NR-G4.status = technical_submission`
-- `NR-G4.reviewStatus = technical_review_passed`
-- `nrG4Approved = false`
+- `NR-G4.status = passed`
+- `NR-G4.reviewStatus = approved`
+- `nrG4Approved = true`
 - `realProviderLiveSmokeExecuted = false`
 - `nr4EnteredOrPacketFormed = false`
 
@@ -21,10 +21,10 @@ NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批�
 
 - Packet：`NR-3-D2-FINAL`
 - Packet 状态：`approved / implemented`
-- Gate 状态：`NR-G4 technical_submission / pending review`
+- Gate 状态：`NR-G4 passed / approved`
 - 已批准：`NR3-D2-R01～R06`、`FR01～FR02`
 - 已完成：`NR-301～NR-306`
-- 产品批准：`nrG4Approved = false`
+- 产品批准：`nrG4Approved = true`
 - 真实 Provider Live Smoke：`not executed`
 - NR-4～NR-7：`not entered / no Packet formed`
 - 文档：`docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md`
@@ -95,4 +95,4 @@ NR-3 只增加常驻 Novelist Capability Pack 与 Agent 自主请求的 Canon �
 - 当前唯一机器 Manifest：`target/qa/nr-306/nr-g4-manifest.json`
 - 完整验收入口：`pnpm quality`
 
-NR-G4 Manifest 的 `nrG4Approved = false` 表示技术证据不等于 Gate 自批准。技术重新评审已经通过，当前停止于产品 Gate 决定；不执行真实 Provider Live Smoke，也不进入或形成 NR-4～NR-7 Story Packet。
+NR-G4 Manifest 中的 `nrG4Approved = false` 保留为批准前技术证据快照；当前 BMAD 状态与精简重新评审记录正式产品批准。流程停止于已通过的 NR-G4；不执行真实 Provider Live Smoke，也不进入或形成 NR-4～NR-7 Story Packet。

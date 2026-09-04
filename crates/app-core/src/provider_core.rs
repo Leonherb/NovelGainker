@@ -724,6 +724,23 @@ struct OpenaiAdapter;
 static DEEPSEEK_ADAPTER: DeepseekAdapter = DeepseekAdapter;
 static OPENAI_ADAPTER: OpenaiAdapter = OpenaiAdapter;
 
+const NOVELIST_READ_CONTEXT_INTERNAL_NAME: &str = "novelist.read_context";
+const NOVELIST_READ_CONTEXT_PROVIDER_NAME: &str = "novelist_read_context";
+
+fn provider_tool_name(name: &str) -> &str {
+    match name {
+        NOVELIST_READ_CONTEXT_INTERNAL_NAME => NOVELIST_READ_CONTEXT_PROVIDER_NAME,
+        _ => name,
+    }
+}
+
+fn internal_tool_name(name: &str) -> &str {
+    match name {
+        NOVELIST_READ_CONTEXT_PROVIDER_NAME => NOVELIST_READ_CONTEXT_INTERNAL_NAME,
+        _ => name,
+    }
+}
+
 fn adapter(provider: ProviderId) -> &'static dyn ProviderAdapter {
     match provider {
         ProviderId::Deepseek => &DEEPSEEK_ADAPTER,
@@ -765,7 +782,7 @@ fn deepseek_messages(request: &NormalizedRequest) -> Result<Vec<Value>, Provider
                 "id": call.call_id,
                 "type": "function",
                 "function": {
-                    "name": call.name,
+                    "name": provider_tool_name(&call.name),
                     "arguments": call.arguments_json
                 }
             }]
@@ -789,7 +806,7 @@ fn deepseek_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
             json!({
                 "type": "function",
                 "function": {
-                    "name": definition.name,
+                    "name": provider_tool_name(&definition.name),
                     "description": definition.description,
                     "parameters": definition.input_schema
                 }
@@ -804,7 +821,7 @@ fn openai_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
         .map(|definition| {
             json!({
                 "type": "function",
-                "name": definition.name,
+                "name": provider_tool_name(&definition.name),
                 "description": definition.description,
                 "parameters": definition.input_schema,
                 "strict": true
@@ -851,7 +868,7 @@ fn openai_continuation_value(item: &OpenAiContinuationItem) -> Value {
                 "type": "function_call",
                 "id": item_id,
                 "call_id": call_id,
-                "name": name,
+                "name": provider_tool_name(name),
                 "arguments": arguments,
                 "status": status
             });
@@ -982,7 +999,7 @@ impl ProviderAdapter for DeepseekAdapter {
                     name: tool_call
                         .pointer("/function/name")
                         .and_then(Value::as_str)
-                        .map(str::to_owned),
+                        .map(|name| internal_tool_name(name).to_owned()),
                     arguments_delta: tool_call
                         .pointer("/function/arguments")
                         .and_then(Value::as_str)
@@ -1270,7 +1287,7 @@ fn parse_openai_output(
                 let arguments = required_raw_string(item, "arguments")?;
                 let call = ProviderToolCall {
                     call_id: required_string(item, "call_id")?,
-                    name: required_string(item, "name")?,
+                    name: internal_tool_name(&required_string(item, "name")?).to_owned(),
                     arguments_json: arguments.clone(),
                 };
                 call.validate_envelope()
@@ -1353,11 +1370,12 @@ fn parse_deepseek_tool_call(
             .and_then(Value::as_str)
             .ok_or_else(ProviderError::protocol)?
             .to_owned(),
-        name: call
-            .pointer("/function/name")
-            .and_then(Value::as_str)
-            .ok_or_else(ProviderError::protocol)?
-            .to_owned(),
+        name: internal_tool_name(
+            call.pointer("/function/name")
+                .and_then(Value::as_str)
+                .ok_or_else(ProviderError::protocol)?,
+        )
+        .to_owned(),
         arguments_json: call
             .pointer("/function/arguments")
             .and_then(Value::as_str)
@@ -2452,6 +2470,13 @@ mod tests {
 
     #[test]
     fn both_adapters_capture_native_tool_requests_and_typed_continuations() {
+        assert_eq!(
+            NOVELIST_READ_CONTEXT_INTERNAL_NAME,
+            crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME
+        );
+        assert!(NOVELIST_READ_CONTEXT_PROVIDER_NAME
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
         let initial = NormalizedRequest::user_text("执行测试操作".to_owned(), 512)
             .unwrap()
             .with_tool_definitions(vec![
@@ -2461,13 +2486,16 @@ mod tests {
         let deepseek_initial = capture_outbound_json(ProviderId::Deepseek, &initial, true);
         assert_eq!(
             deepseek_initial["tools"][0]["function"]["name"],
-            "novelist.read_context"
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
         );
         assert_eq!(deepseek_initial["tool_choice"], "auto");
         assert_eq!(deepseek_initial["thinking"]["type"], "disabled");
 
         let openai_initial = capture_outbound_json(ProviderId::Openai, &initial, true);
-        assert_eq!(openai_initial["tools"][0]["name"], "novelist.read_context");
+        assert_eq!(
+            openai_initial["tools"][0]["name"],
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
+        );
         assert_eq!(openai_initial["tools"][0]["strict"], true);
         assert_eq!(
             deepseek_initial["tools"][0]["function"]["parameters"],
@@ -2506,6 +2534,11 @@ mod tests {
             capture_outbound_json(ProviderId::Deepseek, &deepseek_continuation, true);
         assert_eq!(deepseek_body["tool_choice"], "none");
         assert_eq!(deepseek_body["thinking"]["type"], "disabled");
+        let deepseek_messages = deepseek_body["messages"].as_array().unwrap();
+        assert_eq!(
+            deepseek_messages[deepseek_messages.len() - 2]["tool_calls"][0]["function"]["name"],
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
+        );
         assert_eq!(
             deepseek_body["messages"][deepseek_body["messages"].as_array().unwrap().len() - 1]
                 ["tool_call_id"],
@@ -2550,6 +2583,10 @@ mod tests {
         let input = openai_body["input"].as_array().unwrap();
         assert_eq!(input[input.len() - 1]["type"], "function_call_output");
         assert_eq!(input[input.len() - 1]["call_id"], "call_1");
+        assert_eq!(
+            input[input.len() - 2]["name"],
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
+        );
         assert_eq!(input[input.len() - 4]["phase"], "commentary");
     }
 
@@ -2577,10 +2614,13 @@ mod tests {
         assert_eq!(deepseek["tools"].as_array().unwrap().len(), 1);
         assert_eq!(
             deepseek["tools"][0]["function"]["name"],
-            "novelist.read_context"
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
         );
         assert_eq!(openai["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(openai["tools"][0]["name"], "novelist.read_context");
+        assert_eq!(
+            openai["tools"][0]["name"],
+            NOVELIST_READ_CONTEXT_PROVIDER_NAME
+        );
         assert_eq!(deepseek["tool_choice"], "auto");
         assert_eq!(openai["tool_choice"], "auto");
         assert!(deepseek.to_string().contains("novel-story-telling"));
@@ -2730,7 +2770,7 @@ mod tests {
                             "id": "call_raw",
                             "type": "function",
                             "function": {
-                                "name": "novelist.read_context",
+                                "name": NOVELIST_READ_CONTEXT_PROVIDER_NAME,
                                 "arguments": raw
                             }
                         }]
@@ -2741,7 +2781,9 @@ mod tests {
             let parsed = DEEPSEEK_ADAPTER
                 .parse_completion(&deepseek_completion)
                 .unwrap();
-            assert_eq!(parsed.tool_call.unwrap().arguments_json, raw);
+            let parsed_call = parsed.tool_call.unwrap();
+            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(parsed_call.arguments_json, raw);
 
             let deepseek_stream = json!({
                 "model": DEEPSEEK_PRESET.model,
@@ -2751,7 +2793,7 @@ mod tests {
                             "index": 0,
                             "id": "call_raw",
                             "function": {
-                                "name": "novelist.read_context",
+                                "name": NOVELIST_READ_CONTEXT_PROVIDER_NAME,
                                 "arguments": raw
                             }
                         }]
@@ -2781,7 +2823,9 @@ mod tests {
             }
             assert_eq!(finish_reason, Some(FinishReason::ToolCall));
             let (call, continuation) = accumulator.finish(ProviderId::Deepseek, "").unwrap();
-            assert_eq!(call.unwrap().arguments_json, raw);
+            let call = call.unwrap();
+            assert_eq!(call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(call.arguments_json, raw);
             assert!(continuation.is_some());
 
             let openai_response = json!({
@@ -2791,14 +2835,16 @@ mod tests {
                     "type": "function_call",
                     "id": "fc_raw",
                     "call_id": "call_raw",
-                    "name": "novelist.read_context",
+                    "name": NOVELIST_READ_CONTEXT_PROVIDER_NAME,
                     "arguments": raw,
                     "status": "completed",
                     "phase": "commentary"
                 }]
             });
             let parsed = OPENAI_ADAPTER.parse_completion(&openai_response).unwrap();
-            assert_eq!(parsed.tool_call.unwrap().arguments_json, raw);
+            let parsed_call = parsed.tool_call.unwrap();
+            assert_eq!(parsed_call.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(parsed_call.arguments_json, raw);
             let stream_event = json!({
                 "type": "response.completed",
                 "response": openai_response
@@ -2809,7 +2855,9 @@ mod tests {
                 AdapterStreamEvent::ToolEnvelope { call, .. } => Some(call),
                 _ => None,
             });
-            assert_eq!(streamed.unwrap().arguments_json, raw);
+            let streamed = streamed.unwrap();
+            assert_eq!(streamed.name, NOVELIST_READ_CONTEXT_INTERNAL_NAME);
+            assert_eq!(streamed.arguments_json, raw);
         }
     }
 
@@ -2840,7 +2888,7 @@ mod tests {
                 "type": "function_call",
                 "id": "fc_raw",
                 "call_id": "call_raw",
-                "name": "novelist.read_context",
+                "name": NOVELIST_READ_CONTEXT_PROVIDER_NAME,
                 "arguments": "{",
                 "status": "in_progress"
             }]

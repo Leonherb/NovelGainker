@@ -1027,7 +1027,7 @@ mod tests {
                         "type": "function_call",
                         "id": "fc_nr3",
                         "call_id": "call_nr3",
-                        "name": "novelist.read_context",
+                        "name": "novelist_read_context",
                         "arguments": arguments_json,
                         "status": "completed",
                         "phase": "commentary"
@@ -1070,10 +1070,16 @@ mod tests {
 
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         assert_eq!(terminal.state, ConversationProviderTerminalState::Completed);
+        let turn = terminal.session.turns.last().unwrap();
+        assert_eq!(turn.status, ConversationTurnStatus::Completed);
+        assert_eq!(turn.messages[1].content, "主回复");
+        assert!(!turn.messages[1]
+            .content
+            .contains(crate::conversation::NOT_GENERATED_TEXT));
         let captured = requests.lock().unwrap();
         let body = captured_json(&captured[0]);
         assert_eq!(body["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(body["tools"][0]["name"], "novelist.read_context");
+        assert_eq!(body["tools"][0]["name"], "novelist_read_context");
         let instructions = body["instructions"].as_str().unwrap();
         assert!(instructions.contains("常驻的 Novelist Agent"));
         assert!(instructions.contains("create-character"));
