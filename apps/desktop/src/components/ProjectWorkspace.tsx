@@ -12,6 +12,7 @@ import {
 } from "../lib/tauri/analysis";
 import { requestSetCurrentFile, type RecentProject } from "../lib/tauri/app-state";
 import { normalizeAppError, type AppError } from "../lib/tauri/health";
+import { requestEditorState } from "../lib/tauri/canon-change";
 import {
   requestProjectClose,
   requestProjectCreate,
@@ -183,6 +184,34 @@ export function ProjectWorkspace({
   const [searchError, setSearchError] = useState<PresentedAppError | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const dirtyRef = useRef(false);
+  const [editorReady, setEditorReady] = useState(false);
+  const editorReservationRef = useRef<{
+    sessionId: string;
+    fileId: string;
+    revision: number;
+    held: boolean;
+    chain: Promise<unknown>;
+  } | null>(null);
+  const updateEditorReservation = (held: boolean) => {
+    const reservation = editorReservationRef.current;
+    if (!reservation) return;
+    const revision = ++reservation.revision;
+    reservation.held = held;
+    setEditorReady(false);
+    reservation.chain = reservation.chain
+      .catch(() => undefined)
+      .then(() => requestEditorState(reservation.sessionId, reservation.fileId, revision, held))
+      .then(() => {
+        if (editorReservationRef.current === reservation && reservation.revision === revision)
+          setEditorReady(held);
+      })
+      .catch(() => {
+        if (editorReservationRef.current === reservation) {
+          setEditorReady(false);
+          setEditorNotice("手工编辑保护未就绪，草稿已保留；请重新聚焦编辑器重试。");
+        }
+      });
+  };
   const saveInFlightRef = useRef(false);
   const watchInFlightRef = useRef(false);
   const windowCloseInFlightRef = useRef(false);
@@ -291,6 +320,9 @@ export function ProjectWorkspace({
   }, [commitWindowClose, desktopRuntime, session, windowClosePort]);
 
   const resetDocument = () => {
+    updateEditorReservation(false);
+    editorReservationRef.current = null;
+    setEditorReady(false);
     setDocument(null);
     setSelectedPath(null);
     setDraft("");
@@ -377,6 +409,9 @@ export function ProjectWorkspace({
       return;
     }
     setBusy("read");
+    updateEditorReservation(false);
+    editorReservationRef.current = null;
+    setEditorReady(false);
     setSelectedPath(relativePath);
     setDocument(null);
     setDraft("");
@@ -394,6 +429,16 @@ export function ProjectWorkspace({
       const nextDocument = await requestProjectFile(activeSession.sessionId, relativePath);
       if (nextDocument.relativePath !== relativePath) {
         throw invalidResponseError();
+      }
+      if (!nextDocument.readOnly && activeSession.capabilities.canSaveFiles) {
+        editorReservationRef.current = {
+          sessionId: activeSession.sessionId,
+          fileId: nextDocument.fileId,
+          revision: nextDocument.editorRevision,
+          held: true,
+          chain: Promise.resolve(),
+        };
+        setEditorReady(true);
       }
       setDocument({
         ...nextDocument,
@@ -470,6 +515,7 @@ export function ProjectWorkspace({
         lineEnding: result.lineEnding,
       });
       dirtyRef.current = false;
+      if (globalThis.document.activeElement !== editorRef.current) updateEditorReservation(false);
       setExternalConflict(null);
       setWatchError(null);
       setValidation(result.validation);
@@ -1181,8 +1227,16 @@ export function ProjectWorkspace({
             <textarea
               aria-describedby="editor-note"
               aria-label={editorCopy.ariaLabel}
+              onFocus={() => {
+                if (!document.readOnly && !editorReservationRef.current?.held)
+                  updateEditorReservation(true);
+                else if (!document.readOnly && !editorReady) updateEditorReservation(true);
+              }}
+              onBlur={() => {
+                if (!dirtyRef.current) updateEditorReservation(false);
+              }}
               onChange={(event) => {
-                if (!document.readOnly) {
+                if (!document.readOnly && editorReady) {
                   setDraft(event.target.value);
                   dirtyRef.current = event.target.value !== document.content;
                   setSaveError(null);
@@ -1197,7 +1251,7 @@ export function ProjectWorkspace({
                   void saveCurrentFile();
                 }
               }}
-              readOnly={document.readOnly || busy === "save"}
+              readOnly={document.readOnly || busy === "save" || !editorReady}
               ref={editorRef}
               spellCheck={false}
               value={draft}

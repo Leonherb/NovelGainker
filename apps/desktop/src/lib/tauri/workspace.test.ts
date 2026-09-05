@@ -60,6 +60,8 @@ const index = {
   ],
 } as const;
 const document = {
+  fileId: "10000000-0000-4000-8000-000000000001",
+  editorRevision: 1,
   relativePath: "chapters/001.md",
   content: "# 第一章\n",
   contentHash: "a".repeat(64),

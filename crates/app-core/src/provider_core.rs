@@ -30,6 +30,7 @@ const CONNECT_TIMEOUT_SECONDS: u64 = 15;
 #[cfg(test)]
 const TEST_REQUEST_TIMEOUT_MILLIS: u64 = 250;
 pub const CONVERSATION_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。仅当当前请求提供工具且确有必要时才可调用；没有工具时继续正常回复。不得声称已经修改或保存文件。";
+pub const CANON_CHANGE_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作。仅当当前请求提供工具且确有必要时才调用；没有工具或工具失败时继续正常回复，不丢弃已生成正文。只有 Host 变更回执的 committed 状态证明本次已保存；pending_confirmation、rejected、cancelled、recovery_required 和工具成功本身都不证明已保存。不在对话正文输出协议 JSON 或内部工具过程说明。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -148,6 +149,8 @@ pub struct NormalizedRequest {
     pub tool_definitions: Vec<ToolDefinition>,
     pub continuation: Option<ProviderContinuation>,
     pub tool_result: Option<ToolResult>,
+    previous_tools: Vec<(ProviderContinuation, ToolResult)>,
+    canon_changes: bool,
 }
 
 impl NormalizedRequest {
@@ -167,6 +170,8 @@ impl NormalizedRequest {
             tool_definitions: Vec::new(),
             continuation: None,
             tool_result: None,
+            previous_tools: Vec::new(),
+            canon_changes: false,
         };
         request.validate()?;
         Ok(request)
@@ -188,6 +193,8 @@ impl NormalizedRequest {
             tool_definitions: Vec::new(),
             continuation: None,
             tool_result: None,
+            previous_tools: Vec::new(),
+            canon_changes: false,
         }
     }
 
@@ -228,6 +235,8 @@ impl NormalizedRequest {
             tool_definitions: Vec::new(),
             continuation: None,
             tool_result: None,
+            previous_tools: Vec::new(),
+            canon_changes: false,
         };
         request.validate()?;
         Ok(request)
@@ -241,6 +250,9 @@ impl NormalizedRequest {
             return Ok(self);
         }
         validate_definitions(&definitions).map_err(|_| ProviderError::invalid_request())?;
+        self.canon_changes |= definitions
+            .iter()
+            .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME);
         self.tool_definitions = definitions;
         self.validate()?;
         Ok(self)
@@ -259,12 +271,18 @@ impl NormalizedRequest {
         if call.call_id != result.call_id || call.name != result.name {
             return Err(ProviderError::invalid_request());
         }
+        let mut previous_tools = self.previous_tools.clone();
+        if let (Some(previous), Some(output)) = (&self.continuation, &self.tool_result) {
+            previous_tools.push((previous.clone(), output.clone()));
+        }
         let request = Self {
             messages: self.messages.clone(),
             max_output_tokens,
             tool_definitions: Vec::new(),
             continuation: Some(continuation),
             tool_result: Some(result),
+            previous_tools,
+            canon_changes: self.canon_changes,
         };
         request.validate()?;
         Ok(request)
@@ -297,7 +315,9 @@ impl NormalizedRequest {
                 })
                 > MAX_TOOL_DEFINITIONS_BYTES
             || self.continuation.is_some() != self.tool_result.is_some()
-            || (self.continuation.is_some() && !self.tool_definitions.is_empty())
+            || (!self.canon_changes
+                && self.continuation.is_some()
+                && !self.tool_definitions.is_empty())
             || self
                 .continuation
                 .as_ref()
@@ -305,6 +325,7 @@ impl NormalizedRequest {
         {
             return Err(ProviderError::invalid_request());
         }
+        self.validate_tool_history()?;
         let mut total = 0usize;
         for message in &self.messages {
             let length = message.content.len();
@@ -323,13 +344,130 @@ impl NormalizedRequest {
 
     pub fn validate_for(&self, provider: ProviderId) -> Result<(), ProviderError> {
         self.validate()?;
-        match (&self.continuation, provider) {
-            (Some(ProviderContinuation::Deepseek { .. }), ProviderId::Deepseek)
-            | (Some(ProviderContinuation::Openai { .. }), ProviderId::Openai)
-            | (None, _) => Ok(()),
-            _ => Err(ProviderError::invalid_request()),
+        let definitions = match provider {
+            ProviderId::Deepseek => deepseek_tool_values(&self.tool_definitions),
+            ProviderId::Openai => openai_tool_values(&self.tool_definitions),
+        };
+        if serde_json::to_vec(&definitions)
+            .map_err(|_| ProviderError::invalid_request())?
+            .len()
+            > MAX_TOOL_DEFINITIONS_BYTES
+        {
+            return Err(ProviderError::invalid_request());
+        }
+        for (continuation, _) in self.tool_history() {
+            if !matches!(
+                (continuation, provider),
+                (ProviderContinuation::Deepseek { .. }, ProviderId::Deepseek)
+                    | (ProviderContinuation::Openai { .. }, ProviderId::Openai)
+            ) {
+                return Err(ProviderError::invalid_request());
+            }
+        }
+        Ok(())
+    }
+
+    fn tool_history(&self) -> impl Iterator<Item = (&ProviderContinuation, &ToolResult)> {
+        self.previous_tools
+            .iter()
+            .map(|(continuation, result)| (continuation, result))
+            .chain(self.continuation.as_ref().zip(self.tool_result.as_ref()))
+    }
+
+    fn validate_tool_history(&self) -> Result<(), ProviderError> {
+        let maximum = if self.canon_changes { 3 } else { 1 };
+        if self.tool_history().count() > maximum
+            || (!self.previous_tools.is_empty() && self.continuation.is_none())
+        {
+            return Err(ProviderError::invalid_request());
+        }
+        let mut calls = std::collections::HashSet::new();
+        let mut bytes = 0usize;
+        let mut reads = 0usize;
+        let mut mutation_seen = false;
+        for (continuation, result) in self.tool_history() {
+            validate_continuation_bounds(continuation)?;
+            result
+                .validate()
+                .map_err(|_| ProviderError::invalid_request())?;
+            let call = continuation_tool_call(continuation)?;
+            if !calls.insert(call.call_id.clone())
+                || call.call_id != result.call_id
+                || call.name != result.name
+                || mutation_seen
+            {
+                return Err(ProviderError::invalid_request());
+            }
+            if self.canon_changes {
+                match call.name.as_str() {
+                    crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME => reads += 1,
+                    crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => mutation_seen = true,
+                    _ => return Err(ProviderError::invalid_request()),
+                }
+            }
+            bytes = bytes.saturating_add(continuation_serialized_bytes(continuation)?);
+        }
+        if self.canon_changes
+            && (reads > 2
+                || bytes > crate::canon_change::NR4_CONTINUATION_BYTES
+                || (mutation_seen && !self.tool_definitions.is_empty()))
+        {
+            return Err(ProviderError::invalid_request());
+        }
+        Ok(())
+    }
+
+    pub fn body_limit(&self) -> usize {
+        if self.canon_changes {
+            crate::canon_change::NR4_REQUEST_BYTES
+        } else {
+            MAX_REQUEST_BYTES
         }
     }
+
+    pub fn continuation_bytes(&self) -> Result<usize, ProviderError> {
+        self.tool_history()
+            .try_fold(0usize, |total, (continuation, _)| {
+                Ok(total.saturating_add(continuation_serialized_bytes(continuation)?))
+            })
+    }
+
+    /// Uses the exact adapter body, including escaped tool JSON and native wrappers.
+    /// Call before a mutation with a worst-case bounded receipt, never after writing.
+    pub fn serialized_request_bytes(&self, provider: ProviderId) -> Result<usize, ProviderError> {
+        self.validate_for(provider)?;
+        let body = match provider {
+            ProviderId::Deepseek => DeepseekAdapter.streaming_body(self),
+            ProviderId::Openai => OpenaiAdapter.streaming_body(self),
+        };
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|_| ProviderError::invalid_request())?
+            .len();
+        if bytes > self.body_limit() {
+            return Err(ProviderError::invalid_request());
+        }
+        Ok(bytes)
+    }
+}
+
+fn continuation_serialized_bytes(
+    continuation: &ProviderContinuation,
+) -> Result<usize, ProviderError> {
+    let value = match continuation {
+        ProviderContinuation::Deepseek {
+            assistant_text,
+            call,
+        } => json!({
+            "assistantText": assistant_text, "callId": call.call_id,
+            "name": call.name, "arguments": call.arguments_json
+        }),
+        ProviderContinuation::Openai { items } => {
+            Value::Array(items.iter().map(openai_continuation_value).collect())
+        }
+    };
+    serde_json::to_vec(&value)
+        .map(|bytes| bytes.len())
+        .map_err(|_| ProviderError::protocol())
 }
 
 fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(), ProviderError> {
@@ -732,6 +870,9 @@ const NOVELIST_READ_CONTEXT_PROVIDER_NAME: &str = "novelist_read_context";
 fn provider_tool_name(name: &str) -> &str {
     match name {
         NOVELIST_READ_CONTEXT_TOOL_NAME => NOVELIST_READ_CONTEXT_PROVIDER_NAME,
+        crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => {
+            crate::canon_change::PROPOSE_CHANGE_WIRE_NAME
+        }
         _ => name,
     }
 }
@@ -739,6 +880,9 @@ fn provider_tool_name(name: &str) -> &str {
 fn internal_tool_name(name: &str) -> &str {
     match name {
         NOVELIST_READ_CONTEXT_PROVIDER_NAME => NOVELIST_READ_CONTEXT_TOOL_NAME,
+        crate::canon_change::PROPOSE_CHANGE_WIRE_NAME => {
+            crate::canon_change::PROPOSE_CHANGE_TOOL_NAME
+        }
         _ => name,
     }
 }
@@ -769,14 +913,14 @@ fn message_values(request: &NormalizedRequest) -> Vec<Value> {
 
 fn deepseek_messages(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError> {
     let mut messages = message_values(request);
-    if let (
-        Some(ProviderContinuation::Deepseek {
+    for (continuation, result) in request.tool_history() {
+        let ProviderContinuation::Deepseek {
             assistant_text,
             call,
-        }),
-        Some(result),
-    ) = (&request.continuation, &request.tool_result)
-    {
+        } = continuation
+        else {
+            return Err(ProviderError::invalid_request());
+        };
         messages.push(json!({
             "role": "assistant",
             "content": assistant_text,
@@ -795,8 +939,6 @@ fn deepseek_messages(request: &NormalizedRequest) -> Result<Vec<Value>, Provider
             "content": serde_json::to_string(&result.provider_payload())
                 .map_err(|_| ProviderError::protocol())?
         }));
-    } else if request.continuation.is_some() {
-        return Err(ProviderError::invalid_request());
     }
     Ok(messages)
 }
@@ -910,9 +1052,10 @@ fn openai_input(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError
         .into_iter()
         .skip(1)
         .collect::<Vec<_>>();
-    if let (Some(ProviderContinuation::Openai { items }), Some(result)) =
-        (&request.continuation, &request.tool_result)
-    {
+    for (continuation, result) in request.tool_history() {
+        let ProviderContinuation::Openai { items } = continuation else {
+            return Err(ProviderError::invalid_request());
+        };
         input.extend(items.iter().map(openai_continuation_value));
         input.push(json!({
             "type": "function_call_output",
@@ -920,8 +1063,6 @@ fn openai_input(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError
             "output": serde_json::to_string(&result.provider_payload())
                 .map_err(|_| ProviderError::protocol())?
         }));
-    } else if request.continuation.is_some() {
-        return Err(ProviderError::invalid_request());
     }
     Ok(input)
 }
@@ -1485,7 +1626,13 @@ impl ProviderHttpClient {
         let adapter = adapter(provider);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
-        let response = self.send(provider, key, &body, "application/json")?;
+        let response = self.send(
+            provider,
+            key,
+            &body,
+            "application/json",
+            request.body_limit(),
+        )?;
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
@@ -1510,7 +1657,13 @@ impl ProviderHttpClient {
             if cancellation.is_cancelled() {
                 return Err(ProviderError::cancelled());
             }
-            match self.send(provider, key, &body, "application/json") {
+            match self.send(
+                provider,
+                key,
+                &body,
+                "application/json",
+                request.body_limit(),
+            ) {
                 Ok(response) if response.status().is_success() => {
                     return parse_bounded_completion(response, adapter);
                 }
@@ -1553,7 +1706,7 @@ impl ProviderHttpClient {
             }
             let response = tokio::select! {
                 _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
-                response = self.send_async(provider, key, &body, "application/json") => response,
+                response = self.send_async(provider, key, &body, "application/json", request.body_limit()) => response,
             };
             if cancellation.is_cancelled() {
                 return Err(ProviderError::cancelled());
@@ -1600,7 +1753,7 @@ impl ProviderHttpClient {
             .map_err(|_| ProviderError::protocol())?;
         let response = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
-            response = self.send_async(provider, key, &body, "application/json") => response?,
+            response = self.send_async(provider, key, &body, "application/json", request.body_limit()) => response?,
         };
         if !response.status().is_success() {
             return Err(map_http_status(response.status()));
@@ -1641,7 +1794,13 @@ impl ProviderHttpClient {
             if cancellation.is_cancelled() {
                 return Err(ProviderError::cancelled());
             }
-            match self.send(provider, key, &body, "text/event-stream") {
+            match self.send(
+                provider,
+                key,
+                &body,
+                "text/event-stream",
+                request.body_limit(),
+            ) {
                 Ok(candidate) if candidate.status().is_success() => {
                     response = Some(candidate);
                     break;
@@ -1693,7 +1852,7 @@ impl ProviderHttpClient {
             }
             let candidate = tokio::select! {
                 _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
-                candidate = self.send_async(provider, key, &body, "text/event-stream") => candidate,
+                candidate = self.send_async(provider, key, &body, "text/event-stream", request.body_limit()) => candidate,
             };
             match candidate {
                 Ok(candidate) if candidate.status().is_success() => {
@@ -1767,7 +1926,7 @@ impl ProviderHttpClient {
             .map_err(|_| ProviderError::protocol())?;
         let response = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
-            response = self.send_async(provider, key, &body, "text/event-stream") => response?,
+            response = self.send_async(provider, key, &body, "text/event-stream", request.body_limit()) => response?,
         };
         if !response.status().is_success() {
             return Err(map_http_status(response.status()));
@@ -1810,8 +1969,9 @@ impl ProviderHttpClient {
         key: &[u8],
         body: &[u8],
         accept: &'static str,
+        body_limit: usize,
     ) -> Result<BlockingResponse, ProviderError> {
-        if body.len() > MAX_REQUEST_BYTES {
+        if body.len() > body_limit {
             return Err(ProviderError::invalid_request());
         }
         let endpoint = self.endpoint(provider)?;
@@ -1842,8 +2002,9 @@ impl ProviderHttpClient {
         key: &[u8],
         body: &[u8],
         accept: &'static str,
+        body_limit: usize,
     ) -> Result<AsyncResponse, ProviderError> {
-        if body.len() > MAX_REQUEST_BYTES {
+        if body.len() > body_limit {
             return Err(ProviderError::invalid_request());
         }
         let endpoint = self.endpoint(provider)?;
@@ -2656,6 +2817,190 @@ mod tests {
     }
 
     #[test]
+    fn nr401_mutation_schema_serializes_strictly_for_both_providers_without_registration() {
+        use crate::canon_change::{
+            propose_change_definition, PROPOSE_CHANGE_TOOL_NAME, PROPOSE_CHANGE_WIRE_NAME,
+        };
+        let request = NormalizedRequest::user_text("保存用户确定的人物资料。".to_owned(), 512)
+            .unwrap()
+            .with_tool_definitions(vec![propose_change_definition()])
+            .unwrap();
+        let deepseek = capture_outbound_json(ProviderId::Deepseek, &request, true);
+        let openai = capture_outbound_json(ProviderId::Openai, &request, true);
+        assert_eq!(
+            deepseek["tools"][0]["function"]["name"],
+            PROPOSE_CHANGE_WIRE_NAME
+        );
+        assert_eq!(openai["tools"][0]["name"], PROPOSE_CHANGE_WIRE_NAME);
+        for parameters in [
+            &deepseek["tools"][0]["function"]["parameters"],
+            &openai["tools"][0]["parameters"],
+        ] {
+            assert_eq!(parameters["additionalProperties"], false);
+            let required = parameters["properties"]["operations"]["items"]["required"]
+                .as_array()
+                .unwrap();
+            assert!(required.contains(&serde_json::json!("expectedSourceHash")));
+            assert!(required.contains(&serde_json::json!("readReceiptId")));
+        }
+        assert_eq!(
+            internal_tool_name(PROPOSE_CHANGE_WIRE_NAME),
+            PROPOSE_CHANGE_TOOL_NAME
+        );
+        assert_eq!(
+            provider_tool_name(PROPOSE_CHANGE_TOOL_NAME),
+            PROPOSE_CHANGE_WIRE_NAME
+        );
+        assert!(serde_json::to_vec(&deepseek).unwrap().len() < MAX_REQUEST_BYTES);
+        assert!(serde_json::to_vec(&openai).unwrap().len() < MAX_REQUEST_BYTES);
+    }
+
+    fn nr403_exchange(
+        provider: ProviderId,
+        index: usize,
+        name: &str,
+    ) -> (ProviderContinuation, ToolResult) {
+        let call = ProviderToolCall {
+            call_id: format!("nr403_call_{index}"),
+            name: name.to_owned(),
+            arguments_json: "{\"quoted\":\"\\\"\\\\\\n\"}".to_owned(),
+        };
+        let continuation = match provider {
+            ProviderId::Deepseek => ProviderContinuation::Deepseek {
+                assistant_text: format!("第 {index} 步。"),
+                call: call.clone(),
+            },
+            ProviderId::Openai => ProviderContinuation::Openai {
+                items: vec![OpenAiContinuationItem::FunctionCall {
+                    item_id: format!("nr403_fc_{index}"),
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments_json.clone(),
+                    status: "completed".to_owned(),
+                    phase: None,
+                }],
+            },
+        };
+        let result = ToolResult {
+            call_id: call.call_id,
+            name: call.name,
+            version: 1,
+            status: crate::tool_runtime::ToolResultStatus::Succeeded,
+            output_json: Some(json!({"step": index, "text": "实际结果\n\"\\"})),
+            error_code: None,
+        };
+        (continuation, result)
+    }
+
+    #[test]
+    fn nr403_both_providers_preserve_three_ordered_exchanges_and_close_after_mutation() {
+        use crate::canon_change::{
+            propose_change_definition, NR4_REQUEST_BYTES, PROPOSE_CHANGE_TOOL_NAME,
+        };
+        let definitions = vec![
+            crate::canon_context::novelist_read_context_definition(),
+            propose_change_definition(),
+        ];
+        for provider in [ProviderId::Deepseek, ProviderId::Openai] {
+            let mut request = NormalizedRequest::user_text("请更新人物资料".to_owned(), 4096)
+                .unwrap()
+                .with_tool_definitions(definitions.clone())
+                .unwrap();
+            for index in 0..3 {
+                let name = if index == 2 {
+                    PROPOSE_CHANGE_TOOL_NAME
+                } else {
+                    NOVELIST_READ_CONTEXT_TOOL_NAME
+                };
+                let (continuation, result) = nr403_exchange(provider, index, name);
+                request = request
+                    .continue_after_tool(continuation, result, 4096)
+                    .unwrap();
+                if index < 2 {
+                    request = request.with_tool_definitions(definitions.clone()).unwrap();
+                }
+                let body = capture_outbound_json(provider, &request, true);
+                assert_eq!(body["tool_choice"], if index < 2 { "auto" } else { "none" });
+                let entries = if provider == ProviderId::Deepseek {
+                    body["messages"].as_array().unwrap()
+                } else {
+                    body["input"].as_array().unwrap()
+                };
+                for prior in 0..=index {
+                    let id = format!("nr403_call_{prior}");
+                    assert_eq!(
+                        entries
+                            .iter()
+                            .filter(|entry| entry["tool_call_id"] == id
+                                || (entry["type"] == "function_call_output"
+                                    && entry["call_id"] == id))
+                            .count(),
+                        1
+                    );
+                }
+                assert_eq!(request.body_limit(), NR4_REQUEST_BYTES);
+                assert_eq!(
+                    request.serialized_request_bytes(provider).unwrap(),
+                    serde_json::to_vec(&body).unwrap().len()
+                );
+                let wrong_provider = if provider == ProviderId::Deepseek {
+                    ProviderId::Openai
+                } else {
+                    ProviderId::Deepseek
+                };
+                assert!(request.validate_for(wrong_provider).is_err());
+            }
+            assert!(request
+                .clone()
+                .with_tool_definitions(definitions.clone())
+                .is_err());
+            let (continuation, result) = nr403_exchange(provider, 3, PROPOSE_CHANGE_TOOL_NAME);
+            assert!(request
+                .continue_after_tool(continuation, result, 4096)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn nr403_replayed_mismatched_and_excess_read_calls_fail_before_outbound() {
+        let definitions = vec![
+            crate::canon_context::novelist_read_context_definition(),
+            crate::canon_change::propose_change_definition(),
+        ];
+        let initial = NormalizedRequest::user_text("只读".to_owned(), 4096)
+            .unwrap()
+            .with_tool_definitions(definitions.clone())
+            .unwrap();
+        let (continuation, result) =
+            nr403_exchange(ProviderId::Deepseek, 0, NOVELIST_READ_CONTEXT_TOOL_NAME);
+        let first = initial
+            .continue_after_tool(continuation.clone(), result.clone(), 4096)
+            .unwrap();
+        assert!(first
+            .continue_after_tool(continuation.clone(), result.clone(), 4096)
+            .is_err());
+        let mut wrong = result;
+        wrong.call_id = "wrong".to_owned();
+        assert!(initial
+            .continue_after_tool(continuation, wrong, 4096)
+            .is_err());
+        let (continuation, result) =
+            nr403_exchange(ProviderId::Deepseek, 1, NOVELIST_READ_CONTEXT_TOOL_NAME);
+        let second = first
+            .with_tool_definitions(definitions)
+            .unwrap()
+            .continue_after_tool(continuation, result, 4096)
+            .unwrap();
+        let (continuation, result) =
+            nr403_exchange(ProviderId::Deepseek, 2, NOVELIST_READ_CONTEXT_TOOL_NAME);
+        assert!(second
+            .continue_after_tool(continuation, result, 4096)
+            .is_err());
+        let readonly = NormalizedRequest::user_text("只读".to_owned(), 512).unwrap();
+        assert_eq!(readonly.body_limit(), MAX_REQUEST_BYTES);
+    }
+
+    #[test]
     fn large_history_memory_user_and_tool_result_fit_both_continuation_body_limits() {
         let addendum = crate::capability_pack::embedded_pack()
             .unwrap()
@@ -3110,6 +3455,8 @@ mod tests {
                 tool_definitions: Vec::new(),
                 continuation: None,
                 tool_result: None,
+                previous_tools: Vec::new(),
+                canon_changes: false,
             },
             NormalizedRequest {
                 messages: vec![
@@ -3130,6 +3477,8 @@ mod tests {
                 tool_definitions: Vec::new(),
                 continuation: None,
                 tool_result: None,
+                previous_tools: Vec::new(),
+                canon_changes: false,
             },
             NormalizedRequest {
                 messages: vec![
@@ -3146,6 +3495,8 @@ mod tests {
                 tool_definitions: Vec::new(),
                 continuation: None,
                 tool_result: None,
+                previous_tools: Vec::new(),
+                canon_changes: false,
             },
         ];
         for request in invalid_requests {

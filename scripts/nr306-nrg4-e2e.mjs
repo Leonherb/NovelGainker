@@ -13,6 +13,42 @@ const prepare = process.argv.includes("--prepare");
 const read = (relative) => readFileSync(path.join(root, relative), "utf8");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const parseJson = (relative) => JSON.parse(read(relative));
+const section = (status, name) =>
+  status.match(new RegExp(`^${name}:\\r?\\n(?:^[ \\t].*(?:\\r?\\n|$))+`, "gmu"))?.[0] ?? "";
+const hasField = (block, field, value) =>
+  new RegExp(`^  ${field}: ${value}\\r?$`, "mu").test(block);
+const validCurrentBmadState = (status) => {
+  const gate = section(status, "gate");
+  const baseline = section(status, "nr3_packet");
+  if (
+    !hasField(gate, "id", '"NR-G4"') ||
+    !hasField(gate, "status", '"passed"') ||
+    !hasField(gate, "review_status", '"approved"') ||
+    !hasField(gate, "nrG4Approved", "true") ||
+    !hasField(baseline, "implementation_completed", "true") ||
+    status.includes("real_provider_live_smoke_executed: true")
+  )
+    return false;
+  if (hasField(gate, "nr_4_entered_or_packet_formed", "false")) {
+    return !hasField(gate, "nr_4_implementation_entered", "true");
+  }
+  const next = section(status, "nr4_packet");
+  return (
+    hasField(gate, "nr_4_entered_or_packet_formed", "true") &&
+    hasField(next, "id", '"NR-4-D1"') &&
+    hasField(next, "formation_authorized", "true") &&
+    hasField(next, "product_approved", "true") &&
+    hasField(next, "implementation_authorized", "true") &&
+    hasField(next, "live_smoke_decision", '"explicitly_waived_risk_accepted"') &&
+    hasField(next, "chapter_commit_source_staging", '"approved_deferred_to_nr5"') &&
+    hasField(next, "nrG5Approved", "false")
+  );
+};
+const nr4Entered = hasField(
+  section(read("bmad/workflow-status.yaml"), "gate"),
+  "nr_4_entered_or_packet_formed",
+  "true",
+);
 const numericConstant = (source, name) => {
   const match = source.match(
     new RegExp(`(?:pub )?const ${name}:\\s*(?:u32|u16|usize)\\s*=\\s*([^;]+);`, "u"),
@@ -230,7 +266,7 @@ for (const filter of [
 }
 
 const ipc = inspectIpcClosure(root);
-if (ipc.manifest.length !== 24 || ipc.conversation.length !== 3) {
+if (ipc.baselineManifest.length !== 24 || ipc.conversation.length !== 3) {
   throw new Error(
     `NR-306 IPC surface drift: ${ipc.manifest.length} total / ${ipc.conversation.length} conversation`,
   );
@@ -289,6 +325,31 @@ if (
   throw new Error("NR-306 frozen Context/Provider budget drift");
 }
 
+const currentProjection = {
+  projectionContentVersion: pack.projection.contentVersion,
+  resourceCount: inventory.fileCount,
+  packBytes: inventory.totalBytes,
+  packSha256: inventory.packSha256,
+};
+// NR-G4's approved technical snapshot is immutable. NR-4 projection evidence
+// is recorded separately and must not be passed off as the historical Pack.
+const historicalProjection = {
+  projectionContentVersion: "1.0.0",
+  resourceCount: 36,
+  packBytes: 87982,
+  packSha256: "0ea91a3028daffe09663a81ec344da61b4868b926557d68a023fed7ed418b50d",
+};
+if (
+  nr4Entered &&
+  (currentProjection.projectionContentVersion !== "1.1.0" ||
+    currentProjection.resourceCount !== 37 ||
+    !manifestIds
+      .find((item) => item.id === "novel-story-telling")
+      ?.templateResources.includes("fixtures/outline.template.md"))
+) {
+  throw new Error("NR-4 authorized projection contract drift");
+}
+const claimsProjection = nr4Entered ? historicalProjection : currentProjection;
 const claims = {
   status: "NR-G4-technical-submission",
   nrG4Approved: false,
@@ -299,11 +360,11 @@ const claims = {
   sourceArchiveSha256: pack.sourcePackage.archiveSha256,
   projectionId: pack.projection.id,
   projectionSchemaVersion: pack.projection.schemaVersion,
-  projectionContentVersion: pack.projection.contentVersion,
+  projectionContentVersion: claimsProjection.projectionContentVersion,
   capabilityCount: manifestIds.length,
-  resourceCount: inventory.fileCount,
-  packBytes: inventory.totalBytes,
-  packSha256: inventory.packSha256,
+  resourceCount: claimsProjection.resourceCount,
+  packBytes: claimsProjection.packBytes,
+  packSha256: claimsProjection.packSha256,
   licensePresent: existsSync(path.join(root, "resources/skills/novelist/v1/LICENSE.upstream")),
   attributionPresent: existsSync(path.join(root, "resources/skills/novelist/v1/ATTRIBUTION.md")),
   productionRegistryTools: 1,
@@ -329,7 +390,7 @@ const claims = {
   userVisibleSkillSelectors: 0,
   controlJsonMessages: 0,
   newIpcCommands: 0,
-  productionCommandCount: ipc.manifest.length,
+  productionCommandCount: ipc.baselineManifest.length,
   conversationCommandCount: ipc.conversation.length,
   runtimeCapabilityExternalLoads: 0,
   automatedExternalRequests: 0,
@@ -350,17 +411,33 @@ if (!prepare) {
   }
   for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"]) {
     const status = read(relative);
-    const gateState = status.match(/^gate:\r?\n(?:^[ \t].*(?:\r?\n|$))+/gmu)?.[0] ?? "";
-    if (
-      !gateState.includes('id: "NR-G4"') ||
-      !gateState.includes('status: "passed"') ||
-      !gateState.includes('review_status: "approved"') ||
-      !gateState.includes("nrG4Approved: true") ||
-      !status.includes("implementation_completed: true") ||
-      status.includes("real_provider_live_smoke_executed: true") ||
-      status.includes("nr_4_entered_or_packet_formed: true")
-    ) {
+    if (!validCurrentBmadState(status)) {
       throw new Error(`NR-G4 BMAD state drift: ${relative}`);
+    }
+    // Advancing a later authorized stage must not erase the approval boundary.
+    if (nr4Entered) {
+      const approved = section(status, "nr4_packet");
+      for (const field of [
+        "formation_authorized",
+        "product_approved",
+        "implementation_authorized",
+      ]) {
+        const invalid = status.replace(
+          approved,
+          approved.replace(`${field}: true`, `${field}: false`),
+        );
+        if (validCurrentBmadState(invalid))
+          throw new Error(`NR-4 authorization negative fixture accepted: ${field}`);
+      }
+      const invalid = status.replace(
+        approved,
+        approved.replace(
+          'live_smoke_decision: "explicitly_waived_risk_accepted"',
+          'live_smoke_decision: "pending_authorization_or_explicit_waiver"',
+        ),
+      );
+      if (validCurrentBmadState(invalid))
+        throw new Error("NR-4 missing Live decision fixture accepted");
     }
   }
 }
@@ -368,9 +445,13 @@ if (!prepare) {
 const manifest = {
   schemaVersion: 1,
   gateId: "NR-G4",
+  evidenceScope: nr4Entered ? "historical-nr3-contract-regression" : "technical-submission",
+  currentProductionCommandCount: ipc.manifest.length,
+  currentNr4Commands: ipc.nr4Commands,
   result: "pass",
   claims,
   profile,
+  currentProjection,
   testRuns,
   conversationCommands: ipc.conversation,
   releaseFileCount: releaseFiles.length,
@@ -392,12 +473,12 @@ manifest.payloadSha256 = sha256(JSON.stringify(manifest));
 const evidenceRoot = path.join(root, "target/qa/nr-306");
 mkdirSync(evidenceRoot, { recursive: true });
 writeFileSync(
-  path.join(evidenceRoot, "nr-g4-manifest.json"),
+  path.join(evidenceRoot, nr4Entered ? "nr-g4-regression-manifest.json" : "nr-g4-manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );
 writeFileSync(
-  path.join(evidenceRoot, "nr-g4-claims.json"),
+  path.join(evidenceRoot, nr4Entered ? "nr-g4-regression-claims.json" : "nr-g4-claims.json"),
   `${JSON.stringify(claims, null, 2)}\n`,
   "utf8",
 );

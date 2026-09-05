@@ -7,6 +7,7 @@ import * as appStateApi from "../lib/tauri/app-state";
 import * as projectApi from "../lib/tauri/project";
 import type { CloseRequestEvent, WindowClosePort } from "../lib/tauri/window-close";
 import * as workspaceApi from "../lib/tauri/workspace";
+import * as changeApi from "../lib/tauri/canon-change";
 
 const candidate: projectApi.ProjectCandidate = {
   candidateId: "10000000-0000-4000-8000-000000000001",
@@ -129,6 +130,8 @@ const fileIndex: workspaceApi.ProjectFileIndex = {
 };
 
 const draftDocument: workspaceApi.ProjectFileDocument = {
+  fileId: "10000000-0000-4000-8000-000000000001",
+  editorRevision: 1,
   relativePath: "draft.md",
   content: "# 草稿\n\n第一段。",
   contentHash: "a".repeat(64),
@@ -205,8 +208,59 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("NG-105 project workspace", () => {
+  it("NR-404 waits for edit reservation acknowledgement and retains dirty protection on blur", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue(draftDocument);
+    render(
+      <ProjectWorkspace
+        desktopRuntime
+        onSessionChange={vi.fn()}
+        windowClosePort={createWindowCloseHarness().port}
+      />,
+    );
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "draft.md" }));
+    const editor = await screen.findByRole("textbox", { name: "项目 Markdown 编辑器" });
+    await waitFor(() => expect(editor).toHaveFocus());
+    act(() => editor.blur());
+    await waitFor(() =>
+      expect(changeApi.requestEditorState).toHaveBeenCalledWith(
+        session.sessionId,
+        draftDocument.fileId,
+        2,
+        false,
+      ),
+    );
+    let acknowledge!: (revision: number) => void;
+    vi.mocked(changeApi.requestEditorState).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    act(() => editor.focus());
+    expect(editor).toHaveAttribute("readonly");
+    await waitFor(() =>
+      expect(changeApi.requestEditorState).toHaveBeenLastCalledWith(
+        session.sessionId,
+        draftDocument.fileId,
+        3,
+        true,
+      ),
+    );
+    await act(async () => acknowledge(3));
+    expect(editor).not.toHaveAttribute("readonly");
+    fireEvent.change(editor, { target: { value: "手工草稿必须保留" } });
+    const calls = vi.mocked(changeApi.requestEditorState).mock.calls.length;
+    fireEvent.blur(editor);
+    expect(editor).toHaveValue("手工草稿必须保留");
+    expect(changeApi.requestEditorState).toHaveBeenCalledTimes(calls);
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(changeApi, "requestEditorState").mockImplementation(
+      async (_session, _file, revision) => revision,
+    );
     vi.spyOn(projectApi, "requestProjectScan").mockResolvedValue(candidate);
     vi.spyOn(projectApi, "requestProjectCreate").mockResolvedValue(session);
     vi.spyOn(projectApi, "requestProjectCreatePreview").mockResolvedValue(createPreview);

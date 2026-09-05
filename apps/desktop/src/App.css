@@ -1,3 +1,61 @@
+.canon-change {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.canon-change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.canon-change button,
+.canon-change-load-error button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+}
+.canon-change button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.canon-change small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.canon-change-diff {
+  margin-top: 12px;
+  min-width: 0;
+}
+.canon-change-diff h4 {
+  overflow-wrap: anywhere;
+}
+.canon-change-diff pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.canon-change-diff [data-diff="removed"] {
+  color: var(--danger);
+}
+.canon-change-diff [data-diff="added"] {
+  color: var(--accent-bright);
+}
+.canon-change-load-error {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 :root {
   font-family: Inter, "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   color: #e7e9ed;

@@ -6,9 +6,11 @@ Copyright (c) 2026 Changkyun Kim. Upstream content is provided under the MIT Lic
 
 NovelGainker adaptations:
 
-- replace host-specific commands and executable script flows with app-owned, read-only, provider-neutral capability instructions;
+- replace host-specific commands and executable script flows with app-owned, provider-neutral capability instructions and bounded Host tools;
 - use Simplified Chinese safety contracts and NovelGainker-native compatibility fixtures;
 - exclude Python, host adapters, Agent YAML, Korean-only defaults, website and submission metadata;
 - preserve selected upstream storytelling references verbatim and record their source hashes in `provenance.lock.json`.
 
-The NR-3 runtime validates this repository snapshot and embeds it into the application. It never loads the upstream repository, a user Skill file, an external plugin cache or the network at runtime.
+Projection 1.1.0 adds the approved NR-4 five-type maintenance instructions and an application-authored outline template. The upstream version, commit and archive identity are unchanged. Write authority comes only from the current Host tool contract, never from a resource.
+
+The runtime validates this repository snapshot and embeds it into the application. It never loads the upstream repository, a user Skill file, an external plugin cache or the network at runtime.

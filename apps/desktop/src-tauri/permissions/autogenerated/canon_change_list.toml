@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-canon-change-list"
+description = "Enables the canon_change_list command without any pre-configured scope."
+commands.allow = ["canon_change_list"]
+
+[[permission]]
+identifier = "deny-canon-change-list"
+description = "Denies the canon_change_list command without any pre-configured scope."
+commands.deny = ["canon_change_list"]

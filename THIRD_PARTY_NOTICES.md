@@ -10,4 +10,4 @@ NovelGainker includes an adapted Skill Pack derived from [comfuture/novelist](ht
 - Attribution and adaptation summary: `resources/skills/novelist/v1/ATTRIBUTION.md`
 - Reproducible source and file lock: `resources/skills/novelist/v1/provenance.lock.json`
 
-The Pack excludes upstream executable scripts and host adapters. Its resources are validated at build time. The original NG-A001 Pack manifest is retained only as provenance. The current NR-2 runtime does not load this Pack or any external Skill cache; any future app-owned Skill runtime requires a separately approved NR-3 Story Packet.
+The Pack excludes upstream executable scripts and host adapters. The current app embeds and verifies projection 1.1.0 (9 capabilities, 37 resources), including an app-authored outline template and bounded NR-4 maintenance instructions. Upstream source identity and license remain unchanged. Method resources do not grant arbitrary execution permissions; concrete Host tools enforce read/write boundaries. No external Skill cache or Python runtime is loaded.

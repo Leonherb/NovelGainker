@@ -27,6 +27,8 @@ export type ProjectFileIndex = {
 };
 
 export type ProjectFileDocument = {
+  fileId: string;
+  editorRevision: number;
   relativePath: string;
   content: string;
   contentHash: string;
@@ -76,6 +78,8 @@ const SAVE_RESULT_KEYS = [
 ] as const;
 const WATCH_STATUS_KEYS = ["modifiedTimeMs", "observedHash", "relativePath", "state"] as const;
 const DOCUMENT_KEYS = [
+  "fileId",
+  "editorRevision",
   "bom",
   "content",
   "contentHash",
@@ -201,6 +205,9 @@ export function parseProjectFileDocument(value: unknown): ProjectFileDocument {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, DOCUMENT_KEYS) ||
+    typeof value.fileId !== "string" ||
+    !UUID.test(value.fileId) ||
+    !isCount(value.editorRevision) ||
     !isSafeRelativePath(value.relativePath) ||
     typeof value.content !== "string" ||
     typeof value.contentHash !== "string" ||

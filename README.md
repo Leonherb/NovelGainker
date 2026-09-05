@@ -2,11 +2,14 @@
 
 Windows-first、Local-first、可切换 AI Provider 的简体中文小说创作桌面应用。
 
-当前实现为 NR-2 Host Agent Loop 基线：三栏界面左侧管理工程、文件与 Provider，中间承载工程绑定的完整自然对话及受控内联 Task 状态，右侧编辑真实 Markdown。Host 保留完整 History、按阈值维护派生 Memory，并支持 Provider-native Tool Request/Result 的有界执行循环。
+当前实现进入 NR-4：三栏左侧管理工程、文件与 Provider，中间承载完整自然对话和 Host 保存结果，右侧编辑真实 Markdown。应用自包含 Novelist 九能力、37 资源；AI 可按需读取 Canon，并受约束地维护人物、世界/设定、素材、剧情与大纲，支持 Diff、本地确认和可恢复 Undo。
 
-NR-201～NR-206 与 NR-G3-R01～R03 已完成，NR-G3 已批准。NR3-D2-R01～R06 与 FR01～FR02 已在 NR-3 常驻 Novelist Capability Pack / Canon Read Context Story Packet Draft 2 Final 中获产品批准，当前停止于 Packet 批准 Gate；NR-301～NR-306 尚未获实施授权。生产 Tool Registry 仍为空，因此现有产品不加载 Novelist Skill、不读取 Canon 作为模型上下文、不实际执行 Tool、不由 AI 写入 Markdown，也未执行真实 Provider Live Smoke；NR-4～NR-7 Story Packet 尚未获授权形成。
+NR-401～406 已分别通过完整质量门；NR-G4 保持批准，[NR-G5 已完成技术提交](docs/reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md)，等待产品批准。正式章节独立来源延至 NR-5。本次最小只读 Live Smoke 已明确放弃，真实 Provider 工具兼容性和语义质量未正式验证，NR-6 完整验证保留；不把模型的“已完成”当作实际保存证据。
 
 ## 开发入口
+
+- [当前产品报告](./docs/product-current-state-report.zh-CN.md)
+- [NR-4 实施与验证记录](./docs/reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md)
 
 - [当前架构](./docs/architecture.zh-CN.md)
 - [开发与质量门](./docs/development.md)

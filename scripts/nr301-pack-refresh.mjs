@@ -77,7 +77,7 @@ const capabilities = [
     description: "管理读者认知、章间流动、连续性、伏笔、草稿与修订方法。",
     usage: "当对话需要规划、续写、修订章节或检查叙事连续性时采用。",
     instructionResource: "instructions/novel-story-telling.md",
-    templateResources: ["fixtures/chapter.template.md"],
+    templateResources: ["fixtures/chapter.template.md", "fixtures/outline.template.md"],
     referenceResources: [
       "references/storytelling/drama.md",
       "references/storytelling/mystery.md",
@@ -144,7 +144,7 @@ const pack = {
   projection: {
     id: "novelgainker.novelist",
     schemaVersion: 1,
-    contentVersion: "1.0.0",
+    contentVersion: "1.1.0",
   },
   provenanceResource: "provenance.lock.json",
   licenseResource: "LICENSE.upstream",

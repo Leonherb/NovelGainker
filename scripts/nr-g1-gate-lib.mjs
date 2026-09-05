@@ -18,6 +18,48 @@ export const CONVERSATION_COMMANDS = [
   "conversation_turn_cancel",
 ];
 
+export const NR4_COMMANDS = [
+  "canon_change_list",
+  "canon_change_detail",
+  "canon_change_decide",
+  "canon_editor_state",
+];
+const BASELINE_COMMANDS = [
+  ...CONVERSATION_COMMANDS,
+  "health_check",
+  "app_state_load",
+  "app_state_save_ui",
+  "provider_status_load",
+  "provider_key_save",
+  "provider_key_delete",
+  "provider_select",
+  "provider_connection_test",
+  "project_scan",
+  "project_create_preview",
+  "project_create",
+  "project_open",
+  "project_open_recent",
+  "project_list_files",
+  "project_read_file",
+  "app_state_set_current_file",
+  "project_watch_file",
+  "project_save_file",
+  "project_validate_draft",
+  "project_search",
+  "project_close",
+].sort();
+
+export function hasApprovedNr4Ipc(status) {
+  const packet = status.match(/^nr4_packet:\r?\n((?:[ \t].*(?:\r?\n|$)|\r?\n)*)/mu)?.[1] ?? "";
+  return [
+    /^\s+product_approved: true\s*$/mu,
+    /^\s+implementation_authorized: true\s*$/mu,
+    /^\s+decisions_approved: "NR4-D1-R01～R04"\s*$/mu,
+    /^\s+live_smoke_decision: "explicitly_waived_risk_accepted"\s*$/mu,
+    /^\s+chapter_commit_source_staging: "approved_deferred_to_nr5"\s*$/mu,
+  ].every((pattern) => pattern.test(packet));
+}
+
 const RETIRED_PRODUCT_PATTERNS = [
   /AgentConversation/gu,
   /ConversationPlaceholder/gu,
@@ -178,8 +220,22 @@ export function inspectIpcClosure(repositoryRoot) {
     "TypeScript client",
   );
 
-  if (manifest.length !== 24)
-    throw new Error(`NR-G1 requires 24 commands, found ${manifest.length}`);
+  const nr4 = manifest.some((command) => NR4_COMMANDS.includes(command));
+  if (
+    nr4 &&
+    !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((relative) =>
+      hasApprovedNr4Ipc(read(relative)),
+    )
+  ) {
+    throw new Error(
+      "NR-4 IPC requires explicit packet implementation approval in both status files",
+    );
+  }
+  assertSameCommands(
+    [...BASELINE_COMMANDS, ...(nr4 ? NR4_COMMANDS : [])].sort(),
+    manifest,
+    "approved manifest",
+  );
   for (const [label, commands] of [
     ["handler", handlers],
     ["permission", permissions],
@@ -190,7 +246,16 @@ export function inspectIpcClosure(repositoryRoot) {
   }
   const conversation = manifest.filter((command) => command.startsWith("conversation_"));
   assertSameCommands([...CONVERSATION_COMMANDS].sort(), conversation, "Conversation");
-  return { manifest, handlers, permissions, capability: capabilityCommands, clients, conversation };
+  return {
+    manifest,
+    handlers,
+    permissions,
+    capability: capabilityCommands,
+    clients,
+    conversation,
+    baselineManifest: BASELINE_COMMANDS,
+    nr4Commands: nr4 ? [...NR4_COMMANDS].sort() : [],
+  };
 }
 
 export function releaseScopeSha256(repositoryRoot, files) {

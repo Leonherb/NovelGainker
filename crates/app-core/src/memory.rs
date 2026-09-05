@@ -287,6 +287,44 @@ pub fn assemble_main_request_with_addendum(
     system_addendum: &str,
     request_reserve_bytes: usize,
 ) -> Result<NormalizedRequest, AppError> {
+    assemble_bounded_main_request(
+        session,
+        memory,
+        profile,
+        system_addendum,
+        request_reserve_bytes,
+        MAX_REQUEST_BYTES,
+        CONVERSATION_SYSTEM_INSTRUCTION,
+    )
+}
+
+pub fn assemble_change_main_request(
+    session: &ConversationSession,
+    memory: Option<&ConversationMemory>,
+    profile: ContextProfile,
+    system_addendum: &str,
+) -> Result<NormalizedRequest, AppError> {
+    assemble_bounded_main_request(
+        session,
+        memory,
+        profile,
+        system_addendum,
+        crate::canon_change::NR4_LOOP_RESERVE_BYTES,
+        crate::canon_change::NR4_REQUEST_BYTES,
+        crate::provider_core::CANON_CHANGE_SYSTEM_INSTRUCTION,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assemble_bounded_main_request(
+    session: &ConversationSession,
+    memory: Option<&ConversationMemory>,
+    profile: ContextProfile,
+    system_addendum: &str,
+    request_reserve_bytes: usize,
+    request_limit: usize,
+    system_instruction: &str,
+) -> Result<NormalizedRequest, AppError> {
     validate_context_profile(profile)?;
     let current = current_user_message(session)?;
     let segments = history_segments(session, profile.segment_content_bytes);
@@ -303,7 +341,7 @@ pub fn assemble_main_request_with_addendum(
         })
         .unwrap_or(0);
 
-    let mut system = CONVERSATION_SYSTEM_INSTRUCTION.to_owned();
+    let mut system = system_instruction.to_owned();
     if !system_addendum.trim().is_empty() {
         system.push_str("\n\n");
         system.push_str(system_addendum.trim());
@@ -314,7 +352,7 @@ pub fn assemble_main_request_with_addendum(
         );
         system.push_str(&memory.summary_text);
     }
-    let available_bytes = MAX_REQUEST_BYTES
+    let available_bytes = request_limit
         .saturating_sub(system.len())
         .saturating_sub(current.content.len())
         .saturating_sub(request_reserve_bytes);

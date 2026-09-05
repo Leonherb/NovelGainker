@@ -177,6 +177,7 @@ pub struct ToolExecutionContext {
     pub project_id: String,
     pub conversation_session_id: String,
     pub turn_id: String,
+    pub call_id: String,
 }
 
 pub trait ToolExecutor: Send + Sync {
@@ -242,6 +243,68 @@ impl ToolRegistry {
             .iter()
             .map(|registered| registered.definition.clone())
             .collect()
+    }
+
+    /// Shared evidence binds both concrete executors to the same active Turn.
+    pub fn novelist_with_changes(
+        project: &ProjectHandle,
+        pack: Arc<ValidatedCapabilityPack>,
+        expected_session_id: String,
+        expected_turn_id: String,
+        coordinator: Arc<crate::canon_change_store::CanonChangeCoordinator>,
+        evidence: Arc<std::sync::Mutex<crate::canon_change::ChangeEvidence>>,
+    ) -> Result<Self, ToolContractError> {
+        if coordinator.project_id() != project.project_id()
+            || !evidence
+                .try_lock()
+                .map_err(|_| ToolContractError::ExecutorUnqualified)?
+                .matches_context(
+                    project.project_id(),
+                    &expected_session_id,
+                    &expected_turn_id,
+                )
+        {
+            return Err(ToolContractError::ExecutorUnqualified);
+        }
+        let definition = novelist_read_context_definition();
+        definition.validate()?;
+        Self {
+            tools: vec![RegisteredTool {
+                definition,
+                executor: Arc::new(
+                    NovelistReadContextExecutorV1::new(
+                        project.clone(),
+                        pack,
+                        expected_session_id,
+                        expected_turn_id,
+                    )
+                    .with_change_evidence(coordinator.clone(), evidence.clone()),
+                ),
+            }],
+        }
+        .with_canon_mutation(
+            crate::canon_change_store::NovelistProposeChangeExecutorV1::new(coordinator, evidence),
+        )
+    }
+
+    /// The only mutation registration path accepts the concrete qualified
+    /// executor, never an arbitrary trait object or model-selected handler.
+    pub fn with_canon_mutation(
+        mut self,
+        executor: crate::canon_change_store::NovelistProposeChangeExecutorV1,
+    ) -> Result<Self, ToolContractError> {
+        if self.tools.len() != 1
+            || self.tools[0].definition.name
+                != crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME
+        {
+            return Err(ToolContractError::ExecutorUnqualified);
+        }
+        self.tools.push(RegisteredTool {
+            definition: crate::canon_change::propose_change_definition(),
+            executor: Arc::new(executor),
+        });
+        validate_definitions(&self.definitions())?;
+        Ok(self)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -804,6 +867,7 @@ pub(crate) mod tests {
             project_id: "project".to_owned(),
             conversation_session_id: "session".to_owned(),
             turn_id: "turn".to_owned(),
+            call_id: "call_contract".to_owned(),
         };
         let arguments = serde_json::json!({"text": "ok"});
         let call = ProviderToolCall {

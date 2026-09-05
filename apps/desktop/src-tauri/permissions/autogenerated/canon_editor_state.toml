@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-canon-editor-state"
+description = "Enables the canon_editor_state command without any pre-configured scope."
+commands.allow = ["canon_editor_state"]
+
+[[permission]]
+identifier = "deny-canon-editor-state"
+description = "Denies the canon_editor_state command without any pre-configured scope."
+commands.deny = ["canon_editor_state"]

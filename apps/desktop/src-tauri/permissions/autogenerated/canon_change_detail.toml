@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-canon-change-detail"
+description = "Enables the canon_change_detail command without any pre-configured scope."
+commands.allow = ["canon_change_detail"]
+
+[[permission]]
+identifier = "deny-canon-change-detail"
+description = "Denies the canon_change_detail command without any pre-configured scope."
+commands.deny = ["canon_change_detail"]

@@ -253,7 +253,7 @@ const claims = {
   mainProviderAttemptsWithTool: 2,
   toolExecutions: 1,
   syntheticToolIdsInProduction: syntheticFindings.length,
-  productionCommandCount: ipc.manifest.length,
+  productionCommandCount: ipc.baselineManifest.length,
   conversationCommandCount: ipc.conversation.length,
   skillCallsPerTurn: 0,
   canonReadsPerTurn: 0,
@@ -291,6 +291,10 @@ for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"])
 const manifest = {
   schemaVersion: 1,
   gateId: "NR-G3",
+  evidenceScope: ipc.nr4Commands.length
+    ? "historical-nr2-contract-regression"
+    : "technical-submission",
+  currentProductionCommandCount: ipc.manifest.length,
   result: "pass",
   claims,
   profile,
@@ -314,7 +318,10 @@ manifest.payloadSha256 = sha256(JSON.stringify(manifest));
 const evidenceRoot = path.join(root, "target/qa/nr-206");
 mkdirSync(evidenceRoot, { recursive: true });
 writeFileSync(
-  path.join(evidenceRoot, "nr-g3-manifest.json"),
+  path.join(
+    evidenceRoot,
+    ipc.nr4Commands.length ? "nr-g3-regression-manifest.json" : "nr-g3-manifest.json",
+  ),
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );

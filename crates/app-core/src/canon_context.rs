@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const NOVELIST_READ_CONTEXT_TOOL_NAME: &str = "novelist.read_context";
 pub const NOVELIST_READ_CONTEXT_TOOL_VERSION: u32 = 1;
@@ -78,10 +78,22 @@ impl NovelistReadContextRequestV1 {
                             },
                             "query": {"type": ["string", "null"]},
                             "caseSensitive": {"type": ["boolean", "null"]},
-                            "limit": {"type": ["integer", "null"]},
+                            "limit": {
+                                "type": ["integer", "null"],
+                                "description": format!(
+                                    "list 必须为 1..={}；search 必须为 1..={}；read 必须为 null。不能使用 100 等超限值。",
+                                    MAX_CANON_LIST_PATHS, MAX_CANON_SEARCH_MATCHES
+                                )
+                            },
                             "relativePath": {"type": ["string", "null"]},
                             "startLine": {"type": ["integer", "null"]},
-                            "maxBytes": {"type": ["integer", "null"]},
+                            "maxBytes": {
+                                "type": ["integer", "null"],
+                                "description": format!(
+                                    "read 必须为 1..={} 字节；list 和 search 必须为 null。",
+                                    MAX_CANON_FRAGMENT_BYTES
+                                )
+                            },
                             "cursor": {"type": ["string", "null"]}
                         },
                         "required": [
@@ -110,13 +122,28 @@ pub fn deepseek_novelist_read_context_input_schema() -> Value {
     schema["required"] = json!(["capabilityId"]);
     schema["properties"]["capabilityResources"]["items"]["required"] = json!(["resourceId"]);
     schema["properties"]["canonOperations"]["items"]["required"] = json!(["kind"]);
-    schema["description"] = Value::String(
-        "capabilityResources 与 canonOperations 都可省略，分别表示空数组。".to_owned(),
-    );
-    schema["properties"]["canonOperations"]["items"]["description"] = Value::String(
-        "list 必须提供非空 scopes 和 limit；search 必须提供非空 scopes、query、caseSensitive、limit；read 初次读取必须提供 relativePath、startLine、maxBytes，分页继续必须提供 relativePath、cursor、maxBytes。无关字段可省略或为 null。"
-            .to_owned(),
-    );
+    schema["description"] = Value::String(format!(
+        "capabilityResources 与 canonOperations 都可省略，分别表示空数组。检查人物资料是否存在的完整参数示例：{}。空工程也执行此读取，以实际结果为准。",
+        json!({
+            "capabilityId": "create-character",
+            "capabilityResources": [],
+            "canonOperations": [{
+                "kind": "list",
+                "scopes": ["characters"],
+                "limit": MAX_CANON_LIST_PATHS
+            }]
+        })
+    ));
+    let operation = &mut schema["properties"]["canonOperations"]["items"];
+    operation["description"] = Value::String(format!(
+        "list 必须提供非空 scopes 和 limit（1..={MAX_CANON_LIST_PATHS}）；search 必须提供非空 scopes、query、caseSensitive、limit（1..={MAX_CANON_SEARCH_MATCHES}）；read 初次读取必须提供 relativePath、startLine（从 1 开始）、maxBytes（1..={MAX_CANON_FRAGMENT_BYTES}），分页继续必须提供 relativePath、cursor、maxBytes。无关字段可省略或为 null。"
+    ));
+    // Provider-visible bounds mirror the unchanged executor budgets.
+    operation["properties"]["limit"]["minimum"] = json!(1);
+    operation["properties"]["limit"]["maximum"] = json!(MAX_CANON_LIST_PATHS);
+    operation["properties"]["maxBytes"]["minimum"] = json!(1);
+    operation["properties"]["maxBytes"]["maximum"] = json!(MAX_CANON_FRAGMENT_BYTES);
+    operation["properties"]["startLine"]["minimum"] = json!(1);
     schema
 }
 
@@ -234,7 +261,7 @@ pub fn novelist_read_context_definition() -> ToolDefinition {
             "按需读取内置 Novelist 能力说明与当前小说工程的只读 Canon 上下文。",
             "选择一个有效 capabilityId；capabilityResources 可以为空。",
             "只检查当前工程时可直接请求 canonOperations，不需要虚构能力资源。",
-            "例如检查是否存在人物资料：使用 list、scopes=[characters] 和合法 limit；空列表就是实际结果。",
+            "例如检查是否存在人物资料：capabilityId=create-character、capabilityResources=[]、kind=list、scopes=[characters]、limit=64；空列表就是实际结果。",
             "只在确有必要时调用一次；不能创建、修改或删除文件。"
         )
         .to_owned(),
@@ -248,6 +275,13 @@ pub struct NovelistReadContextExecutorV1 {
     pack: Arc<ValidatedCapabilityPack>,
     expected_session_id: String,
     expected_turn_id: String,
+    changes: Option<ChangeReadBinding>,
+}
+
+struct ChangeReadBinding {
+    coordinator: Arc<crate::canon_change_store::CanonChangeCoordinator>,
+    evidence: Arc<Mutex<crate::canon_change::ChangeEvidence>>,
+    delivered: Mutex<crate::canon_change_read::DeliveredCanonReads>,
 }
 
 impl NovelistReadContextExecutorV1 {
@@ -262,7 +296,21 @@ impl NovelistReadContextExecutorV1 {
             pack,
             expected_session_id,
             expected_turn_id,
+            changes: None,
         }
+    }
+
+    pub fn with_change_evidence(
+        mut self,
+        coordinator: Arc<crate::canon_change_store::CanonChangeCoordinator>,
+        evidence: Arc<Mutex<crate::canon_change::ChangeEvidence>>,
+    ) -> Self {
+        self.changes = Some(ChangeReadBinding {
+            coordinator,
+            evidence,
+            delivered: Mutex::new(crate::canon_change_read::DeliveredCanonReads::default()),
+        });
+        self
     }
 }
 
@@ -324,7 +372,47 @@ impl ToolExecutor for NovelistReadContextExecutorV1 {
         if cancellation.is_cancelled() {
             return cancelled();
         }
-        match build_bundle_v2(&self.project, &self.pack, request, cancellation) {
+        let built = if let Some(changes) = &self.changes {
+            changes
+                .coordinator
+                .read_snapshot(|consistent| {
+                    let mut output =
+                        build_bundle_v2(&self.project, &self.pack, request, cancellation)
+                            .map_err(|_| crate::canon_change::ChangeError::Io)?;
+                    output["snapshotConsistency"] = json!(if consistent {
+                        "committed"
+                    } else {
+                        "recovery_required"
+                    });
+                    if consistent {
+                        let mut evidence = changes
+                            .evidence
+                            .try_lock()
+                            .map_err(|_| crate::canon_change::ChangeError::WriterBusy)?;
+                        let mut delivered = changes
+                            .delivered
+                            .try_lock()
+                            .map_err(|_| crate::canon_change::ChangeError::WriterBusy)?;
+                        delivered.annotate(&mut evidence, &self.pack, &mut output)?;
+                    } else if serialized_len(&output)
+                        .map_err(|_| crate::canon_change::ChangeError::BudgetExceeded)?
+                        > MAX_TOOL_RESULT_BYTES
+                    {
+                        return Err(crate::canon_change::ChangeError::BudgetExceeded);
+                    }
+                    Ok(output)
+                })
+                .map_err(|_| {
+                    if cancellation.is_cancelled() {
+                        BuildError::Cancelled
+                    } else {
+                        BuildError::Io
+                    }
+                })
+        } else {
+            build_bundle_v2(&self.project, &self.pack, request, cancellation)
+        };
+        match built {
             Ok(output) => ToolExecutionOutput {
                 status: ToolResultStatus::Succeeded,
                 output_json: Some(output),
@@ -1872,6 +1960,7 @@ mod tests {
                 project_id: self.handle.project_id().to_owned(),
                 conversation_session_id: "session-nr303".to_owned(),
                 turn_id: "turn-nr303".to_owned(),
+                call_id: "call-nr303".to_owned(),
             }
         }
 
@@ -2090,6 +2179,42 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].name, NOVELIST_READ_CONTEXT_TOOL_NAME);
         assert_eq!(definitions[0].version, NOVELIST_READ_CONTEXT_TOOL_VERSION);
+    }
+
+    #[test]
+    fn deepseek_advertised_list_limit_matches_executor_and_rejects_one_hundred() {
+        let schema = deepseek_novelist_read_context_input_schema();
+        let limit_schema = &schema["properties"]["canonOperations"]["items"]["properties"]["limit"];
+        assert_eq!(limit_schema["minimum"], 1);
+        assert_eq!(limit_schema["maximum"], MAX_CANON_LIST_PATHS);
+
+        let fixture = Fixture::new();
+        let before = fixture.canon_snapshot();
+        for (limit, expected) in [
+            (MAX_CANON_LIST_PATHS, ToolResultStatus::Succeeded),
+            (100, ToolResultStatus::Failed),
+        ] {
+            let arguments = normalize_deepseek_novelist_read_context_arguments(json!({
+                "capabilityId": "create-character",
+                "capabilityResources": [],
+                "canonOperations": [{
+                    "kind": "list", "scopes": ["characters"], "limit": limit
+                }]
+            }))
+            .unwrap();
+            let output = execute_context(&fixture, &arguments);
+            assert_eq!(output.status, expected);
+            if limit == 100 {
+                assert_eq!(output.error_code, Some("agent.tool_arguments_invalid"));
+                assert!(output.output_json.is_none());
+            } else {
+                assert_eq!(
+                    output.output_json.unwrap()["canon"][0]["paths"],
+                    json!(["characters/lu-chen.md"])
+                );
+            }
+        }
+        assert_eq!(fixture.canon_snapshot(), before);
     }
 
     #[test]

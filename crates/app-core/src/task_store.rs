@@ -28,6 +28,21 @@ const FAILED_TASK_ERRORS: &[&str] = &[
     "agent.tool_schema_invalid",
     "agent.tool_timeout",
     "agent.tool_unknown",
+    "canon.change_invalid",
+    "canon.change_budget_exceeded",
+    "canon.change_source_invalid",
+    "canon.chapter_source_unavailable",
+    "canon.change_method_not_read",
+    "canon.change_incomplete_read",
+    "canon.change_target_invalid",
+    "canon.change_source_changed",
+    "canon.change_candidate_invalid",
+    "canon.change_duplicate_target",
+    "canon.change_revision_conflict",
+    "canon.change_recovery_required",
+    "canon.change_store_full",
+    "canon.change_io",
+    "canon.change_writer_busy",
 ];
 const CANCELLED_TASK_ERRORS: &[&str] = &["agent.tool_cancelled"];
 
@@ -110,6 +125,11 @@ pub fn runtime_view(
         let mut changed = false;
         for task in &mut session.tasks {
             if matches!(task.status, TaskStatus::Queued | TaskStatus::Running) {
+                if task.tool_name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME {
+                    recover_canon_task(handle, task, now_ms)?;
+                    changed = true;
+                    continue;
+                }
                 task.status = TaskStatus::Cancelled;
                 task.task_revision = task.task_revision.saturating_add(1);
                 task.updated_at_ms = now_ms.max(task.started_at_ms);
@@ -132,6 +152,41 @@ pub fn runtime_view(
             .collect(),
         conversation,
     })
+}
+
+fn recover_canon_task(
+    handle: &ProjectHandle,
+    task: &mut TaskRecord,
+    now_ms: u64,
+) -> Result<(), AppError> {
+    let payload = match crate::canon_change_store::task_recovery_result(
+        handle,
+        &task.conversation_session_id,
+        &task.turn_id,
+        &task.call_id_hash,
+    ) {
+        Ok(result) => {
+            result
+                .validate()
+                .map_err(|_| task_error("task.result_invalid"))?;
+            task.status = result_status_to_task_status(result.status);
+            task.error_code = result.error_code.clone();
+            result.provider_payload()
+        }
+        Err(_) => {
+            task.status = TaskStatus::Failed;
+            task.error_code = Some("canon.change_recovery_required".to_owned());
+            task.display_label = "写入结果待核对".to_owned();
+            serde_json::json!({"status":"failed","errorCode":"canon.change_recovery_required"})
+        }
+    };
+    let bytes = serde_json::to_vec(&payload).map_err(|_| task_error("task.result_invalid"))?;
+    task.result_sha256 = Some(sha256(&bytes));
+    task.result_bytes =
+        Some(u32::try_from(bytes.len()).map_err(|_| task_error("task.result_invalid"))?);
+    task.task_revision = task.task_revision.saturating_add(1);
+    task.updated_at_ms = now_ms.max(task.started_at_ms);
+    Ok(())
 }
 
 impl From<&TaskRecord> for TaskActivity {

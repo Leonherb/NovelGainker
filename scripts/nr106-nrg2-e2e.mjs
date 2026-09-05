@@ -281,6 +281,9 @@ const manifest = {
   testRuns,
   conversationCommands: ipc.conversation,
   productionCommandCount: ipc.manifest.length,
+  evidenceScope: ipc.nr4Commands.length
+    ? "historical-nr1-contract-regression"
+    : "technical-submission",
   releaseFileCount: releaseFiles.length,
   releaseScopeSha256: releaseScopeSha256(root, releaseFiles),
   sourceSha256: Object.fromEntries(
@@ -297,7 +300,10 @@ manifest.payloadSha256 = sha256(JSON.stringify(manifest));
 const evidenceRoot = path.join(root, "target/qa/nr-106");
 mkdirSync(evidenceRoot, { recursive: true });
 writeFileSync(
-  path.join(evidenceRoot, "nr-g2-manifest.json"),
+  path.join(
+    evidenceRoot,
+    ipc.nr4Commands.length ? "nr-g2-regression-manifest.json" : "nr-g2-manifest.json",
+  ),
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );

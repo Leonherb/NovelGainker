@@ -2,6 +2,8 @@ project:
   name: "NovelGainker"
   level: 4
 
+baseline_note: "下列 sprint/stories/metrics 与 gate 保留已批准 NR-3/NR-G4 基线；当前 NR-4 六项 Story 已完成，NR-G5 技术提交等待产品批准，详见 nr4_packet 与 next_action。"
+
 sprint:
   number: "NR-3"
   start_date: "2026-09-02"
@@ -51,7 +53,7 @@ metrics:
   in_progress_stories: 0
   blocked_stories: 0
   completion_percentage: 100
-  pending_follow_up_stories: 1
+  pending_follow_up_stories: 0
 
 previous_gate:
   id: "NR-G3"
@@ -86,7 +88,8 @@ gate:
   product_approved: true
   approved_at: "2026-09-04"
   real_provider_live_smoke_executed: false
-  nr_4_entered_or_packet_formed: false
+  nr_4_entered_or_packet_formed: true
+  nr_4_implementation_entered: true
   report: "docs/reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md"
   technical_submission: "docs/reviews/novelist-agent-runtime-nr-g4-technical-submission.zh-CN.md"
   blocking_finding: null
@@ -122,40 +125,52 @@ nr3_packet:
   implementation_authorized: true
   implementation_completed: true
   real_provider_live_smoke_authorized: false
-  nr_4_to_nr_7_packet_authorized: false
+  nr_4_packet_formation_authorized: true
+  nr_5_to_nr_7_packet_authorized: false
   output_file: "docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md"
 
-pre_nr4_repair:
-  id: "PRE-NR4-PTC-001"
-  title: "Provider Tool 传输身份、参数合同与真实兼容性修复"
-  version: "Draft 2"
-  status: "narrow_fix_implemented_offline_live_pending"
+nr4_packet:
+  id: "NR-4-D1"
+  status: "implemented"
+  review_status: "product_approved"
+  review_method: "author_self_review"
   formation_authorized: true
-  review_status: "completed"
-  review_decision: "ready_for_product_decision"
-  product_approved: false
-  implementation_authorized: false
-  implementation_completed: false
-  direct_minimal_fix:
-    scope: "DeepSeek 对 novelist_read_context 省略无关字段时的兼容，以及空人物列表后的自然语言答复"
-    direct_user_authorized: true
-    implementation_completed: true
-    offline_quality_gate: "passed"
-    formal_provider_live_smoke_executed: false
-    manual_recheck_requested: true
-  manual_live_observation: "partial_failed"
-  formal_provider_live_smoke_authorized: false
-  formal_provider_live_smoke_executed: false
-  entry_blocker_for_nr4: true
-  risk_waiver_granted: false
-  nr_g4_reopened: false
-  nr_4_entered_or_packet_formed: false
-  output_file: "docs/stories/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story.zh-CN.md"
-  review_file: "docs/reviews/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story-review.zh-CN.md"
+  review_authorized: true
+  product_approved: true
+  approved_at: "2026-09-05"
+  implementation_authorized: true
+  implementation_completed: true
+  real_provider_live_smoke_authorized: false
+  real_provider_live_smoke_executed: false
+  live_smoke_decision: "explicitly_waived_risk_accepted"
+  chapter_commit_source_staging: "approved_deferred_to_nr5"
+  decisions_approved: "NR4-D1-R01～R04"
+  output_file: "docs/stories/novelist-agent-runtime-nr4-canon-mutation-story-packet-draft-1.zh-CN.md"
+  review_file: "docs/reviews/novelist-agent-runtime-nr4-story-packet-draft-1-review.zh-CN.md"
+  target_gate: "NR-G5"
+  target_gate_status: "technical_submission"
+  technical_submission_file: "docs/reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md"
+  implementation_log: "docs/reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md"
+  quality_result: "pass"
+  nrG5Approved: false
+  nr_5_to_nr_7_packet_authorized: false
+  planned_stories:
+    - id: "NR-401"
+      status: "completed"
+    - id: "NR-402"
+      status: "completed"
+    - id: "NR-403"
+      status: "completed"
+    - id: "NR-404"
+      status: "completed"
+    - id: "NR-405"
+      status: "completed"
+    - id: "NR-406"
+      status: "completed"
 
 next_action:
-  type: "await_manual_provider_recheck"
-  id: "PRE-NR4-PTC-001"
-  instruction: "在真实应用中以 DeepSeek 重复“检查当前小说工程中是否存在人物资料”的空工程请求；预期工具成功且仅自然答复未发现人物资料。此手工复测不是正式 Provider Live Smoke，不改变宽范围 Story、NR-G4 或 NR-4～NR-7 的授权状态。"
+  type: "await_product_gate"
+  id: "NR-G5"
+  instruction: "NR-401→NR-406 已完成，停止在 NR-G5 技术提交并等待用户批准 Gate。保留本次最小只读 Live Smoke 放弃与风险接受；不重开 NR-G4、不恢复 Pre-NR-4、不形成或实施 NR-5～NR-7。"
 
-last_updated: "2026-09-04T23:30:02+08:00"
+last_updated: "2026-09-05T06:27:17+08:00"

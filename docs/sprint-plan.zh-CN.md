@@ -1,122 +1,57 @@
-# NovelGainker NR-3 / NR-G4 与 Pre-NR-4 修复评审状态
+# NovelGainker 当前交付状态 — NR-4
 
-更新时间：2026-09-04
+更新日期：2026-09-05。
 
-## 当前结论
+## 授权与停止点
 
-NR-201 → NR-206、NR-G3-R01 → NR-G3-R03 与 NR-301 → NR-306 均已按批准顺序完成。NR-G3 与 NR-G4 均已获产品批准。NR-G4 后续 Remediation、Follow-up、Second Remediation 与 Corrigendum 补丁链已清理，不再作为独立产品 Story、证据入口或历史评审层级：
+用户已批准 NR-4-D1 / R01～R04，按 NR-401 → NR-406 顺序实施，每 Story 通过 `pnpm quality`，在 NR-G5 技术提交停止等待产品批准。本次最小只读 Live Smoke 明确放弃、兼容性风险接受；NR-6 完整验证保留。正式章节独立来源延至 NR-5。
 
-- `NR-G3.status = passed`
-- `NR-G3.reviewStatus = approved`
-- `nrG3Approved = true`
-- `NR-G4.status = passed`
-- `NR-G4.reviewStatus = approved`
-- `nrG4Approved = true`
-- `realProviderLiveSmokeExecuted = false`
-- `nr4EnteredOrPacketFormed = false`
-- `PRE-NR4-PTC-001.reviewDecision = ready_for_product_decision`
-- `PRE-NR4-PTC-001.productApproved = false`
-- `PRE-NR4-PTC-001.implementationAuthorized = false`
-- `PRE-NR4-PTC-001.directMinimalFix = implemented / offline-quality-passed / formal-live-pending`
+NR-G1～NR-G4 已批准；NR-G4 不重开，不恢复 Pre-NR-4。NR-5～NR-7 尚未形成或实施。本文件描述现行事实；历史 Story/Gate 的“当时未实施”属于冻结快照。
 
-产品负责人已批准 `NR-3 Story Packet Draft 2 Final` 与 NR-301 → NR-306。九项 Novelist Capability 继续以应用自有、编译期嵌入的只读 Pack 运行；当前实现中的严格 Schema、可继续分页和可配对失败续聊均作为 NR-3 基线行为评审，不再拆成 Gate 后补丁编号。测试通过不等于 NR-G4 产品批准。
+## NR-4 状态
 
-## NR-3 当前规划状态
+| Story | 状态 | 核心交付 |
+| --- | --- | --- |
+| NR-401 | completed | 五类 Mutation、来源/完整读取证据、预算及封闭合同 |
+| NR-402 | completed | Host 持久快照、事务、回执与恢复 |
+| NR-403 | completed | 自主选方法、内置投影 1.1.0、有界读后写与双 Provider |
+| NR-404 | completed | 桌面挂载、编辑保护、真实 Host 结果、Diff、本地确认 |
+| NR-405 | completed | CAS Undo、逆事务恢复、冲突/配额与外部修改保护 |
+| NR-406 | completed | 五目录事务、最大调用链、失败保文、最终质量与 NR-G5 证据 |
 
-- Packet：`NR-3-D2-FINAL`
-- Packet 状态：`approved / implemented`
-- Gate 状态：`NR-G4 passed / approved`
-- 已批准：`NR3-D2-R01～R06`、`FR01～FR02`
-- 已完成：`NR-301～NR-306`
-- 产品批准：`nrG4Approved = true`
-- 真实 Provider Live Smoke：`not executed`
-- NR-4～NR-7：`not entered / no Packet formed`
-- 文档：`docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md`
+NR-401～406 已分别通过完整质量门。最终 `pnpm quality` 于 2026-09-05 06:27 +08:00 完成，25 步全部 exit 0；NR-G5 已技术提交，产品尚未批准。
 
-## Pre-NR-4 Provider Tool Compatibility Repair
+## 当前生产边界
 
-- Story：`PRE-NR4-PTC-001`
-- 定位：独立 Preflight Repair，不计入 NR-301～NR-306，不占用 NR-401，不重开 NR-G4
-- 形成状态：`formation_authorized = true`
-- 独立技术评审：`completed / ready_for_product_decision`
-- 宽范围 Story 的产品批准 / 实施授权 / 实施完成：`false / false / false`
-- 用户直接授权的窄修复（DeepSeek 空人物检查）：`implemented / offline-quality-passed / manual-recheck-pending`
-- 用户主动 Live 观察：`partial_failed`，不是正式 Provider Live Smoke
-- 正式 Live 授权 / 执行：`false / false`
-- 默认 NR-4 入口阻断：`true`
-- 风险豁免：`false`
+- 内置九能力 / 37 资源，应用投影 1.1.0；上游 novelist 0.2.0 来源不变。
+- 写权限会话两个工具：read_context / propose_change；只读会话保留只读回退，普通聊天可零工具。
+- 五目录：characters/world/materials/plot/outlines；最多四目标、候选合计 8 KiB。
+- 最多两读一变更、4 Agent + 1 Compactor、累计 17,408 请求输出 tokens；实际请求体 256 KiB、Continuation 160 KiB。
+- 当前 28 条 IPC，其中 Conversation 三条；本地变更四条不接受任意路径/正文。
+- AI 建议不自动变成 Canon；来源语义由模型判断，Host 校验引用、Hash、事务与权限。
+- Diff/确认/Undo 来自持久 Host 数据，不以模型“已完成”作为保存依据。
+- 外部修改无法恢复时保留证据与 Canon、阻止进一步写入；只读工具和聊天可继续。
+- 只有手工未保存稿能阻断关窗；待确认 AI 草稿不阻断。
 
-真实观察证明 Provider 已产生 Tool request，但参数以 `agent.tool_arguments_invalid` 在执行前失败；Task 未进入 `running`，Executor、Pack Resource 与 Canon I/O 均为 0。受控失败 Result 后 Conversation 仍完成，因此这是 Provider Tool 兼容问题，不是“工具已经调用后执行报错”，也不是聊天失败续接问题。
+## 证据与历史记录
 
-Story 冻结 internal/wire identity 分离、OpenAI strict 与 DeepSeek normal endpoint 的 schema projection、白名单纯语法规范化、Capability-only/空工程正例、内容无关诊断，以及双 Provider Live 或书面风险豁免两条后续路径。当前只等待产品范围与离线实施决定。
+当前实施记录：[NR-4 实施与验证](reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md)。Gate 交接：[NR-G5 技术报告](reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md)。当前验证入口：`pnpm e2e:nr406`；完整门禁：`pnpm quality`。
 
-- Story：`docs/stories/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story.zh-CN.md`
-- 独立评审：`docs/reviews/novelist-agent-runtime-pre-nr4-provider-tool-compatibility-repair-story-review.zh-CN.md`
+`target/qa/nr-406/validation.json` 是定向验证，`quality.json` 只在完整门禁通过后生成，`nr-g5-manifest.json` 仅在两者匹配后形成技术提交；均不代表产品 Gate 批准。
 
-## 已完成 Story
+NR-G1～G4 的技术报告及原机器声明保持冻结。NR-4 进入后的旧合同回归写 `nr-g1/2/3/4-regression-manifest.json`，分别位于 nr-006/106/206/306 下，当前 IPC/投影另列，不覆盖技术快照。
 
-| Story  | 状态      | 核心交付                                                                 |
-| ------ | --------- | ------------------------------------------------------------------------ |
-| NR-201 | completed | ToolDefinition/Call/Result、空生产 Registry、独立 Task Store 与 Revision |
-| NR-202 | completed | DeepSeek/OpenAI 原生 Tool Call、Result 续接与类型化 Continuation         |
-| NR-203 | completed | 单 Tool Round Host Agent Loop、测试 Executor、Deadline 与取消监督        |
-| NR-204 | completed | Runtime View、Task Activity Event、中栏受控内联投影与 Revision 合并      |
-| NR-205 | completed | 去重、CAS、恢复、终态独立、完整请求与累计输出预算                        |
-| NR-206 | completed | 双 Provider/取消/恢复/UI/发布面回归与 NR-G3 Manifest/Report              |
+NR-0～3 及 NR-G1～G3 Remediation 已完成，NR-301～306 在 NR-G4 获产品批准。DeepSeek 空人物检查修复保留在运行时基线，没有独立 Pre-NR-4 计划。
 
-## 已完成 NR-G3 Remediation
+## 已接受风险与未开放内容
 
-| Story     | 状态      | 核心交付                                                             |
-| --------- | --------- | -------------------------------------------------------------------- |
-| NR-G3-R01 | completed | Tool Result 严格配对、Task 状态矩阵、错误码白名单和非法恢复拒绝      |
-| NR-G3-R02 | completed | 封闭测试 Registry、具体 Executor 合规资格和不合格注册反例            |
-| NR-G3-R03 | completed | 同核心编排的 Compactor + Tool 三调用组合测试及新 Memory 实际消费证据 |
+真实 Provider Tool/Skill 兼容性和语义质量未正式验证；全部自动化使用合成工程与 Loopback。机械回执和脚本化响应不能证明真实模型能正确区分只读、假设或接受建议。正式章节写入/独立来源、图像生成、出版和 NR-6 长篇验证不在本次完成声明内。
 
-## 已完成 NR-3 Story
+## BMAD Routing Brief
 
-| Story  | 状态      | 核心交付                                                           |
-| ------ | --------- | ------------------------------------------------------------------ |
-| NR-301 | completed | 内置 Novelist Pack、九项 Capability、36 项 Resource 与来源完整性   |
-| NR-302 | completed | 常驻 Novelist 身份、紧凑目录、唯一只读生产 Tool 与零 Host Router   |
-| NR-303 | completed | Canon Allowlist、严格请求语义与有界 `list/search/read`             |
-| NR-304 | completed | 来源化 Context Bundle、24 KiB 结果上限与 40 KiB Agent Loop Reserve |
-| NR-305 | completed | 普通聊天、工具成功/失败续聊、Pack 原子降级与双终态闭环             |
-| NR-306 | completed | 双 Provider Loopback、规模/反例/零写入回归与 NR-G4 Manifest/Report |
-
-## 冻结 Profile
-
-| 参数                                            |                         值 |
-| ----------------------------------------------- | -------------------------: |
-| Provider HTTP attempts / Turn                   |                        ≤ 3 |
-| Agent attempts / Turn                           |                        ≤ 2 |
-| Tool executions / rounds                        |                    ≤ 1 / 1 |
-| Compactor requested output                      |               1,024 tokens |
-| Each Agent requested output                     |               4,096 tokens |
-| Cumulative requested output                     |               9,216 tokens |
-| Tool deadline                                   |                 30 seconds |
-| Qualified Executor cancellation acknowledgement |                    ≤ 2 sec |
-| Tool Definitions / Arguments                    |                16 / 16 KiB |
-| Tool Result / Continuation                      |                24 / 48 KiB |
-| Production Tool                                 | `novelist.read_context` v1 |
-| Capability Resources / Turn                     |               ≤ 8，ID 唯一 |
-| Canon operations / unique files                 |                    ≤ 8 / 8 |
-| Canon list paths / search matches               |                  ≤ 64 / 24 |
-| Context Bundle                                  |                   ≤ 24 KiB |
-| Agent Loop Reserve                              |                     40 KiB |
-| Complete Provider Body                          |                   ≤ 96 KiB |
-
-自动重试、修复模型、后台 Tool、并行 Tool 和多 Tool Round 均为 0。生产 Registry 精确包含一个只读工具；Canon 写工具与 Host 关键词 Router 均为 0。
-
-## 产品边界
-
-NR-3 只增加常驻 Novelist Capability Pack 与 Agent 自主请求的 Canon 只读上下文。用户仍在中栏自然聊天；Host 不按关键词选择 Capability，也不会因为 Provider 未请求工具而阻断普通回复。当前不创建、更新或删除小说 Markdown，不包含 Diff、确认、Undo 或冲突处理。
-
-## Gate 证据
-
-- Packet：`docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md`
-- 技术提交：`docs/reviews/novelist-agent-runtime-nr-g4-technical-submission.zh-CN.md`
-- 当前精简重新评审：`docs/reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md`
-- 当前唯一机器 Manifest：`target/qa/nr-306/nr-g4-manifest.json`
-- 完整验收入口：`pnpm quality`
-
-NR-G4 Manifest 中的 `nrG4Approved = false` 保留为批准前技术证据快照；当前 BMAD 状态与精简重新评审记录正式产品批准。`PRE-NR4-PTC-001` 的宽范围 Story 仍等待产品决定；用户随后直接授权的 DeepSeek 空人物检查窄修复已离线实现并通过质量门，待在应用中手工复测。NR-G4 继续保持已通过。未获对应独立授权前，不执行正式 Provider Live Smoke，也不进入或形成 NR-4～NR-7 Story Packet。
+- Scope：brownfield-resume-packet；Windows desktop；Level 4；Codex；证据置信度高。
+- Current phase：NR-4 implementation 完成，NR-G5 产品评审边界。
+- Recommended next move：review gate，等待用户决定是否批准 NR-G5。
+- Why：范围已批准，401～406 已通过逐项质量门，技术报告与同次质量证据已匹配；剩余决定是产品 Gate 批准，而非继续实施。
+- Route-outs：BMAD 管阶段；ui-ux-pro-max 指导内联结果与保护交互；neat-freak 同步现行文档；无新增独立任务。
+- What not to do：不批准 NR-G5，不进入 NR-5，不执行真实 Live Smoke，不恢复 Pre-NR-4。

@@ -4,7 +4,7 @@
   "sourcePackageVersion": "0.2.0",
   "projectionId": "novelgainker.novelist",
   "projectionSchemaVersion": 1,
-  "projectionContentVersion": "1.0.0",
+  "projectionContentVersion": "1.1.0",
   "sourceRepository": "https://github.com/comfuture/novelist",
   "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
   "sourceSubtree": "plugins/novelist",
@@ -15,8 +15,8 @@
   "upstreamFileCount": 78,
   "upstreamInventoryAlgorithm": "sha256(utf8(sort(path + tab + byteLength + tab + fileSha256 + lf)))",
   "upstreamInventorySha256": "5831708ba45b668dac36c0e6541d25a9abccacfd7e06cb549d503a325b630362",
-  "adaptationVersion": "1.0.0",
-  "novelGainkerPackVersion": "1.0.0",
+  "adaptationVersion": "1.1.0",
+  "novelGainkerPackVersion": "1.1.0",
   "includedFiles": [
     {
       "sourcePath": "LICENSE",
@@ -170,6 +170,11 @@
     }
   ],
   "localChanges": [
+    {
+      "id": "nr4-host-bound-canon-maintenance",
+      "description": "Application-owned NR-4 projection: five typed Canon maintenance methods use actual Host source/read receipts and bounded mutation; the outline template is newly authored by NovelGainker, not an upstream original. Chapter writes and independent chapter source maintenance remain unavailable.",
+      "localResources": ["instructions/create-character.md", "instructions/create-setting.md", "instructions/create-material.md", "instructions/create-plot.md", "instructions/novel-story-telling.md", "fixtures/outline.template.md"]
+    },
     {
       "id": "provider-neutral-instructions",
       "description": "Nine instructions were rewritten in Simplified Chinese to remove host commands, absolute paths, shell, Git and executable-script flows while preserving approved product semantics.",

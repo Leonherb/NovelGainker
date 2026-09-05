@@ -21,11 +21,14 @@ import {
 } from "../lib/tauri/conversation";
 import { normalizeAppError, type AppError } from "../lib/tauri/health";
 import { PROVIDER_PRESENTATION } from "./provider-settings-model";
+import { CanonChangeView } from "./CanonChangeView";
+import { requestCanonChanges, type ChangeActivity } from "../lib/tauri/canon-change";
 
 type ConversationViewProps = {
   projectSessionId: string | null;
   providerState: ProviderStateSnapshot;
   onRunActiveChange?: (active: boolean) => void;
+  onCanonChanged?: () => void;
 };
 
 type ActiveTurn = {
@@ -60,9 +63,47 @@ export function ConversationView({
   projectSessionId,
   providerState,
   onRunActiveChange = () => undefined,
+  onCanonChanged,
 }: ConversationViewProps) {
   const [session, setSession] = useState<ConversationSession | null>(null);
   const [taskActivities, setTaskActivities] = useState<TaskActivity[]>([]);
+  const [changes, setChanges] = useState<ChangeActivity[]>([]);
+  const [changeError, setChangeError] = useState(false);
+  const changesBusyRef = useRef(false);
+  const changesAgainRef = useRef(false);
+  const savedSignatureRef = useRef("");
+  const onCanonChangedRef = useRef(onCanonChanged);
+  useEffect(() => {
+    onCanonChangedRef.current = onCanonChanged;
+  }, [onCanonChanged]);
+  const loadChanges = useCallback(async () => {
+    if (!projectSessionId) return;
+    if (changesBusyRef.current) {
+      changesAgainRef.current = true;
+      return;
+    }
+    changesBusyRef.current = true;
+    do {
+      changesAgainRef.current = false;
+      try {
+        const incoming = await requestCanonChanges(projectSessionId);
+        setChanges(incoming);
+        setChangeError(false);
+        const signature = incoming
+          .filter((entry) => ["committed", "undone"].includes(entry.receipt.status))
+          .map((entry) => `${entry.receipt.changeId}:${entry.receipt.revision}`)
+          .sort()
+          .join("|");
+        if (signature !== savedSignatureRef.current) {
+          savedSignatureRef.current = signature;
+          onCanonChangedRef.current?.();
+        }
+      } catch {
+        setChangeError(true);
+      }
+    } while (changesAgainRef.current);
+    changesBusyRef.current = false;
+  }, [projectSessionId]);
   const [draft, setDraft] = useState("");
   const [activeTurn, setActiveTurn] = useState<ActiveTurn | null>(null);
   const [trackedTurnId, setTrackedTurnId] = useState<string | null>(null);
@@ -99,10 +140,11 @@ export function ConversationView({
       return null;
     }
     const loaded = await requestConversationSession(projectSessionId);
+    void loadChanges();
     setSession(loaded.conversation);
     setTaskActivities((current) => loaded.taskActivities.reduce(mergeTaskActivity, current));
     return loaded;
-  }, [projectSessionId]);
+  }, [projectSessionId, loadChanges]);
 
   const applyLoadedSession = useCallback(
     (loaded: ConversationRuntimeView, expectedTurnId: string | null) => {
@@ -205,6 +247,7 @@ export function ConversationView({
       if (event.kind === "taskActivity") {
         trackTurn(event.turnId);
         setTaskActivities((current) => mergeTaskActivity(current, event.taskActivity));
+        void loadChanges();
         return;
       }
 
@@ -244,6 +287,7 @@ export function ConversationView({
   }, [
     applyLoadedSession,
     listenerAttempt,
+    loadChanges,
     loadSession,
     projectSessionId,
     reconcileTurn,
@@ -436,6 +480,22 @@ export function ConversationView({
                 <p>{message.content}</p>
                 {message.role === "assistant" && index === turn.messages.length - 1 ? (
                   <>
+                    {projectSessionId
+                      ? changes
+                          .filter(
+                            (entry) =>
+                              entry.turnId === turn.turnId &&
+                              entry.conversationSessionId === session.sessionId,
+                          )
+                          .map((activity) => (
+                            <CanonChangeView
+                              key={activity.receipt.changeId}
+                              sessionId={projectSessionId}
+                              activity={activity}
+                              onChanged={() => void loadChanges()}
+                            />
+                          ))
+                      : null}
                     {taskForTurn(turn.turnId) ? (
                       <div className="conversation-task-activity">
                         {TASK_STATUS_LABELS[taskForTurn(turn.turnId).status]}
@@ -461,6 +521,18 @@ export function ConversationView({
                 </span>
               </header>
               <p>{activeTurn.text || "…"}</p>
+              {projectSessionId
+                ? changes
+                    .filter((entry) => entry.turnId === activeTurn.turnId)
+                    .map((activity) => (
+                      <CanonChangeView
+                        key={activity.receipt.changeId}
+                        sessionId={projectSessionId}
+                        activity={activity}
+                        onChanged={() => void loadChanges()}
+                      />
+                    ))
+                : null}
               {taskForTurn(activeTurn.turnId) ? (
                 <div
                   className="conversation-task-activity"
@@ -477,6 +549,14 @@ export function ConversationView({
       </div>
 
       <form className="composer-shell" onSubmit={submit}>
+        {changeError ? (
+          <div className="canon-change-load-error" role="status">
+            保存结果暂时无法核对，聊天仍可继续。
+            <button type="button" onClick={() => void loadChanges()}>
+              重新核对保存结果
+            </button>
+          </div>
+        ) : null}
         {synchronizationFailure ? (
           <div className="composer-error" role="alert">
             <strong>状态同步失败</strong>

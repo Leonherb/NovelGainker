@@ -2,10 +2,17 @@ use crate::AppError;
 
 #[derive(Debug)]
 pub struct ProjectWriteLease {
+    coordination_key: String,
     #[cfg(windows)]
     handle: isize,
     #[cfg(not(windows))]
     key: String,
+}
+
+impl ProjectWriteLease {
+    pub fn is_for_project(&self, key: &str) -> bool {
+        self.coordination_key == key
+    }
 }
 
 pub fn try_acquire_project_write_lease(
@@ -43,6 +50,7 @@ fn acquire_platform_lease(key: &str) -> Result<Option<ProjectWriteLease>, AppErr
         Ok(None)
     } else {
         Ok(Some(ProjectWriteLease {
+            coordination_key: key.to_owned(),
             handle: handle as isize,
         }))
     }
@@ -75,6 +83,7 @@ fn acquire_platform_lease(key: &str) -> Result<Option<ProjectWriteLease>, AppErr
         .map_err(|_| AppError::project_lock_unavailable())?;
     if leases.insert(key.to_owned()) {
         Ok(Some(ProjectWriteLease {
+            coordination_key: key.to_owned(),
             key: key.to_owned(),
         }))
     } else {

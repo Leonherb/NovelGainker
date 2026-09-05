@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-canon-change-decide"
+description = "Enables the canon_change_decide command without any pre-configured scope."
+commands.allow = ["canon_change_decide"]
+
+[[permission]]
+identifier = "deny-canon-change-decide"
+description = "Denies the canon_change_decide command without any pre-configured scope."
+commands.deny = ["canon_change_decide"]

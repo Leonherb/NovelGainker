@@ -5,6 +5,7 @@ import {
   assertReportClaims,
   discoverReleaseSurface,
   inspectIpcClosure,
+  hasApprovedNr4Ipc,
   parseReportClaims,
   proveReleaseScannerRejectsNewProductionFile,
   releaseScopeSha256,
@@ -50,11 +51,27 @@ if (retiredFindings.length !== 0) {
 }
 const negativeProductionFixtureRejected = proveReleaseScannerRejectsNewProductionFile(root);
 const ipc = inspectIpcClosure(root);
+const nr4Entered = ipc.nr4Commands.length > 0;
+if (nr4Entered) {
+  const status = read("bmad/workflow-status.yaml");
+  for (const field of ["product_approved", "implementation_authorized"]) {
+    const changed = status.replace(/nr4_packet:[\s\S]*$/u, (packet) =>
+      packet.replace(`${field}: true`, `${field}: false`),
+    );
+    if (hasApprovedNr4Ipc(changed)) throw new Error(`NR-4 missing ${field} was accepted`);
+  }
+}
 
 const commandsSource = read("apps/desktop/src-tauri/src/commands_current.rs");
 const handlerProviderRuns =
   (commandsSource.match(/run_conversation_provider\(/gu) ?? []).length - 1;
 const managedRuntimeCalls = (commandsSource.match(/execute_memory_managed_turn\(/gu) ?? []).length;
+const changeRuntimeCalls = (
+  commandsSource.match(/execute_memory_managed_turn_with_changes\(/gu) ?? []
+).length;
+if (changeRuntimeCalls !== (nr4Entered ? 1 : 0)) {
+  throw new Error("Current NR-4 runtime mount drift");
+}
 const runtimeSource = read("crates/app-core/src/conversation_runtime.rs");
 const providerExecutions = (runtimeSource.match(/execute_provider_turn\(/gu) ?? []).length;
 const releaseConversationPathCount = handlerProviderRuns * managedRuntimeCalls * providerExecutions;
@@ -83,7 +100,10 @@ const manifest = {
   status: "NR-G1-technical-submission",
   nrG1Approved: false,
   result: "pass",
-  productionCommandCount: ipc.manifest.length,
+  productionCommandCount: ipc.baselineManifest.length,
+  evidenceScope: nr4Entered ? "historical-nr0-contract-regression" : "technical-submission",
+  currentProductionCommandCount: ipc.manifest.length,
+  currentNr4Commands: ipc.nr4Commands,
   conversationCommandCount: ipc.conversation.length,
   conversationCommands: ipc.conversation,
   commandSetsEqual: true,
@@ -165,10 +185,10 @@ manifest.payloadSha256 = createHash("sha256").update(JSON.stringify(manifest)).d
 const evidenceRoot = path.join(root, "target/qa/nr-006");
 mkdirSync(evidenceRoot, { recursive: true });
 writeFileSync(
-  path.join(evidenceRoot, "nr-g1-manifest.json"),
+  path.join(evidenceRoot, nr4Entered ? "nr-g1-regression-manifest.json" : "nr-g1-manifest.json"),
   JSON.stringify(manifest, null, 2) + "\n",
   "utf8",
 );
 console.log(
-  `[nr-006] PASS ${releaseFiles.length} release files / 24 commands / 3 Conversation IPC / evidence-derived NR-G1 manifest`,
+  `[nr-006] PASS ${releaseFiles.length} release files / ${ipc.manifest.length} current commands / 24 historical commands / 3 Conversation IPC`,
 );

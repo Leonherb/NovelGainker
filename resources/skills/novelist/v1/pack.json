@@ -10,7 +10,7 @@
   "projection": {
     "id": "novelgainker.novelist",
     "schemaVersion": 1,
-    "contentVersion": "1.0.0"
+    "contentVersion": "1.1.0"
   },
   "provenanceResource": "provenance.lock.json",
   "licenseResource": "LICENSE.upstream",

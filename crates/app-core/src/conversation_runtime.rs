@@ -36,6 +36,10 @@ pub const NR2_CUMULATIVE_OUTPUT_BUDGET: u32 = 9_216;
 pub const NR3_AGENT_LOOP_RESERVE_BYTES: usize = 40 * 1024;
 const FALLBACK_REQUEST_RESERVE_BYTES: usize = 2 * 1024;
 
+#[path = "conversation_change_runtime.rs"]
+mod changes;
+pub use changes::execute_memory_managed_turn_with_changes;
+
 struct AgentRuntimeBinding {
     registry: ToolRegistry,
     system_addendum: String,
@@ -240,13 +244,26 @@ where
 
     let session = read_conversation(handle)?;
     let refreshed_memory = load_valid_memory(handle, &session, profile).or(active_memory);
-    let request = assemble_main_request_with_addendum(
-        &session,
-        refreshed_memory.as_ref(),
-        profile,
-        system_addendum,
-        request_reserve_bytes,
-    )?;
+    let request = if registry
+        .definitions()
+        .iter()
+        .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME)
+    {
+        crate::memory::assemble_change_main_request(
+            &session,
+            refreshed_memory.as_ref(),
+            profile,
+            system_addendum,
+        )?
+    } else {
+        assemble_main_request_with_addendum(
+            &session,
+            refreshed_memory.as_ref(),
+            profile,
+            system_addendum,
+            request_reserve_bytes,
+        )?
+    };
     execute_agent_turn(
         client,
         handle,
@@ -277,6 +294,24 @@ fn execute_agent_turn<F>(
 where
     F: FnMut(AgentRuntimeEvent) + Send,
 {
+    if registry
+        .definitions()
+        .iter()
+        .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME)
+    {
+        return changes::execute_change_agent_turn(
+            client,
+            handle,
+            turn_id,
+            provider_id,
+            key,
+            request,
+            registry,
+            cancellation,
+            timestamp_ms,
+            on_event,
+        );
+    }
     if registry.is_empty() {
         return execute_provider_turn(
             client,
@@ -357,105 +392,20 @@ where
             )
         }
     };
-    let queued = create_queued_task(
+    let result = execute_registered_tool(
         handle,
-        &session.session_id,
+        &session,
         turn_id,
+        provider_id,
         &call,
         definition,
+        executor,
+        registry,
+        cancellation,
         timestamp_ms,
+        None,
+        &mut on_event,
     )?;
-    on_event(AgentRuntimeEvent::Task(TaskActivity::from(&queued)));
-    let arguments = registry
-        .parse_arguments(&call)
-        .map_err(|error| error.code())
-        .and_then(|arguments| {
-            normalize_provider_tool_arguments(provider_id, definition, arguments)
-                .map_err(|error| error.code())
-        })
-        .and_then(|arguments| {
-            definition
-                .validate_arguments(&arguments)
-                .map(|_| arguments)
-                .map_err(|error| error.code())
-        })
-        .and_then(|arguments| executor.validate_arguments(&arguments).map(|_| arguments));
-    let result = match arguments {
-        Err(error_code) => {
-            let result = ToolResult {
-                call_id: call.call_id.clone(),
-                name: definition.name.clone(),
-                version: definition.version,
-                status: ToolResultStatus::Failed,
-                output_json: None,
-                error_code: Some(error_code.to_owned()),
-            };
-            let failed = transition_task(
-                handle,
-                &queued.task_id,
-                queued.task_revision,
-                TaskStatus::Failed,
-                Some(&result),
-                result.error_code.as_deref(),
-                timestamp_ms.saturating_add(1),
-            )?;
-            on_event(AgentRuntimeEvent::Task(TaskActivity::from(&failed)));
-            result
-        }
-        Ok(arguments) => {
-            let running = transition_task(
-                handle,
-                &queued.task_id,
-                queued.task_revision,
-                TaskStatus::Running,
-                None,
-                None,
-                timestamp_ms.saturating_add(1),
-            )?;
-            on_event(AgentRuntimeEvent::Task(TaskActivity::from(&running)));
-
-            let context = ToolExecutionContext {
-                project_id: handle.project_id().to_owned(),
-                conversation_session_id: session.session_id,
-                turn_id: turn_id.to_owned(),
-            };
-            let output = execute_bounded_tool(executor, &context, &arguments, cancellation);
-            let mut result = ToolResult {
-                call_id: call.call_id.clone(),
-                name: definition.name.clone(),
-                version: definition.version,
-                status: output.status,
-                output_json: output.output_json,
-                error_code: output.error_code.map(str::to_owned),
-            };
-            if result.validate().is_err() {
-                result = ToolResult {
-                    call_id: result.call_id,
-                    name: result.name,
-                    version: result.version,
-                    status: ToolResultStatus::Failed,
-                    output_json: None,
-                    error_code: Some("agent.tool_result_invalid".to_owned()),
-                };
-            }
-            let next_status = match result.status {
-                ToolResultStatus::Succeeded => TaskStatus::Succeeded,
-                ToolResultStatus::Failed => TaskStatus::Failed,
-                ToolResultStatus::Cancelled => TaskStatus::Cancelled,
-            };
-            let terminal_task = transition_task(
-                handle,
-                &running.task_id,
-                running.task_revision,
-                next_status,
-                Some(&result),
-                result.error_code.as_deref(),
-                timestamp_ms.saturating_add(2),
-            )?;
-            on_event(AgentRuntimeEvent::Task(TaskActivity::from(&terminal_task)));
-            result
-        }
-    };
 
     if cancellation.is_cancelled() {
         return terminalize_cancelled_turn_with_text(
@@ -501,6 +451,135 @@ where
             timestamp_ms.saturating_add(3),
         ),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_registered_tool<F>(
+    handle: &ProjectHandle,
+    session: &crate::conversation::ConversationSession,
+    turn_id: &str,
+    provider_id: ProviderId,
+    call: &crate::tool_runtime::ProviderToolCall,
+    definition: &crate::tool_runtime::ToolDefinition,
+    executor: &dyn crate::tool_runtime::ToolExecutor,
+    registry: &ToolRegistry,
+    cancellation: &CancellationToken,
+    timestamp_ms: u64,
+    preflight_error: Option<&'static str>,
+    on_event: &mut F,
+) -> Result<ToolResult, AppError>
+where
+    F: FnMut(AgentRuntimeEvent) + Send,
+{
+    let queued = create_queued_task(
+        handle,
+        &session.session_id,
+        turn_id,
+        call,
+        definition,
+        timestamp_ms,
+    )?;
+    on_event(AgentRuntimeEvent::Task(TaskActivity::from(&queued)));
+    let arguments = preflight_error.map_or(Ok(()), Err).and_then(|_| {
+        registry
+            .parse_arguments(call)
+            .map_err(|error| error.code())
+            .and_then(|arguments| {
+                normalize_provider_tool_arguments(provider_id, definition, arguments)
+                    .map_err(|error| error.code())
+            })
+            .and_then(|arguments| {
+                definition
+                    .validate_arguments(&arguments)
+                    .map(|_| arguments)
+                    .map_err(|error| error.code())
+            })
+            .and_then(|arguments| executor.validate_arguments(&arguments).map(|_| arguments))
+    });
+    let result = match arguments {
+        Err(error_code) => {
+            let result = ToolResult {
+                call_id: call.call_id.clone(),
+                name: definition.name.clone(),
+                version: definition.version,
+                status: ToolResultStatus::Failed,
+                output_json: None,
+                error_code: Some(error_code.to_owned()),
+            };
+            let failed = transition_task(
+                handle,
+                &queued.task_id,
+                queued.task_revision,
+                TaskStatus::Failed,
+                Some(&result),
+                result.error_code.as_deref(),
+                timestamp_ms.saturating_add(1),
+            )?;
+            on_event(AgentRuntimeEvent::Task(TaskActivity::from(&failed)));
+            result
+        }
+        Ok(arguments) => {
+            let running = transition_task(
+                handle,
+                &queued.task_id,
+                queued.task_revision,
+                TaskStatus::Running,
+                None,
+                None,
+                timestamp_ms.saturating_add(1),
+            )?;
+            on_event(AgentRuntimeEvent::Task(TaskActivity::from(&running)));
+
+            let context = ToolExecutionContext {
+                project_id: handle.project_id().to_owned(),
+                conversation_session_id: session.session_id.clone(),
+                turn_id: turn_id.to_owned(),
+                call_id: call.call_id.clone(),
+            };
+            let output = execute_bounded_tool(executor, &context, &arguments, cancellation);
+            let mut result = ToolResult {
+                call_id: call.call_id.clone(),
+                name: definition.name.clone(),
+                version: definition.version,
+                status: output.status,
+                output_json: output.output_json,
+                error_code: output.error_code.map(str::to_owned),
+            };
+            if result.validate().is_err() {
+                result = ToolResult {
+                    call_id: result.call_id,
+                    name: result.name,
+                    version: result.version,
+                    status: ToolResultStatus::Failed,
+                    output_json: None,
+                    error_code: Some("agent.tool_result_invalid".to_owned()),
+                };
+            }
+            let next_status = match result.status {
+                ToolResultStatus::Succeeded => TaskStatus::Succeeded,
+                ToolResultStatus::Failed => TaskStatus::Failed,
+                ToolResultStatus::Cancelled => TaskStatus::Cancelled,
+            };
+            let terminal_task = transition_task(
+                handle,
+                &running.task_id,
+                running.task_revision,
+                next_status,
+                Some(&result),
+                result.error_code.as_deref(),
+                timestamp_ms.saturating_add(2),
+            );
+            match terminal_task {
+                Ok(task) => on_event(AgentRuntimeEvent::Task(TaskActivity::from(&task))),
+                // The master change record already owns commit truth. A stale
+                // Task projection must not turn a committed write into failure.
+                Err(_) if definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => {}
+                Err(error) => return Err(error),
+            }
+            result
+        }
+    };
+    Ok(result)
 }
 
 fn execute_bounded_tool(
@@ -677,6 +756,7 @@ fn terminalize_cancelled_turn_with_text(
 
 #[cfg(test)]
 mod tests {
+    include!("conversation_nr403_tests.rs");
     use super::{
         bind_novelist_runtime, execute_agent_turn, execute_with_profile,
         execute_with_profile_and_registry, normalize_provider_tool_arguments, AgentRuntimeEvent,
@@ -1347,6 +1427,10 @@ mod tests {
             initial["tools"][0]["function"]["name"],
             "novelist_read_context"
         );
+        let operation_properties = &initial["tools"][0]["function"]["parameters"]["properties"]
+            ["canonOperations"]["items"]["properties"];
+        assert_eq!(operation_properties["limit"]["minimum"], 1);
+        assert_eq!(operation_properties["limit"]["maximum"], 64);
         let continuation = captured_json(&captured[1]);
         assert_eq!(continuation["tool_choice"], "none");
         let tool_message = continuation["messages"]

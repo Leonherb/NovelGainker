@@ -5,7 +5,8 @@
   "usage": "当对话需要规划、续写、修订章节或检查叙事连续性时采用。",
   "instructionResource": "instructions/novel-story-telling.md",
   "templateResources": [
-    "fixtures/chapter.template.md"
+    "fixtures/chapter.template.md",
+    "fixtures/outline.template.md"
   ],
   "referenceResources": [
     "references/storytelling/drama.md",

@@ -1,9 +1,16 @@
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
+use app_core::canon_change::{
+    ChangeActivity, ChangeDecisionRequest, ChangeDetail, ChangeError, ChangeReceipt,
+    EditorBufferRevision,
+};
+use app_core::canon_change_store::CanonChangeCoordinator;
 use app_core::conversation::{
     finish_conversation_turn, load_conversation, read_conversation, start_conversation_turn,
     ConversationProviderTerminalState, ConversationTerminalKind,
 };
-use app_core::conversation_runtime::{execute_memory_managed_turn, AgentRuntimeEvent};
+use app_core::conversation_runtime::{
+    execute_memory_managed_turn, execute_memory_managed_turn_with_changes, AgentRuntimeEvent,
+};
 use app_core::coordination::{try_acquire_project_write_lease, ProjectWriteLease};
 use app_core::credential_vault::{CredentialVault, ProviderId, WindowsCredentialVault};
 
@@ -24,9 +31,9 @@ use app_core::recovery::{RecoveryReport, RecoveryStatus, RecoveryStore};
 use app_core::search::{search_project_sources, SearchReport};
 use app_core::task_store::{runtime_view, ConversationRuntimeView, TaskActivity};
 use app_core::workspace::{
-    check_project_file, list_project_files, read_project_file, save_project_file_recoverable,
-    validate_project_draft, ProjectFileDocument, ProjectFileIndex, ProjectFileSaveResult,
-    ProjectFileWatchStatus, ValidationReport,
+    check_project_file, list_project_files, read_project_file, validate_project_draft,
+    ProjectFileDocument, ProjectFileIndex, ProjectFileSaveResult, ProjectFileWatchStatus,
+    ValidationReport,
 };
 use app_core::{health_status, AppError, HealthStatus};
 use serde::Serialize;
@@ -59,8 +66,19 @@ struct RegisteredProjectCandidate {
 
 struct RegisteredProjectSession {
     handle: ProjectHandle,
-    write_lease: Option<ProjectWriteLease>,
+    write_lease: Option<Arc<ProjectWriteLease>>,
     recovery: RecoveryReport,
+    changes: Option<Arc<CanonChangeCoordinator>>,
+    editor_files: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorDocument {
+    #[serde(flatten)]
+    document: ProjectFileDocument,
+    file_id: String,
+    editor_revision: u64,
 }
 
 struct ActiveProviderRun {
@@ -614,7 +632,13 @@ pub async fn project_list_files(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
 ) -> Result<ProjectFileIndex, AppError> {
-    list_project_files(&session_handle(&state, &session_id)?)
+    let handle = session_handle(&state, &session_id)?;
+    if let Ok(changes) = changes_for_session(&state, &session_id) {
+        return changes
+            .read_consistent(|| list_project_files(&handle).map_err(|_| ChangeError::Io))
+            .map_err(change_app_error);
+    }
+    list_project_files(&handle)
 }
 
 #[tauri::command]
@@ -622,8 +646,38 @@ pub async fn project_read_file(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
     relative_path: String,
-) -> Result<ProjectFileDocument, AppError> {
-    read_project_file(&session_handle(&state, &session_id)?, &relative_path)
+) -> Result<EditorDocument, AppError> {
+    let mut registry = lock_registry(&state)?;
+    let session = registry
+        .sessions
+        .get_mut(&session_id)
+        .ok_or_else(AppError::project_session_not_found)?;
+    let (document, editor_revision) = if let Some(changes) = &session.changes {
+        changes
+            .open_editor(&relative_path)
+            .map_err(change_app_error)?
+    } else {
+        (read_project_file(&session.handle, &relative_path)?, 0)
+    };
+    let file_id = if let Some((id, _)) = session
+        .editor_files
+        .iter()
+        .find(|(_, path)| **path == relative_path)
+    {
+        id.clone()
+    } else {
+        if session.editor_files.len() >= 64 {
+            return Err(change_app_error(ChangeError::BudgetExceeded));
+        }
+        let id = Uuid::new_v4().to_string();
+        session.editor_files.insert(id.clone(), relative_path);
+        id
+    };
+    Ok(EditorDocument {
+        document,
+        file_id,
+        editor_revision,
+    })
 }
 
 #[tauri::command]
@@ -648,14 +702,108 @@ pub async fn project_save_file(
     content: String,
     source_hash: String,
 ) -> Result<ProjectFileSaveResult, AppError> {
-    let handle = writer_handle(&state, &session_id)?;
-    save_project_file_recoverable(
-        &handle,
-        &relative_path,
-        &content,
-        &source_hash,
-        &state.recovery_store,
-    )
+    writer_handle(&state, &session_id)?;
+    changes_for_session(&state, &session_id)?
+        .save_manual(&relative_path, &content, &source_hash)
+        .map_err(|error| {
+            if error == ChangeError::SourceChanged {
+                AppError::file_source_changed()
+            } else {
+                change_app_error(error)
+            }
+        })
+}
+
+fn change_app_error(error: ChangeError) -> AppError {
+    AppError {
+        code: error.code().to_owned(),
+        message_key: "errors.fileSaveFailed".to_owned(),
+        diagnostic: None,
+    }
+}
+
+fn changes_for_session(
+    state: &ProjectRegistry,
+    session_id: &str,
+) -> Result<Arc<CanonChangeCoordinator>, AppError> {
+    lock_registry(state)?
+        .sessions
+        .get(session_id)
+        .ok_or_else(AppError::project_session_not_found)?
+        .changes
+        .clone()
+        .ok_or_else(AppError::project_writer_required)
+}
+
+#[tauri::command]
+pub async fn canon_change_list(
+    state: tauri::State<'_, ProjectRegistry>,
+    session_id: String,
+) -> Result<Vec<ChangeActivity>, AppError> {
+    let handle = session_handle(&state, &session_id)?;
+    let conversation = read_conversation(&handle)?;
+    match changes_for_session(&state, &session_id) {
+        Ok(changes) => changes
+            .activities(&conversation.session_id)
+            .map_err(change_app_error),
+        Err(error) if error.code == "project.writer_required" => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+#[tauri::command]
+pub async fn canon_change_detail(
+    state: tauri::State<'_, ProjectRegistry>,
+    session_id: String,
+    change_id: String,
+) -> Result<ChangeDetail, AppError> {
+    let handle = session_handle(&state, &session_id)?;
+    let conversation = read_conversation(&handle)?;
+    changes_for_session(&state, &session_id)?
+        .detail(&conversation.session_id, &change_id)
+        .map_err(change_app_error)
+}
+
+#[tauri::command]
+pub async fn canon_change_decide(
+    state: tauri::State<'_, ProjectRegistry>,
+    request: ChangeDecisionRequest,
+) -> Result<ChangeReceipt, AppError> {
+    request.validate().map_err(change_app_error)?;
+    let handle = session_handle(&state, &request.project_session_id)?;
+    let conversation = read_conversation(&handle)?;
+    changes_for_session(&state, &request.project_session_id)?
+        .decide(
+            &conversation.session_id,
+            &request.change_id,
+            request.revision,
+            request.decision,
+            &CancellationToken::default(),
+        )
+        .map_err(change_app_error)
+}
+
+#[tauri::command]
+pub async fn canon_editor_state(
+    state: tauri::State<'_, ProjectRegistry>,
+    request: EditorBufferRevision,
+) -> Result<u64, AppError> {
+    let registry = lock_registry(&state)?;
+    let session = registry
+        .sessions
+        .get(&request.project_session_id)
+        .ok_or_else(AppError::project_session_not_found)?;
+    let path = session
+        .editor_files
+        .get(&request.file_id)
+        .ok_or_else(|| change_app_error(ChangeError::TargetInvalid))?;
+    session
+        .changes
+        .as_ref()
+        .ok_or_else(AppError::project_writer_required)?
+        .record_editor_buffer(path, request.revision, request.dirty)
+        .map_err(change_app_error)?;
+    Ok(request.revision)
 }
 
 #[tauri::command]
@@ -679,11 +827,15 @@ pub async fn project_search(
     query: String,
     case_sensitive: bool,
 ) -> Result<SearchReport, AppError> {
-    search_project_sources(
-        &session_handle(&state, &session_id)?,
-        &query,
-        case_sensitive,
-    )
+    let handle = session_handle(&state, &session_id)?;
+    if let Ok(changes) = changes_for_session(&state, &session_id) {
+        return changes
+            .read_consistent(|| {
+                search_project_sources(&handle, &query, case_sensitive).map_err(|_| ChangeError::Io)
+            })
+            .map_err(change_app_error);
+    }
+    search_project_sources(&handle, &query, case_sensitive)
 }
 
 #[tauri::command]
@@ -751,11 +903,26 @@ fn register_session(
     write_lease: Option<ProjectWriteLease>,
 ) -> Result<ProjectSession, AppError> {
     debug_assert!(handle.is_bound_to_root());
-    let recovery = if write_lease.is_some() {
+    let write_lease = write_lease.map(Arc::new);
+    let mut recovery = if write_lease.is_some() {
         state.recovery_store.recover_project(&handle)
     } else {
         RecoveryReport::not_checked()
     };
+    let changes = write_lease
+        .as_ref()
+        .map(|lease| {
+            CanonChangeCoordinator::new(handle.clone(), lease.clone(), state.recovery_store.clone())
+                .map(Arc::new)
+        })
+        .transpose()
+        .map_err(change_app_error)?;
+    if let Some(changes) = &changes {
+        if changes.recover().is_err() {
+            recovery.status = RecoveryStatus::Required;
+            recovery.required_transactions = recovery.required_transactions.saturating_add(1);
+        }
+    }
     let session_id = Uuid::new_v4().to_string();
     let can_write = write_lease.is_some() && recovery.status != RecoveryStatus::Required;
     let restored_current_file = state
@@ -796,6 +963,8 @@ fn register_session(
             handle,
             write_lease,
             recovery,
+            changes,
+            editor_files: HashMap::new(),
         },
     );
     Ok(result)
@@ -828,62 +997,78 @@ fn run_conversation_provider(
         state
             .credential_vault
             .with_secret(provider_id, &mut |key| {
-                outcome = Some(execute_memory_managed_turn(
-                    &client,
-                    &handle,
-                    &turn_id,
-                    provider_id,
-                    key,
-                    &cancellation,
-                    now_ms()?,
-                    |event| match event {
-                        AgentRuntimeEvent::Provider(event) => match event {
-                            NormalizedEvent::TextDelta { delta, .. } => {
-                                last_sequence = last_sequence.saturating_add(1);
-                                let _ = app.emit(
-                                    "conversation-turn-event",
-                                    ConversationTurnEvent::TextDelta {
-                                        session_id: session_id.clone(),
-                                        turn_id: turn_id.clone(),
-                                        provider_id,
-                                        model: model.clone(),
-                                        sequence: last_sequence,
-                                        delta,
-                                    },
-                                );
-                            }
-                            NormalizedEvent::Usage { usage, .. } => {
-                                last_sequence = last_sequence.saturating_add(1);
-                                let _ = app.emit(
-                                    "conversation-turn-event",
-                                    ConversationTurnEvent::Usage {
-                                        session_id: session_id.clone(),
-                                        turn_id: turn_id.clone(),
-                                        provider_id,
-                                        model: model.clone(),
-                                        sequence: last_sequence,
-                                        usage,
-                                    },
-                                );
-                            }
-                            NormalizedEvent::Completed { .. } => {}
-                        },
-                        AgentRuntimeEvent::Task(task_activity) => {
+                let on_event = |event| match event {
+                    AgentRuntimeEvent::Provider(event) => match event {
+                        NormalizedEvent::TextDelta { delta, .. } => {
                             last_sequence = last_sequence.saturating_add(1);
                             let _ = app.emit(
                                 "conversation-turn-event",
-                                ConversationTurnEvent::TaskActivity {
+                                ConversationTurnEvent::TextDelta {
                                     session_id: session_id.clone(),
                                     turn_id: turn_id.clone(),
                                     provider_id,
                                     model: model.clone(),
                                     sequence: last_sequence,
-                                    task_activity,
+                                    delta,
                                 },
                             );
                         }
+                        NormalizedEvent::Usage { usage, .. } => {
+                            last_sequence = last_sequence.saturating_add(1);
+                            let _ = app.emit(
+                                "conversation-turn-event",
+                                ConversationTurnEvent::Usage {
+                                    session_id: session_id.clone(),
+                                    turn_id: turn_id.clone(),
+                                    provider_id,
+                                    model: model.clone(),
+                                    sequence: last_sequence,
+                                    usage,
+                                },
+                            );
+                        }
+                        NormalizedEvent::Completed { .. } => {}
                     },
-                ));
+                    AgentRuntimeEvent::Task(task_activity) => {
+                        last_sequence = last_sequence.saturating_add(1);
+                        let _ = app.emit(
+                            "conversation-turn-event",
+                            ConversationTurnEvent::TaskActivity {
+                                session_id: session_id.clone(),
+                                turn_id: turn_id.clone(),
+                                provider_id,
+                                model: model.clone(),
+                                sequence: last_sequence,
+                                task_activity,
+                            },
+                        );
+                    }
+                };
+                let coordinator = changes_for_session(&state, &session_id).ok();
+                outcome = Some(if let Some(coordinator) = coordinator {
+                    execute_memory_managed_turn_with_changes(
+                        &client,
+                        &handle,
+                        &turn_id,
+                        provider_id,
+                        key,
+                        &cancellation,
+                        now_ms()?,
+                        coordinator,
+                        on_event,
+                    )
+                } else {
+                    execute_memory_managed_turn(
+                        &client,
+                        &handle,
+                        &turn_id,
+                        provider_id,
+                        key,
+                        &cancellation,
+                        now_ms()?,
+                        on_event,
+                    )
+                });
                 Ok(())
             })?;
         outcome.ok_or_else(AppError::runtime_unavailable)?

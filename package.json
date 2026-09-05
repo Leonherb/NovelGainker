@@ -34,6 +34,7 @@
     "pack:nr301:write": "node scripts/nr301-pack-refresh.mjs --write",
     "pack:nr301:check": "node scripts/nr301-pack-refresh.mjs",
     "e2e:nr306": "node scripts/nr306-nrg4-e2e.mjs",
+    "e2e:nr406": "node scripts/nr406-nrg5-e2e.mjs",
     "smoke:desktop:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile debug",
     "smoke:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile release -CaptureEvidence -EvidenceGate nr-g1",
     "quality": "node scripts/quality.mjs"

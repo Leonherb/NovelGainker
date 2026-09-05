@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { discoverReleaseSurface, releaseScopeSha256 } from "./nr-g1-gate-lib.mjs";
 
 const pnpmCli = process.env.npm_execpath;
 if (!pnpmCli) {
@@ -35,6 +37,7 @@ const steps = [
   ["NR-206 agent-loop evidence and NR-G3 manifest", ["e2e:nr206"]],
   ["NR-301 embedded Novelist Pack integrity", ["pack:nr301:check"]],
   ["NR-306 evidence and NR-G4 technical submission manifest", ["e2e:nr306"]],
+  ["NR-406 Canon transactions and NR-G5 validation", ["e2e:nr406"]],
   ["Rust format check", ["format:rust"]],
   ["Rust Clippy", ["lint:rust"]],
   ["Rust tests", ["test:rust"]],
@@ -46,6 +49,7 @@ const steps = [
   ["Unmounted Canon/continuity safety Kernel", ["e2e:canon-kernel"]],
 ];
 
+const completedSteps = [];
 for (const [name, args] of steps) {
   console.log(`\n[quality] START ${name}`);
   const result = spawnSync(process.execPath, [pnpmCli, ...args], {
@@ -65,6 +69,23 @@ for (const [name, args] of steps) {
   }
 
   console.log(`[quality] PASS ${name}`);
+  completedSteps.push({ name, args, exitCode: result.status });
 }
 
+mkdirSync("target/qa/nr-406", { recursive: true });
+writeFileSync(
+  "target/qa/nr-406/quality.json",
+  JSON.stringify(
+    {
+      schemaVersion: 1,
+      result: "pass",
+      startedAt: offlineEnvironment.NOVELGAINKER_QUALITY_STARTED_AT,
+      completedAt: new Date().toISOString(),
+      steps: completedSteps,
+      releaseScopeSha256: releaseScopeSha256(process.cwd(), discoverReleaseSurface(process.cwd())),
+    },
+    null,
+    2,
+  ) + "\n",
+);
 console.log("\n[quality] PASS NovelGainker local quality gate");

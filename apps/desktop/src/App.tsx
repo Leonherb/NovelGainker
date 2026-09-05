@@ -83,7 +83,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   const rightPanelRef = useRef<HTMLElement>(null);
   const rightResizePointerRef = useRef<number | null>(null);
   const [projectSessionId, setProjectSessionId] = useState<string | null>(null);
-  const [workspaceRefreshToken] = useState(0);
+  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0);
   const [workspaceOpenPath] = useState<string | null>(null);
   const desktopRuntime = isTauriRuntime();
 
@@ -405,6 +405,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
           <ConversationView
             key={projectSessionId ?? "no-project"}
             onRunActiveChange={setConversationRunActive}
+            onCanonChanged={() => setWorkspaceRefreshToken((value) => value + 1)}
             projectSessionId={projectSessionId}
             providerState={providerState}
           />

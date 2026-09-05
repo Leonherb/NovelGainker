@@ -1,6 +1,9 @@
 #[path = "app_state_current.rs"]
 pub mod app_state;
 pub mod canon_apply;
+pub mod canon_change;
+pub mod canon_change_read;
+pub mod canon_change_store;
 pub mod canon_context;
 pub mod capability_pack;
 pub mod conversation;
