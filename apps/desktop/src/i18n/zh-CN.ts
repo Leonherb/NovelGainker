@@ -237,7 +237,7 @@ export const ZH_CN = {
       diagnostics: {
         ariaLabel: "当前 Markdown 结构诊断",
         validTitle: "结构检查通过",
-        validBody: "此文件可用于后续 AI Apply、Final 与 EPUB。",
+        validBody: "文件格式检查通过；正式定稿及 EPUB 出版仍需核对用户确认和当前版本。",
         staleTitle: "诊断已过期",
         staleBody: "草稿或磁盘文件已经变化；请再次保存以生成新 Hash 的诊断。",
         issueTitle: "发现结构问题",
@@ -414,6 +414,11 @@ export const ZH_CN = {
       title: "Markdown 保存未完成",
       message: "Windows 未能完成安全的临时写入、同步或原子替换。",
       recovery: "当前编辑内容仍在；请确认目录可写且文件未被占用，然后重试。",
+    },
+    publicationUnavailable: {
+      title: "出版结果暂时无法核对",
+      message: "本地出版回执或当前输入验证不可用，不能把聊天完成当作 EPUB 已生成。",
+      recovery: "原稿和已有产物仍保留；可继续聊天，稍后重新核对出版结果。",
     },
     searchInvalidQuery: {
       title: "搜索关键词无效",

@@ -266,6 +266,8 @@ where
             diagnostics_triggered: true,
             diagnostic_state: DiagnosticState::Ready,
             validation: post_validation,
+            saved_content: None,
+            chapter_finalization_confirmed: None,
         })
     })();
 
@@ -466,6 +468,8 @@ where
             diagnostics_triggered: true,
             diagnostic_state: DiagnosticState::Ready,
             validation: post_validation,
+            saved_content: None,
+            chapter_finalization_confirmed: None,
         })
     })();
 

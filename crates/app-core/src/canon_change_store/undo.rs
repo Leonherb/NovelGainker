@@ -14,6 +14,9 @@ impl CanonChangeCoordinator {
             }
         }
         record.undo_revision = Some(record.receipt.revision);
+        if let Some(chapter) = &mut record.chapter {
+            chapter.final_invalidated = true;
+        }
         record.receipt.revision += 1;
         record.receipt.status = ChangeStatus::Applying;
         self.save_record(record)?;
@@ -30,8 +33,9 @@ impl CanonChangeCoordinator {
                 self.verify_lease()?;
                 hook(CommitStage::BeforeFile(index))?;
                 if let Some(before) = &snapshot.before {
-                    apply_canon_file_recoverable(
+                    apply_change_file_recoverable(
                         &self.handle,
+                        snapshot.entity_kind,
                         CanonFileOperationKind::Replace,
                         &snapshot.relative_path,
                         &file.after_hash,
@@ -94,8 +98,9 @@ impl CanonChangeCoordinator {
                 if current != file.before_hash {
                     return Err(ChangeError::RecoveryRequired);
                 }
-                apply_canon_file_recoverable(
+                apply_change_file_recoverable(
                     &self.handle,
+                    snapshot.entity_kind,
                     if snapshot.before.is_some() {
                         CanonFileOperationKind::Replace
                     } else {

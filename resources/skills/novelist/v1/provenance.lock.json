@@ -4,7 +4,7 @@
   "sourcePackageVersion": "0.2.0",
   "projectionId": "novelgainker.novelist",
   "projectionSchemaVersion": 1,
-  "projectionContentVersion": "1.1.0",
+  "projectionContentVersion": "1.4.0",
   "sourceRepository": "https://github.com/comfuture/novelist",
   "sourceCommit": "64e4a2e1473ff0bad5893eff394ccbf1fa1cd580",
   "sourceSubtree": "plugins/novelist",
@@ -15,8 +15,11 @@
   "upstreamFileCount": 78,
   "upstreamInventoryAlgorithm": "sha256(utf8(sort(path + tab + byteLength + tab + fileSha256 + lf)))",
   "upstreamInventorySha256": "5831708ba45b668dac36c0e6541d25a9abccacfd7e06cb549d503a325b630362",
-  "adaptationVersion": "1.1.0",
-  "novelGainkerPackVersion": "1.1.0",
+  "adaptationVersion": "1.4.0",
+  "novelGainkerPackVersion": "1.4.0",
+  "nr505Adaptation": "Application-authored native Rust EPUB preflight/build with current finalization proof, bounded snapshot/assets and opaque artifact receipts. Explicit analytical review stays read-only and optional. No upstream executable, external runtime, image generation or network authority is imported.",
+  "nr503Adaptation": "Host-bound committed-chapter sources and six-dimensional continuity citations. Only valid delivered chapter receipts support five-type maintenance; stale dependencies do not rewrite Canon. Three existing method read scopes gain chapters; no additional runtime tool or external executable.",
+  "nr502Adaptation": "Application-authored bounded chapter and displayed-candidate contracts use the existing native Host executor. No upstream Python or external runtime is loaded; automatic chapter-source maintenance and EPUB execution are not enabled by this method projection.",
   "includedFiles": [
     {
       "sourcePath": "LICENSE",

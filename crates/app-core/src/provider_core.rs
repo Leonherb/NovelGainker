@@ -1,10 +1,8 @@
-use crate::canon_context::{
-    deepseek_novelist_read_context_input_schema, NOVELIST_READ_CONTEXT_TOOL_NAME,
-};
+use crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME;
 use crate::credential_vault::ProviderId;
+use crate::protocol_profile::ToolProtocolProfile;
 use crate::tool_runtime::{
-    validate_definitions, ProviderToolCall, ToolDefinition, ToolResult,
-    MAX_TOOL_CONTINUATION_BYTES, MAX_TOOL_DEFINITIONS_BYTES,
+    validate_definitions, ProviderToolCall, ToolDefinition, ToolResult, MAX_TOOL_DEFINITIONS_BYTES,
 };
 use reqwest::blocking::{Client as BlockingClient, Response as BlockingResponse};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
@@ -151,6 +149,7 @@ pub struct NormalizedRequest {
     pub tool_result: Option<ToolResult>,
     previous_tools: Vec<(ProviderContinuation, ToolResult)>,
     canon_changes: bool,
+    protocol_profile: ToolProtocolProfile,
 }
 
 impl NormalizedRequest {
@@ -172,6 +171,7 @@ impl NormalizedRequest {
             tool_result: None,
             previous_tools: Vec::new(),
             canon_changes: false,
+            protocol_profile: ToolProtocolProfile::Nr4,
         };
         request.validate()?;
         Ok(request)
@@ -195,6 +195,7 @@ impl NormalizedRequest {
             tool_result: None,
             previous_tools: Vec::new(),
             canon_changes: false,
+            protocol_profile: ToolProtocolProfile::Nr4,
         }
     }
 
@@ -237,6 +238,7 @@ impl NormalizedRequest {
             tool_result: None,
             previous_tools: Vec::new(),
             canon_changes: false,
+            protocol_profile: ToolProtocolProfile::Nr4,
         };
         request.validate()?;
         Ok(request)
@@ -250,6 +252,12 @@ impl NormalizedRequest {
             return Ok(self);
         }
         validate_definitions(&definitions).map_err(|_| ProviderError::invalid_request())?;
+        if definitions
+            .iter()
+            .any(|definition| definition.protocol_profile() == ToolProtocolProfile::Nr5)
+        {
+            self.protocol_profile = ToolProtocolProfile::Nr5;
+        }
         self.canon_changes |= definitions
             .iter()
             .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME);
@@ -267,7 +275,7 @@ impl NormalizedRequest {
         result
             .validate()
             .map_err(|_| ProviderError::invalid_request())?;
-        let call = continuation_tool_call(&continuation)?;
+        let call = continuation_tool_call_for(&continuation, self.protocol_profile)?;
         if call.call_id != result.call_id || call.name != result.name {
             return Err(ProviderError::invalid_request());
         }
@@ -283,6 +291,7 @@ impl NormalizedRequest {
             tool_result: Some(result),
             previous_tools,
             canon_changes: self.canon_changes,
+            protocol_profile: self.protocol_profile,
         };
         request.validate()?;
         Ok(request)
@@ -318,10 +327,9 @@ impl NormalizedRequest {
             || (!self.canon_changes
                 && self.continuation.is_some()
                 && !self.tool_definitions.is_empty())
-            || self
-                .continuation
-                .as_ref()
-                .is_some_and(|continuation| validate_continuation_bounds(continuation).is_err())
+            || self.continuation.as_ref().is_some_and(|continuation| {
+                validate_continuation_bounds_for(continuation, self.protocol_profile).is_err()
+            })
         {
             return Err(ProviderError::invalid_request());
         }
@@ -375,7 +383,16 @@ impl NormalizedRequest {
     }
 
     fn validate_tool_history(&self) -> Result<(), ProviderError> {
-        let maximum = if self.canon_changes { 3 } else { 1 };
+        let nr5 = self.protocol_profile == ToolProtocolProfile::Nr5;
+        let maximum = if self.canon_changes {
+            if nr5 {
+                7
+            } else {
+                3
+            }
+        } else {
+            1
+        };
         if self.tool_history().count() > maximum
             || (!self.previous_tools.is_empty() && self.continuation.is_none())
         {
@@ -384,33 +401,49 @@ impl NormalizedRequest {
         let mut calls = std::collections::HashSet::new();
         let mut bytes = 0usize;
         let mut reads = 0usize;
-        let mut mutation_seen = false;
+        let mut mutations = 0usize;
+        let mut publications = 0usize;
         for (continuation, result) in self.tool_history() {
-            validate_continuation_bounds(continuation)?;
+            validate_continuation_bounds_for(continuation, self.protocol_profile)?;
             result
                 .validate()
                 .map_err(|_| ProviderError::invalid_request())?;
-            let call = continuation_tool_call(continuation)?;
+            let call = continuation_tool_call_for(continuation, self.protocol_profile)?;
+            if self.protocol_profile == ToolProtocolProfile::Nr4
+                && ToolProtocolProfile::for_definition(&result.name, result.version)
+                    == ToolProtocolProfile::Nr5
+            {
+                return Err(ProviderError::invalid_request());
+            }
             if !calls.insert(call.call_id.clone())
                 || call.call_id != result.call_id
                 || call.name != result.name
-                || mutation_seen
+                || (!nr5 && mutations != 0)
             {
                 return Err(ProviderError::invalid_request());
             }
             if self.canon_changes {
                 match call.name.as_str() {
                     crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME => reads += 1,
-                    crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => mutation_seen = true,
+                    crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => mutations += 1,
+                    "novelist.publish" if nr5 => publications += 1,
                     _ => return Err(ProviderError::invalid_request()),
                 }
             }
             bytes = bytes.saturating_add(continuation_serialized_bytes(continuation)?);
         }
         if self.canon_changes
-            && (reads > 2
-                || bytes > crate::canon_change::NR4_CONTINUATION_BYTES
-                || (mutation_seen && !self.tool_definitions.is_empty()))
+            && (reads > if nr5 { 4 } else { 2 }
+                || mutations > if nr5 { 2 } else { 1 }
+                || publications > 1
+                || bytes
+                    > if self.protocol_profile == ToolProtocolProfile::Nr5 {
+                        crate::chapter_contract::NR5_CONTINUATION_BYTES
+                    } else {
+                        crate::canon_change::NR4_CONTINUATION_BYTES
+                    }
+                || ((!nr5 && mutations != 0 || self.tool_history().count() == maximum)
+                    && !self.tool_definitions.is_empty()))
         {
             return Err(ProviderError::invalid_request());
         }
@@ -418,7 +451,9 @@ impl NormalizedRequest {
     }
 
     pub fn body_limit(&self) -> usize {
-        if self.canon_changes {
+        if self.protocol_profile == ToolProtocolProfile::Nr5 {
+            crate::chapter_contract::NR5_REQUEST_BYTES
+        } else if self.canon_changes {
             crate::canon_change::NR4_REQUEST_BYTES
         } else {
             MAX_REQUEST_BYTES
@@ -437,8 +472,8 @@ impl NormalizedRequest {
     pub fn serialized_request_bytes(&self, provider: ProviderId) -> Result<usize, ProviderError> {
         self.validate_for(provider)?;
         let body = match provider {
-            ProviderId::Deepseek => DeepseekAdapter.streaming_body(self),
-            ProviderId::Openai => OpenaiAdapter.streaming_body(self),
+            ProviderId::Deepseek => DEEPSEEK_ADAPTER.streaming_body(self),
+            ProviderId::Openai => OPENAI_ADAPTER.streaming_body(self),
         };
         let bytes = serde_json::to_vec(&body)
             .map_err(|_| ProviderError::invalid_request())?
@@ -470,7 +505,10 @@ fn continuation_serialized_bytes(
         .map_err(|_| ProviderError::protocol())
 }
 
-fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(), ProviderError> {
+fn validate_continuation_bounds_for(
+    continuation: &ProviderContinuation,
+    profile: ToolProtocolProfile,
+) -> Result<(), ProviderError> {
     match continuation {
         ProviderContinuation::Deepseek {
             assistant_text,
@@ -479,7 +517,7 @@ fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(
             if assistant_text.len() > MAX_MESSAGE_BYTES {
                 return Err(ProviderError::response_too_large());
             }
-            call.validate_envelope()
+            call.validate_envelope_for(profile)
                 .map_err(|_| ProviderError::protocol())?;
             let bytes = serde_json::to_vec(&json!({
                 "assistantText": assistant_text,
@@ -488,7 +526,7 @@ fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(
                 "arguments": call.arguments_json
             }))
             .map_err(|_| ProviderError::protocol())?;
-            if bytes.len() > MAX_TOOL_CONTINUATION_BYTES {
+            if bytes.len() > profile.native_continuation_bytes() {
                 return Err(ProviderError::response_too_large());
             }
         }
@@ -501,25 +539,28 @@ fn validate_continuation_bounds(continuation: &ProviderContinuation) -> Result<(
                 let bytes = serde_json::to_vec(&openai_continuation_value(item))
                     .map_err(|_| ProviderError::protocol())?;
                 let item_limit = match item {
-                    OpenAiContinuationItem::FunctionCall { .. } => MAX_TOOL_CONTINUATION_BYTES,
+                    OpenAiContinuationItem::FunctionCall { .. } => {
+                        profile.native_continuation_bytes()
+                    }
                     _ => 32 * 1024,
                 };
                 if bytes.len() > item_limit {
                     return Err(ProviderError::response_too_large());
                 }
                 total = total.saturating_add(bytes.len());
-                if total > MAX_TOOL_CONTINUATION_BYTES {
+                if total > profile.native_continuation_bytes() {
                     return Err(ProviderError::response_too_large());
                 }
             }
-            continuation_tool_call(continuation)?;
+            continuation_tool_call_for(continuation, profile)?;
         }
     }
     Ok(())
 }
 
-fn continuation_tool_call(
+fn continuation_tool_call_for(
     continuation: &ProviderContinuation,
+    profile: ToolProtocolProfile,
 ) -> Result<ProviderToolCall, ProviderError> {
     match continuation {
         ProviderContinuation::Deepseek { call, .. } => Ok(call.clone()),
@@ -542,7 +583,7 @@ fn continuation_tool_call(
                 name: name.clone(),
                 arguments_json: arguments.clone(),
             };
-            call.validate_envelope()
+            call.validate_envelope_for(profile)
                 .map_err(|_| ProviderError::protocol())?;
             Ok(call)
         }
@@ -766,6 +807,7 @@ enum AdapterStreamEvent {
 
 #[derive(Default)]
 struct ToolCallAccumulator {
+    profile: ToolProtocolProfile,
     index: Option<u32>,
     call_id: Option<String>,
     name: Option<String>,
@@ -791,7 +833,7 @@ impl ToolCallAccumulator {
                 .as_ref()
                 .is_some_and(|next| self.name.as_ref().is_some_and(|current| current != next))
             || self.arguments.len().saturating_add(arguments_delta.len())
-                > MAX_TOOL_CONTINUATION_BYTES
+                > self.profile.call_envelope_bytes()
         {
             return Err(ProviderError::protocol());
         }
@@ -824,9 +866,9 @@ impl ToolCallAccumulator {
         assistant_text: &str,
     ) -> Result<(Option<ProviderToolCall>, Option<ProviderContinuation>), ProviderError> {
         if let Some((call, continuation)) = self.envelope {
-            call.validate_envelope()
+            call.validate_envelope_for(self.profile)
                 .map_err(|_| ProviderError::protocol())?;
-            validate_continuation_bounds(&continuation)?;
+            validate_continuation_bounds_for(&continuation, self.profile)?;
             return Ok((Some(call), Some(continuation)));
         }
         if self.index.is_none() {
@@ -837,7 +879,7 @@ impl ToolCallAccumulator {
             name: self.name.ok_or_else(ProviderError::protocol)?,
             arguments_json: self.arguments,
         };
-        call.validate_envelope()
+        call.validate_envelope_for(self.profile)
             .map_err(|_| ProviderError::protocol())?;
         if provider != ProviderId::Deepseek {
             return Err(ProviderError::protocol());
@@ -846,12 +888,13 @@ impl ToolCallAccumulator {
             assistant_text: assistant_text.to_owned(),
             call: call.clone(),
         };
-        validate_continuation_bounds(&continuation)?;
+        validate_continuation_bounds_for(&continuation, self.profile)?;
         Ok((Some(call), Some(continuation)))
     }
 }
 
 trait ProviderAdapter: Sync {
+    fn protocol_profile(&self) -> ToolProtocolProfile;
     fn preset(&self) -> &'static ProviderPreset;
     fn streaming_body(&self, request: &NormalizedRequest) -> Value;
     fn completion_body(&self, request: &NormalizedRequest) -> Value;
@@ -859,17 +902,32 @@ trait ProviderAdapter: Sync {
     fn parse_completion(&self, value: &Value) -> Result<NormalizedResponse, ProviderError>;
 }
 
-struct DeepseekAdapter;
-struct OpenaiAdapter;
+struct DeepseekAdapter {
+    profile: ToolProtocolProfile,
+}
+struct OpenaiAdapter {
+    profile: ToolProtocolProfile,
+}
 
-static DEEPSEEK_ADAPTER: DeepseekAdapter = DeepseekAdapter;
-static OPENAI_ADAPTER: OpenaiAdapter = OpenaiAdapter;
+static DEEPSEEK_ADAPTER: DeepseekAdapter = DeepseekAdapter {
+    profile: ToolProtocolProfile::Nr4,
+};
+static OPENAI_ADAPTER: OpenaiAdapter = OpenaiAdapter {
+    profile: ToolProtocolProfile::Nr4,
+};
+static DEEPSEEK_NR5_ADAPTER: DeepseekAdapter = DeepseekAdapter {
+    profile: ToolProtocolProfile::Nr5,
+};
+static OPENAI_NR5_ADAPTER: OpenaiAdapter = OpenaiAdapter {
+    profile: ToolProtocolProfile::Nr5,
+};
 
 const NOVELIST_READ_CONTEXT_PROVIDER_NAME: &str = "novelist_read_context";
 
 fn provider_tool_name(name: &str) -> &str {
     match name {
         NOVELIST_READ_CONTEXT_TOOL_NAME => NOVELIST_READ_CONTEXT_PROVIDER_NAME,
+        "novelist.publish" => "novelist_publish",
         crate::canon_change::PROPOSE_CHANGE_TOOL_NAME => {
             crate::canon_change::PROPOSE_CHANGE_WIRE_NAME
         }
@@ -880,6 +938,7 @@ fn provider_tool_name(name: &str) -> &str {
 fn internal_tool_name(name: &str) -> &str {
     match name {
         NOVELIST_READ_CONTEXT_PROVIDER_NAME => NOVELIST_READ_CONTEXT_TOOL_NAME,
+        "novelist_publish" => "novelist.publish",
         crate::canon_change::PROPOSE_CHANGE_WIRE_NAME => {
             crate::canon_change::PROPOSE_CHANGE_TOOL_NAME
         }
@@ -891,6 +950,20 @@ fn adapter(provider: ProviderId) -> &'static dyn ProviderAdapter {
     match provider {
         ProviderId::Deepseek => &DEEPSEEK_ADAPTER,
         ProviderId::Openai => &OPENAI_ADAPTER,
+    }
+}
+
+fn adapter_for_request(
+    provider: ProviderId,
+    request: &NormalizedRequest,
+) -> &'static dyn ProviderAdapter {
+    if request.protocol_profile == ToolProtocolProfile::Nr5 {
+        match provider {
+            ProviderId::Deepseek => &DEEPSEEK_NR5_ADAPTER,
+            ProviderId::Openai => &OPENAI_NR5_ADAPTER,
+        }
+    } else {
+        adapter(provider)
     }
 }
 
@@ -961,7 +1034,9 @@ fn deepseek_tool_values(definitions: &[ToolDefinition]) -> Vec<Value> {
 
 fn deepseek_tool_parameters(definition: &ToolDefinition) -> Value {
     if definition.name == NOVELIST_READ_CONTEXT_TOOL_NAME {
-        deepseek_novelist_read_context_input_schema()
+        crate::canon_context::deepseek_novelist_read_context_input_schema_for(
+            definition.protocol_profile(),
+        )
     } else {
         definition.input_schema.clone()
     }
@@ -1068,6 +1143,9 @@ fn openai_input(request: &NormalizedRequest) -> Result<Vec<Value>, ProviderError
 }
 
 impl ProviderAdapter for DeepseekAdapter {
+    fn protocol_profile(&self) -> ToolProtocolProfile {
+        self.profile
+    }
     fn preset(&self) -> &'static ProviderPreset {
         &DEEPSEEK_PRESET
     }
@@ -1183,7 +1261,8 @@ impl ProviderAdapter for DeepseekAdapter {
             .and_then(Value::as_str)
             .map(map_finish_reason)
             .unwrap_or(FinishReason::Unknown);
-        let tool_call = parse_deepseek_tool_call(choice.pointer("/message/tool_calls"))?;
+        let tool_call =
+            parse_deepseek_tool_call_for(choice.pointer("/message/tool_calls"), self.profile)?;
         if (finish_reason == FinishReason::ToolCall) != tool_call.is_some() {
             return Err(ProviderError::protocol());
         }
@@ -1194,7 +1273,7 @@ impl ProviderAdapter for DeepseekAdapter {
                 call: call.clone(),
             });
         if let Some(continuation) = &continuation {
-            validate_continuation_bounds(continuation)?;
+            validate_continuation_bounds_for(continuation, self.profile)?;
         }
         Ok(NormalizedResponse {
             text: text.to_owned(),
@@ -1209,6 +1288,9 @@ impl ProviderAdapter for DeepseekAdapter {
 }
 
 impl ProviderAdapter for OpenaiAdapter {
+    fn protocol_profile(&self) -> ToolProtocolProfile {
+        self.profile
+    }
     fn preset(&self) -> &'static ProviderPreset {
         &OPENAI_PRESET
     }
@@ -1266,7 +1348,7 @@ impl ProviderAdapter for OpenaiAdapter {
                 if let Some(usage) = response.get("usage").and_then(parse_openai_usage) {
                     events.push(AdapterStreamEvent::Usage(usage));
                 }
-                let (_, tool_call, continuation) = parse_openai_output(response)?;
+                let (_, tool_call, continuation) = parse_openai_output_for(response, self.profile)?;
                 if let (Some(call), Some(continuation)) = (tool_call, continuation) {
                     events.push(AdapterStreamEvent::ToolEnvelope { call, continuation });
                     events.push(AdapterStreamEvent::Finished(FinishReason::ToolCall));
@@ -1290,7 +1372,7 @@ impl ProviderAdapter for OpenaiAdapter {
         if value.get("model").and_then(Value::as_str) != Some(self.preset().model) {
             return Err(ProviderError::model_unavailable());
         }
-        let (text, tool_call, continuation) = parse_openai_output(value)?;
+        let (text, tool_call, continuation) = parse_openai_output_for(value, self.profile)?;
         let finish_reason = match (
             value.get("status").and_then(Value::as_str),
             tool_call.is_some(),
@@ -1328,8 +1410,9 @@ fn parse_openai_usage(value: &Value) -> Option<Usage> {
     })
 }
 
-fn parse_openai_output(
+fn parse_openai_output_for(
     response: &Value,
+    profile: ToolProtocolProfile,
 ) -> Result<
     (
         String,
@@ -1384,7 +1467,7 @@ fn parse_openai_output(
             .map_err(|_| ProviderError::protocol())?
             .len();
         let item_limit = if item.get("type").and_then(Value::as_str) == Some("function_call") {
-            MAX_TOOL_CONTINUATION_BYTES
+            profile.native_continuation_bytes()
         } else {
             32 * 1024
         };
@@ -1392,7 +1475,7 @@ fn parse_openai_output(
             return Err(ProviderError::response_too_large());
         }
         total_bytes = total_bytes.saturating_add(item_bytes);
-        if total_bytes > 48 * 1024 {
+        if total_bytes > profile.native_continuation_bytes() {
             return Err(ProviderError::response_too_large());
         }
         let item_id = item
@@ -1441,7 +1524,7 @@ fn parse_openai_output(
                     name: internal_tool_name(&required_string(item, "name")?).to_owned(),
                     arguments_json: arguments.clone(),
                 };
-                call.validate_envelope()
+                call.validate_envelope_for(profile)
                     .map_err(|_| ProviderError::protocol())?;
                 if item.get("status").and_then(Value::as_str) != Some("completed") {
                     return Err(ProviderError::protocol());
@@ -1465,9 +1548,12 @@ fn parse_openai_output(
             _ => return Err(ProviderError::protocol()),
         }
     }
-    let call = continuation_tool_call(&ProviderContinuation::Openai {
-        items: items.clone(),
-    })?;
+    let call = continuation_tool_call_for(
+        &ProviderContinuation::Openai {
+            items: items.clone(),
+        },
+        profile,
+    )?;
     Ok((
         text,
         Some(call),
@@ -1502,8 +1588,9 @@ fn parse_optional_phase(value: &Value) -> Result<Option<String>, ProviderError> 
     }
 }
 
-fn parse_deepseek_tool_call(
+fn parse_deepseek_tool_call_for(
     value: Option<&Value>,
+    profile: ToolProtocolProfile,
 ) -> Result<Option<ProviderToolCall>, ProviderError> {
     let Some(calls) = value.and_then(Value::as_array) else {
         return Ok(None);
@@ -1533,7 +1620,7 @@ fn parse_deepseek_tool_call(
             .ok_or_else(ProviderError::protocol)?
             .to_owned(),
     };
-    call.validate_envelope()
+    call.validate_envelope_for(profile)
         .map_err(|_| ProviderError::protocol())?;
     Ok(Some(call))
 }
@@ -1623,7 +1710,7 @@ impl ProviderHttpClient {
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let response = self.send(
@@ -1649,7 +1736,7 @@ impl ProviderHttpClient {
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
         request.validate_for(provider)?;
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let mut last_error = ProviderError::unreachable();
@@ -1696,7 +1783,7 @@ impl ProviderHttpClient {
         cancellation: &CancellationToken,
     ) -> Result<NormalizedResponse, ProviderError> {
         request.validate_for(provider)?;
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let mut last_error = ProviderError::unreachable();
@@ -1748,7 +1835,7 @@ impl ProviderHttpClient {
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.completion_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let response = tokio::select! {
@@ -1784,7 +1871,7 @@ impl ProviderHttpClient {
         sink: &mut dyn FnMut(NormalizedEvent) -> Result<(), ProviderError>,
     ) -> Result<NormalizedResponse, ProviderError> {
         request.validate_for(provider)?;
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let mut response = None;
@@ -1840,7 +1927,7 @@ impl ProviderHttpClient {
         F: FnMut(NormalizedEvent) -> Result<(), ProviderError> + Send,
     {
         request.validate_for(provider)?;
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let mut response = None;
@@ -1921,7 +2008,7 @@ impl ProviderHttpClient {
         if cancellation.is_cancelled() {
             return Err(ProviderError::cancelled());
         }
-        let adapter = adapter(provider);
+        let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
         let response = tokio::select! {
@@ -2146,14 +2233,20 @@ fn consume_stream(
     {
         return Err(ProviderError::response_too_large());
     }
-    let mut decoder = SseDecoder::default();
+    let mut decoder = SseDecoder {
+        profile: adapter.protocol_profile(),
+        ..SseDecoder::default()
+    };
     let mut aggregate = String::new();
     let mut usage = None;
     let mut finish_reason = None;
     let mut done = false;
     let mut sequence = 0u32;
     let mut event_count = 0usize;
-    let mut tool_state = ToolCallAccumulator::default();
+    let mut tool_state = ToolCallAccumulator {
+        profile: adapter.protocol_profile(),
+        ..ToolCallAccumulator::default()
+    };
     let mut response_bytes = 0usize;
     let mut chunk = [0u8; 8 * 1024];
 
@@ -2243,14 +2336,20 @@ where
     {
         return Err(ProviderError::response_too_large());
     }
-    let mut decoder = SseDecoder::default();
+    let mut decoder = SseDecoder {
+        profile: adapter.protocol_profile(),
+        ..SseDecoder::default()
+    };
     let mut aggregate = String::new();
     let mut usage = None;
     let mut finish_reason = None;
     let mut done = false;
     let mut sequence = 0u32;
     let mut event_count = 0usize;
-    let mut tool_state = ToolCallAccumulator::default();
+    let mut tool_state = ToolCallAccumulator {
+        profile: adapter.protocol_profile(),
+        ..ToolCallAccumulator::default()
+    };
     let mut response_bytes = 0usize;
 
     loop {
@@ -2399,13 +2498,14 @@ fn apply_stream_data(
 
 #[derive(Default)]
 struct SseDecoder {
+    profile: ToolProtocolProfile,
     buffer: Vec<u8>,
     data_lines: Vec<String>,
 }
 
 impl SseDecoder {
     fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, ProviderError> {
-        if self.buffer.len().saturating_add(bytes.len()) > MAX_EVENT_BYTES * 2 {
+        if self.buffer.len().saturating_add(bytes.len()) > self.profile.stream_event_bytes() * 2 {
             return Err(ProviderError::response_too_large());
         }
         self.buffer.extend_from_slice(bytes);
@@ -2446,7 +2546,12 @@ impl SseDecoder {
         if let Some(data) = line.strip_prefix(b"data:") {
             let data = data.strip_prefix(b" ").unwrap_or(data);
             let text = std::str::from_utf8(data).map_err(|_| ProviderError::protocol())?;
-            if text.len() > MAX_EVENT_BYTES {
+            if text
+                .len()
+                .saturating_add(self.data_lines.iter().map(String::len).sum::<usize>())
+                .saturating_add(self.data_lines.len())
+                > self.profile.stream_event_bytes()
+            {
                 return Err(ProviderError::response_too_large());
             }
             self.data_lines.push(text.to_owned());
@@ -2457,7 +2562,7 @@ impl SseDecoder {
     fn take_event(&mut self) -> Result<String, ProviderError> {
         let event = self.data_lines.join("\n");
         self.data_lines.clear();
-        if event.len() > MAX_EVENT_BYTES {
+        if event.len() > self.profile.stream_event_bytes() {
             return Err(ProviderError::response_too_large());
         }
         Ok(event)
@@ -2525,6 +2630,128 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn nr502_protocol_profiles_accept_large_escaped_chapter_arguments_without_leaking_to_nr4() {
+        let raw = serde_json::to_string(&json!({"content": "\"".repeat(30 * 1024)})).unwrap();
+        assert!(raw.len() > crate::tool_runtime::MAX_TOOL_CONTINUATION_BYTES);
+        assert!(raw.len() <= crate::chapter_contract::NR5_TOOL_ARGUMENT_BYTES);
+        let mut definition = crate::canon_change::propose_change_definition();
+        definition.version = 2;
+        definition.input_schema = json!({"type":"object","properties":{"content":{"type":"string"}},"required":["content"],"additionalProperties":false});
+        definition
+            .validate_arguments(&serde_json::from_str(&raw).unwrap())
+            .unwrap();
+        let request = NormalizedRequest::user_text("写并保存章节".to_owned(), 4096)
+            .unwrap()
+            .with_tool_definitions(vec![definition.clone()])
+            .unwrap();
+        assert_eq!(
+            request.body_limit(),
+            crate::chapter_contract::NR5_REQUEST_BYTES
+        );
+        for provider in [ProviderId::Deepseek, ProviderId::Openai] {
+            let completion = if provider == ProviderId::Deepseek {
+                json!({"model":DEEPSEEK_PRESET.model,"choices":[{"message":{"content":"","tool_calls":[{"id":"chapter_call","type":"function","function":{"name":"novelist_propose_change","arguments":raw}}]},"finish_reason":"tool_calls"}]})
+            } else {
+                json!({"model":OPENAI_PRESET.model,"status":"completed","output":[{"type":"function_call","id":"fc_chapter","call_id":"chapter_call","name":"novelist_propose_change","arguments":raw,"status":"completed"}]})
+            };
+            assert!(adapter(provider).parse_completion(&completion).is_err());
+            let parsed = adapter_for_request(provider, &request)
+                .parse_completion(&completion)
+                .unwrap();
+            assert_eq!(parsed.tool_call.as_ref().unwrap().arguments_json, raw);
+            let result = ToolResult {
+                call_id: "chapter_call".to_owned(),
+                name: crate::canon_change::PROPOSE_CHANGE_TOOL_NAME.to_owned(),
+                version: 2,
+                status: crate::tool_runtime::ToolResultStatus::Succeeded,
+                output_json: Some(json!({"receipt":"x".repeat(40 * 1024)})),
+                error_code: None,
+            };
+            let next = request
+                .continue_after_tool(parsed.continuation.unwrap(), result, 4096)
+                .unwrap();
+            assert!(
+                next.serialized_request_bytes(provider).unwrap()
+                    <= crate::chapter_contract::NR5_REQUEST_BYTES
+            );
+            for streaming in [false, true] {
+                let actual = capture_outbound_json(provider, &next, streaming);
+                assert!(
+                    serde_json::to_vec(&actual).unwrap().len()
+                        <= crate::chapter_contract::NR5_REQUEST_BYTES
+                );
+                let encoded = serde_json::to_string(&actual).unwrap();
+                assert!(encoded.contains("chapter_call"));
+                assert!(encoded.contains(&"x".repeat(40 * 1024)));
+            }
+            if provider == ProviderId::Openai {
+                let data = serde_json::to_string(
+                    &json!({"type":"response.completed","response":completion}),
+                )
+                .unwrap();
+                assert!(data.len() > MAX_EVENT_BYTES);
+                let wire = format!("data: {data}\n\n");
+                assert!(SseDecoder::default().push(wire.as_bytes()).is_err());
+                let mut decoder = SseDecoder {
+                    profile: ToolProtocolProfile::Nr5,
+                    ..SseDecoder::default()
+                };
+                let events = decoder.push(wire.as_bytes()).unwrap();
+                assert_eq!(events.len(), 1);
+                assert!(adapter_for_request(provider, &request)
+                    .parse_stream_data(&events[0])
+                    .is_ok());
+            } else {
+                let mut aggregate = ToolCallAccumulator {
+                    profile: ToolProtocolProfile::Nr5,
+                    ..ToolCallAccumulator::default()
+                };
+                for (index, chunk) in raw.as_bytes().chunks(4096).enumerate() {
+                    aggregate
+                        .push_delta(
+                            0,
+                            (index == 0).then(|| "chapter_call".to_owned()),
+                            (index == 0)
+                                .then(|| crate::canon_change::PROPOSE_CHANGE_TOOL_NAME.to_owned()),
+                            String::from_utf8(chunk.to_vec()).unwrap(),
+                        )
+                        .unwrap();
+                }
+                assert_eq!(
+                    aggregate
+                        .finish(provider, "")
+                        .unwrap()
+                        .0
+                        .unwrap()
+                        .arguments_json,
+                    raw
+                );
+            }
+        }
+        let oversized =
+            json!({"content":"x".repeat(crate::chapter_contract::NR5_TOOL_ARGUMENT_BYTES)});
+        assert!(definition.validate_arguments(&oversized).is_err());
+        definition.version = 1;
+        assert!(definition
+            .validate_arguments(&serde_json::from_str(&raw).unwrap())
+            .is_err());
+        assert_eq!(
+            NormalizedRequest::user_text("普通聊天".to_owned(), 4096)
+                .unwrap()
+                .body_limit(),
+            MAX_REQUEST_BYTES
+        );
+        assert_eq!(
+            NormalizedRequest::user_text("资料维护".to_owned(), 4096)
+                .unwrap()
+                .with_tool_definitions(vec![definition])
+                .unwrap()
+                .body_limit(),
+            crate::canon_change::NR4_REQUEST_BYTES
+        );
+    }
 
     fn capture_outbound_json(
         provider: ProviderId,
@@ -2962,6 +3189,108 @@ mod tests {
     }
 
     #[test]
+    fn nr504_native_history_preserves_seven_pairs_and_rejects_replay_mismatch_and_excess() {
+        use crate::canon_change::PROPOSE_CHANGE_TOOL_NAME;
+        let mut mutation = crate::canon_change::propose_change_definition();
+        mutation.version = 2;
+        let mut publication = mutation.clone();
+        publication.name = "novelist.publish".to_owned();
+        let definitions = vec![
+            crate::canon_context::novelist_read_context_definition_for(ToolProtocolProfile::Nr5),
+            mutation,
+            publication,
+        ];
+        for provider in [ProviderId::Deepseek, ProviderId::Openai] {
+            let initial = NormalizedRequest::user_text("合成多任务".to_owned(), 4096)
+                .unwrap()
+                .with_tool_definitions(definitions.clone())
+                .unwrap();
+            let mut request = initial.clone();
+            let sequence = [
+                NOVELIST_READ_CONTEXT_TOOL_NAME,
+                PROPOSE_CHANGE_TOOL_NAME,
+                NOVELIST_READ_CONTEXT_TOOL_NAME,
+                "novelist.publish",
+                PROPOSE_CHANGE_TOOL_NAME,
+                NOVELIST_READ_CONTEXT_TOOL_NAME,
+                NOVELIST_READ_CONTEXT_TOOL_NAME,
+            ];
+            for (index, name) in sequence.iter().enumerate() {
+                let (continuation, mut result) = nr403_exchange(provider, index, name);
+                result.version = 2;
+                let mut wrong = result.clone();
+                wrong.call_id.push_str("_wrong");
+                assert!(request
+                    .continue_after_tool(continuation.clone(), wrong, 4096)
+                    .is_err());
+                let prior = request.clone();
+                request = request
+                    .continue_after_tool(continuation.clone(), result.clone(), 4096)
+                    .unwrap();
+                assert!(request
+                    .continue_after_tool(continuation, result, 4096)
+                    .is_err());
+                if index < 6 {
+                    request = request.with_tool_definitions(definitions.clone()).unwrap();
+                }
+                let body = capture_outbound_json(provider, &request, true);
+                assert_eq!(
+                    request.serialized_request_bytes(provider).unwrap(),
+                    serde_json::to_vec(&body).unwrap().len()
+                );
+                assert_eq!(body["tool_choice"], if index < 6 { "auto" } else { "none" });
+                let entries = body[if provider == ProviderId::Deepseek {
+                    "messages"
+                } else {
+                    "input"
+                }]
+                .as_array()
+                .unwrap();
+                for pair in 0..=index {
+                    let id = format!("nr403_call_{pair}");
+                    assert_eq!(
+                        entries
+                            .iter()
+                            .filter(|entry| entry["tool_call_id"] == id
+                                || (entry["type"] == "function_call_output"
+                                    && entry["call_id"] == id))
+                            .count(),
+                        1
+                    );
+                }
+                if index == 4 {
+                    let (extra, mut result) =
+                        nr403_exchange(provider, 99, PROPOSE_CHANGE_TOOL_NAME);
+                    result.version = 2;
+                    assert!(request.continue_after_tool(extra, result, 4096).is_err());
+                }
+                if index == 3 {
+                    let (extra, mut result) = nr403_exchange(provider, 99, "novelist.publish");
+                    result.version = 2;
+                    assert!(request.continue_after_tool(extra, result, 4096).is_err());
+                }
+                assert!(
+                    prior
+                        .validate_for(if provider == ProviderId::Deepseek {
+                            ProviderId::Openai
+                        } else {
+                            ProviderId::Deepseek
+                        })
+                        .is_err()
+                        || index == 0
+                );
+            }
+            assert!(request
+                .clone()
+                .with_tool_definitions(definitions.clone())
+                .is_err());
+            let (extra, mut result) = nr403_exchange(provider, 99, NOVELIST_READ_CONTEXT_TOOL_NAME);
+            result.version = 2;
+            assert!(request.continue_after_tool(extra, result, 4096).is_err());
+        }
+    }
+
+    #[test]
     fn nr403_replayed_mismatched_and_excess_read_calls_fail_before_outbound() {
         let definitions = vec![
             crate::canon_context::novelist_read_context_definition(),
@@ -3097,7 +3426,7 @@ mod tests {
             }
         ]);
         assert_eq!(
-            parse_deepseek_tool_call(Some(&deepseek_calls))
+            parse_deepseek_tool_call_for(Some(&deepseek_calls), ToolProtocolProfile::Nr4)
                 .err()
                 .unwrap()
                 .code,
@@ -3118,7 +3447,10 @@ mod tests {
             ]
         });
         assert_eq!(
-            parse_openai_output(&openai_response).err().unwrap().code,
+            parse_openai_output_for(&openai_response, ToolProtocolProfile::Nr4)
+                .err()
+                .unwrap()
+                .code,
             "provider.protocol"
         );
     }
@@ -3457,6 +3789,7 @@ mod tests {
                 tool_result: None,
                 previous_tools: Vec::new(),
                 canon_changes: false,
+                protocol_profile: ToolProtocolProfile::Nr4,
             },
             NormalizedRequest {
                 messages: vec![
@@ -3479,6 +3812,7 @@ mod tests {
                 tool_result: None,
                 previous_tools: Vec::new(),
                 canon_changes: false,
+                protocol_profile: ToolProtocolProfile::Nr4,
             },
             NormalizedRequest {
                 messages: vec![
@@ -3497,6 +3831,7 @@ mod tests {
                 tool_result: None,
                 previous_tools: Vec::new(),
                 canon_changes: false,
+                protocol_profile: ToolProtocolProfile::Nr4,
             },
         ];
         for request in invalid_requests {

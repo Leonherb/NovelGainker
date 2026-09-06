@@ -157,7 +157,7 @@ const validValidation: analysisApi.ValidationReport = {
   diagnostics: [],
   eligibleForAiApply: true,
   eligibleForFinal: true,
-  eligibleForEpub: true,
+  eligibleForEpub: false,
 };
 
 const saveResult: workspaceApi.ProjectFileSaveResult = {
@@ -435,6 +435,36 @@ describe("NG-105 project workspace", () => {
       completeSave?.(saveResult);
     });
     expect(await screen.findByText("已保存")).toBeInTheDocument();
+  });
+
+  it("NR-502 displays the Host-saved draft text and separates saved from finalization", async () => {
+    const user = userEvent.setup();
+    const original = "---\nstatus: final\n---\n\n旧正文。\n";
+    const submitted = original.replace("旧正文", "新正文");
+    const actual = submitted.replace("status: final", "status: draft");
+    vi.spyOn(workspaceApi, "requestProjectFile").mockResolvedValue({
+      ...chapterDocument,
+      content: original,
+      lineEnding: "lf",
+    });
+    vi.mocked(workspaceApi.requestProjectFileSave).mockResolvedValue({
+      ...saveResult,
+      relativePath: chapterDocument.relativePath,
+      savedContent: actual,
+      chapterFinalizationConfirmed: false,
+      sizeBytes: new TextEncoder().encode(actual).length,
+      validation: { ...validValidation, relativePath: chapterDocument.relativePath },
+    });
+    render(<ProjectWorkspace desktopRuntime windowClosePort={createWindowCloseHarness().port} />);
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "01.md" }));
+    const editor = await screen.findByRole("textbox", { name: "项目 Markdown 编辑器" });
+    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+    fireEvent.change(editor, { target: { value: submitted } });
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("章节已保存；当前版本仍需确认定稿。")).toBeInTheDocument();
+    expect(editor).toHaveValue(actual);
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
   it("keeps the dirty editor content when the save button sees a stale source hash", async () => {
     const user = userEvent.setup();

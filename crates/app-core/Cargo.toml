@@ -18,12 +18,17 @@ uuid = { version = "1", features = ["v4"] }
 novelgainker-domain = { path = "../novelgainker-domain" }
 novelgainker-validation = { path = "../novelgainker-validation" }
 rusqlite = { version = "0.37", features = ["bundled"] }
+quick-xml = "=0.41.0"
+crc32fast = "=1.5.0"
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dev-dependencies]
 serde_json = "1"
+tauri = { version = "2", features = ["test"] }
+tauri-plugin-dialog = "2"
 [build-dependencies]
 serde_json = "1"
 sha2 = "0.10"

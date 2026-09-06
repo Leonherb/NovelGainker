@@ -15,6 +15,36 @@ const activity: api.ChangeActivity = {
   },
 };
 describe("NR-404 actual Host save feedback", () => {
+  it("NR-503 keeps saved truth while showing stale source without automatic Undo", () => {
+    const decide = vi.spyOn(api, "requestCanonChangeDecision");
+    render(
+      <CanonChangeView
+        sessionId={id}
+        activity={{
+          ...activity,
+          chapterSourceState: "stale",
+          receipt: { ...activity.receipt, status: "committed" },
+        }}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("已保存 1 项资料")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("资料需复核");
+    expect(screen.getByRole("button", { name: "撤销本次更改" })).toBeEnabled();
+    expect(decide).not.toHaveBeenCalled();
+  });
+  it("NR-503 rejects unknown source states and disables stale pending confirmation", () => {
+    expect(() => api.parseChangeActivity({ ...activity, chapterSourceState: "guessed" })).toThrow();
+    render(
+      <CanonChangeView
+        sessionId={id}
+        activity={{ ...activity, chapterSourceState: "unavailable" }}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "确认保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "放弃" })).toBeEnabled();
+  });
   it("NR-405 invokes local Undo and refreshes durable truth even on recovery failure", async () => {
     const committed = {
       ...activity,
@@ -30,7 +60,13 @@ describe("NR-404 actual Host save feedback", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "撤销本次更改" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("变更记录或快照暂不可用");
-    expect(decide).toHaveBeenCalledExactlyOnceWith(id, committed.receipt, "undo");
+    expect(decide).toHaveBeenCalledExactlyOnceWith(
+      id,
+      committed.receipt,
+      "undo",
+      undefined,
+      committed.conversationSessionId,
+    );
     expect(changed).toHaveBeenCalledOnce();
     view.rerender(
       <CanonChangeView
@@ -63,7 +99,12 @@ describe("NR-404 actual Host save feedback", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看更改" }));
     expect(await screen.findByText("+<script>not markup</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
-    expect(detail).toHaveBeenCalledExactlyOnceWith(id, id);
+    expect(detail).toHaveBeenCalledExactlyOnceWith(
+      id,
+      id,
+      undefined,
+      activity.conversationSessionId,
+    );
   });
   it("disables repeat confirmation, uses local CAS and waits for refreshed Host truth", async () => {
     let finish!: (receipt: api.ChangeReceipt) => void;
@@ -78,7 +119,13 @@ describe("NR-404 actual Host save feedback", () => {
     fireEvent.click(button);
     fireEvent.click(button);
     expect(button).toBeDisabled();
-    expect(decide).toHaveBeenCalledExactlyOnceWith(id, activity.receipt, "confirm");
+    expect(decide).toHaveBeenCalledExactlyOnceWith(
+      id,
+      activity.receipt,
+      "confirm",
+      undefined,
+      activity.conversationSessionId,
+    );
     const receipt = { ...activity.receipt, revision: 3, status: "committed" as const };
     await act(async () => finish(receipt));
     expect(changed).toHaveBeenCalledOnce();

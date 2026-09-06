@@ -1,15 +1,19 @@
-# NovelGainker NR-2～NR-7 能力交付总计划 Draft 2
+# NovelGainker NR-2～NR-6 能力交付总计划 Draft 2
 
-> 文档状态：Approved / `NR2-D2-R01～R06` 全部通过  
+2026-09-05 范围纠正：用户未提出云同步需求，现已从整个路线、阶段表、覆盖矩阵及待决定项删除；本计划止于NR-6 / NR-G7，不保留云同步待办。下方原阶段时点的授权说明为历史记录，现行进度见[sprint-plan](sprint-plan.zh-CN.md)。
+
+> 文档状态：Approved / `NR2-D2-R01～R05` 全部通过  
 > 形成日期：2026-09-01  
 > 当前实现基线：NR-1  
 > 当前已通过 Gate：NR-G2  
 > 当前授权：仅形成并最终评审 `NR-2 Host Agent Loop / Tool Request-Result Story Packet Draft 2`  
-> 明确未授权：`NR-201～NR-206` 实施、真实 Provider Live Smoke、形成 `NR-3～NR-7` Story Packet
+> 明确未授权：`NR-201～NR-206` 实施、真实 Provider Live Smoke、形成 `NR-3～NR-6` Story Packet
+
+2026-09-05 NR-6执行方式修订：R04多会话/历史操作/保守重试的产品行为已接受；NR-604/605由多位用户直接试用应用并提交自愿脱敏反馈，替代助手自动Live批次。见[多用户测试方案](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md)。下方原真实验证的授权要求不构成助手调用Key或自动批跑许可；执行安排以现行联合Story和该测试方案为准，尚未发放/测试。原双Provider/长篇真实证据与NR-G7要求保留。
 
 ## 1. 计划结论
 
-报告中“当前明确未实现的产品能力”不能作为一个大 Story 一次实现。它们包含 Agent 协议、Skill、Canon 读取、安全写入、章节生产、会话管理、Provider 恢复、真实模型验证和云同步等不同风险层级，必须按依赖关系逐层开放。
+报告中“当前明确未实现的产品能力”不能作为一个大 Story 一次实现。它们包含 Agent 协议、Skill、Canon 读取、安全写入、章节生产、会话管理、Provider 恢复、真实模型验证等不同风险层级，必须按依赖关系逐层开放。
 
 现行序列保持不变：
 
@@ -17,7 +21,6 @@
 - `NR-2` 的退出 Gate 为 `NR-G3`；
 - 后续依次为 `NR-3 / NR-301… / NR-G4`，不创建任何新前缀；
 - `NR-2～NR-6` 构成 Local-first 核心产品路线；
-- `NR-7` 仅作为 Cloud Sync 条件路线保留编号，必须另行完成产品决策后才能形成 Story Packet。
 
 核心依赖链为：
 
@@ -34,8 +37,6 @@ NR-5 Chapter / Continuity / Publication Loop
   ↓ NR-G6
 NR-6 Conversation Operations / Provider Resilience / Full Live Semantic Validation
   ↓ NR-G7
-NR-7 Cloud Sync（条件路线，不属于连续实施授权）
-  ↓ NR-G8
 ```
 
 ## 2. 跨阶段不可破坏边界
@@ -214,25 +215,6 @@ Host 校验来源引用真实存在、目标类型、路径、Hash、事务和�
 - 几十万字规模不仅通过字节压力测试，还具备明确的语义质量结论；
 - 若真实模型语义不达标，应回到对应 Story 修正，不以 NR-G7 通过掩盖。
 
-## 3.6 NR-7——Cloud Sync 条件路线
-
-### 阶段定位
-
-Cloud Sync 不是当前 Local-first 小说 Agent 闭环的依赖项，而且会引入账号、远端服务、加密、设备身份、数据驻留和多写者冲突。它不能混入 NR-2～NR-6 的连续实施授权。
-
-只有在 NR-G7 通过并且产品负责人单独批准 Cloud Sync 产品边界后，才允许形成 NR-7 Story Packet。以下编号只用于预留，不代表需求已经冻结：
-
-| Story    | 候选标题                   | 必须先回答的问题                                                  |
-| -------- | -------------------------- | ----------------------------------------------------------------- |
-| `NR-701` | Sync 产品合同与威胁模型    | 同步哪些数据、谁拥有远端数据、是否同步凭据、如何删除与导出        |
-| `NR-702` | 账号、设备与工程身份       | 无账号模式、设备授权、Project ID 和多设备身份如何保持 Local-first |
-| `NR-703` | 端到端加密与传输           | 密钥归属、服务端可见性、传输/静态加密和数据驻留                   |
-| `NR-704` | Canon/History 冲突合并     | 多 Writer、离线修改、章节冲突、History/Memory 派生状态如何处理    |
-| `NR-705` | 离线队列、恢复与可观测性   | 断网、部分上传、重放、撤销、配额和稳定错误语义                    |
-| `NR-706` | Sync E2E 与 NR-G8 技术提交 | 多设备合成回归、安全审计、删除证明和故障恢复                      |
-
-NR-7 未获批准时，产品继续保持完全 Local-first；本地 History 导出不等于 Cloud Sync。
-
 ## 4. 未实现能力覆盖矩阵
 
 | 当前未实现能力                                      | 主要落点                                   | 完成标志                                                 |
@@ -245,7 +227,6 @@ NR-7 未获批准时，产品继续保持完全 Local-first；本地 History 导
 | 确认正文提交到正式章节                              | `NR-501～NR-502`                           | 讨论稿与正式章节边界清楚、提交可恢复                     |
 | Task 与 Conversation 终态展示                       | `NR-204`，`NR-504`                         | 中栏内联活动/结果，回复不被任务失败污染，无新增面板      |
 | 多 Session、History 分支/清空/导出                  | `NR-601～NR-602`                           | 工程内多会话与本地操作不改变 Canon                       |
-| Cloud Sync                                          | 条件 `NR-701～NR-706`                      | 仅在独立产品、安全和服务端决策后实施                     |
 | Provider Cursor、断点续传和自动重试                 | `NR-603`                                   | 有资格、有上限、幂等且无重复副作用                       |
 | 真实模型兼容性与语义验证                            | `NR-306` 决策点，`NR-604～NR-605` 完整验证 | 最小只读检查与完整双 Provider/长篇评估分开授权、分开留证 |
 | Canon Apply、连续性审查和出版 Kernel 挂载           | `NR-402`，`NR-503～NR-505`                 | 从安全写入到连续性与 EPUB 的完整闭环                     |
@@ -258,7 +239,6 @@ NR-7 未获批准时，产品继续保持完全 Local-first；本地 History 导
 4. 技术提交不自动等于 Gate 通过；产品负责人批准 Gate 后才能形成下一阶段 Packet。
 5. `pnpm quality` 仍是每个实施 Story 和 Gate 的本地权威入口；新增 Tool/Skill/Canon IPC 后必须同步 Manifest、Handler、Permission、Capability 与全部生产 Client。
 6. NR-2 和 NR-3 的实现及技术提交默认保持离线。进入 NR-4 前必须对“最小只读 Live Smoke”作出单独授权或明确放弃决定；NR-6 的完整 Live/语义验证仍需再次单独授权。任何计划批准都不自动产生网络或凭据授权。
-7. NR-7 不属于 NR-2～NR-6 的连续路线授权，不能因为核心路线通过而自动进入。
 
 ## 6. Draft 2 评审结论落实
 
@@ -269,15 +249,14 @@ NR-7 未获批准时，产品继续保持完全 Local-first；本地 History 导
 | `NR2-D2-R03` Novelist 发布方式  | 修订为一个常驻、内置、版本固定的 Novelist Capability Pack；模型内部语义调用九项能力，Host 不建立关键词或前置 Skill Router |
 | `NR2-D2-R04` Canon 自动维护     | 增加四类来源规则；用户明确决定与无歧义正式章节事实可自动请求写入，AI 建议不自动成为 Canon，冲突/破坏性操作询问用户        |
 | `NR2-D2-R05` 真实 Provider 验证 | 改为分层验证：NR-3 后设置单独授权的最小只读兼容性决策；NR-6 保留完整 Tool/Write/Chapter/长篇语义验证                      |
-| `NR2-D2-R06` Cloud Sync         | 接受 Draft 1，不修改：隔离为条件 NR-7，不耦合 Local-first 核心路线                                                        |
 
 ## 7. 当前停止点与下一步
 
-产品负责人已批准本 Draft 2，并确认 `NR2-D2-R01～R06` 全部通过。代码仍停止在已通过的 `NR-G2`；当前下一步仅为评审已经形成的：
+产品负责人已批准本 Draft 2，并确认 `NR2-D2-R01～R05` 全部通过。代码仍停止在已通过的 `NR-G2`；当前下一步仅为评审已经形成的：
 
 > `NR-2 Host Agent Loop / Tool Request-Result Story Packet Draft 2`
 
-在该 Packet 获得明确实施批准前，不修改生产代码、不进入 `NR-201～NR-206`、不执行真实 Provider Live Smoke，也不形成 `NR-3～NR-7` Story Packet。
+在该 Packet 获得明确实施批准前，不修改生产代码、不进入 `NR-201～NR-206`、不执行真实 Provider Live Smoke，也不形成 `NR-3～NR-6` Story Packet。
 
 ## 8. BMAD Routing Brief
 
@@ -296,12 +275,12 @@ NR-7 未获批准时，产品继续保持完全 Local-first；本地 History 导
 
 ### Recommended next move
 
-- 最终评审 `NR2-D2-R01～R06`；
+- 最终评审 `NR2-D2-R01～R05`；
 - 未获另行批准前只停留在 Packet 评审，不进入实现。
 
 ### What not to do yet
 
-- 不并行形成 NR-3～NR-7 Story Packet；
+- 不并行形成 NR-3～NR-6 Story Packet；
 - 不把路线认可解释为实施授权；
 - 不执行真实 Provider Live Smoke；
 - 不恢复 Anchor、关键词 Router 或可见 Control JSON。

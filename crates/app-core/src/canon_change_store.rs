@@ -21,8 +21,12 @@ use uuid::Uuid;
 
 const MAX_RECORD_BYTES: u64 = 256 * 1024;
 
+mod chapter;
+mod continuity;
 mod decision;
+mod publication;
 mod undo;
+pub use chapter::ChapterSubmission;
 
 /// Concrete production executor; the runtime binding is attached in NR-403.
 pub struct NovelistProposeChangeExecutorV1 {
@@ -31,6 +35,9 @@ pub struct NovelistProposeChangeExecutorV1 {
 }
 
 impl NovelistProposeChangeExecutorV1 {
+    pub fn definition(&self) -> crate::tool_runtime::ToolDefinition {
+        chapter::tool::definition(self.coordinator.protocol_profile())
+    }
     pub fn new(
         coordinator: Arc<CanonChangeCoordinator>,
         evidence: Arc<Mutex<ChangeEvidence>>,
@@ -44,12 +51,20 @@ impl NovelistProposeChangeExecutorV1 {
 
 impl crate::tool_runtime::ToolExecutor for NovelistProposeChangeExecutorV1 {
     fn validate_arguments(&self, arguments: &Value) -> Result<(), &'static str> {
-        self.evidence
+        let evidence = self
+            .evidence
             .lock()
-            .map_err(|_| "agent.tool_executor_failed")?
-            .validate_request(arguments)
-            .map(|_| ())
-            .map_err(|_| "agent.tool_arguments_invalid")
+            .map_err(|_| "agent.tool_executor_failed")?;
+        if self.coordinator.nr5 {
+            chapter::tool::decode(&evidence, arguments, &self.coordinator)
+                .map(|_| ())
+                .map_err(|_| "agent.tool_arguments_invalid")
+        } else {
+            evidence
+                .validate_request(arguments)
+                .map(|_| ())
+                .map_err(|_| "agent.tool_arguments_invalid")
+        }
     }
 
     fn execute(
@@ -71,8 +86,23 @@ impl crate::tool_runtime::ToolExecutor for NovelistProposeChangeExecutorV1 {
             ) {
                 return Err(ChangeError::SourceInvalid);
             }
-            self.coordinator
-                .submit(&evidence, arguments, &context.call_id, cancellation)
+            if self.coordinator.nr5 {
+                match chapter::tool::decode(&evidence, arguments, &self.coordinator)? {
+                    chapter::tool::Request::Canon(value) => {
+                        self.coordinator
+                            .submit(&evidence, &value, &context.call_id, cancellation)
+                    }
+                    chapter::tool::Request::Chapter(prepared) => prepared.submit(
+                        &self.coordinator,
+                        &evidence,
+                        &context.call_id,
+                        cancellation,
+                    ),
+                }
+            } else {
+                self.coordinator
+                    .submit(&evidence, arguments, &context.call_id, cancellation)
+            }
         })();
         match result {
             Ok(receipt) => ToolExecutionOutput {
@@ -104,6 +134,7 @@ pub struct CanonChangeCoordinator {
     lease: Arc<ProjectWriteLease>,
     recovery: RecoveryStore,
     state: Arc<Mutex<CoordinatorState>>,
+    nr5: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,11 +161,68 @@ impl CanonChangeCoordinator {
             lease,
             recovery,
             state,
+            nr5: false,
         })
+    }
+
+    pub fn new_nr5(
+        handle: ProjectHandle,
+        lease: Arc<ProjectWriteLease>,
+        recovery: RecoveryStore,
+    ) -> Result<Self, ChangeError> {
+        let mut coordinator = Self::new(handle, lease, recovery)?;
+        coordinator.nr5 = true;
+        Ok(coordinator)
+    }
+
+    fn record_limit(&self) -> usize {
+        if self.nr5 {
+            2048
+        } else {
+            MAX_CHANGE_RECORDS
+        }
+    }
+    fn store_limit(&self) -> u64 {
+        if self.nr5 {
+            256 * 1024 * 1024
+        } else {
+            MAX_CHANGE_STORE_BYTES
+        }
+    }
+    fn record_byte_limit(&self) -> u64 {
+        if self.nr5 {
+            512 * 1024
+        } else {
+            MAX_RECORD_BYTES
+        }
     }
 
     pub fn project_id(&self) -> &str {
         self.handle.project_id()
+    }
+    /// Capture a conversation namespace while retaining the single Canon writer
+    /// and editor/recovery state for the entire project.
+    pub fn for_conversation(&self, handle: ProjectHandle) -> Result<Self, ChangeError> {
+        if handle.project_id() != self.handle.project_id()
+            || handle.coordination_key() != self.handle.coordination_key()
+        {
+            return Err(ChangeError::SourceInvalid);
+        }
+        Ok(Self {
+            handle,
+            lease: self.lease.clone(),
+            recovery: self.recovery.clone(),
+            state: self.state.clone(),
+            nr5: self.nr5,
+        })
+    }
+
+    pub fn protocol_profile(&self) -> crate::protocol_profile::ToolProtocolProfile {
+        if self.nr5 {
+            crate::protocol_profile::ToolProtocolProfile::Nr5
+        } else {
+            crate::protocol_profile::ToolProtocolProfile::Nr4
+        }
     }
 
     pub fn submit(
@@ -163,7 +251,11 @@ impl CanonChangeCoordinator {
         if !evidence.matches_context(self.project_id(), &session.session_id, &turn.turn_id) {
             return Err(ChangeError::SourceInvalid);
         }
-        let validated = evidence.validate_request(value)?;
+        let validated = if self.nr5 {
+            evidence.validate_request_nr5(value)?
+        } else {
+            evidence.validate_request(value)?
+        };
         let fresh = ChangeEvidence::from_conversation(&session, &turn.turn_id)?;
         let fresh_sources = fresh.source_references();
         if validated
@@ -276,6 +368,14 @@ impl CanonChangeCoordinator {
                 .collect(),
             snapshots,
             undo_revision: None,
+            chapter: None,
+            chapter_dependencies: if validated.request.source_kind
+                == ChangeSourceKind::ChapterCommit
+            {
+                evidence.chapter_dependencies()
+            } else {
+                Vec::new()
+            },
         };
         if record
             .snapshots
@@ -286,6 +386,7 @@ impl CanonChangeCoordinator {
         } else if confirmation {
             record.receipt.status = ChangeStatus::PendingConfirmation;
         }
+        self.validate_chapter_dependencies(&record)?;
         self.save_record(&record)?;
         if record.receipt.status != ChangeStatus::Prepared {
             return Ok(record.receipt);
@@ -301,6 +402,19 @@ impl CanonChangeCoordinator {
         cancellation: &CancellationToken,
         hook: &mut impl FnMut(CommitStage) -> Result<(), ChangeError>,
     ) -> Result<(), ChangeError> {
+        if let Err(error) = self
+            .chapter_preflight(record, cancellation)
+            .and_then(|()| self.validate_chapter_dependencies(record))
+        {
+            // No target file has been touched. A known preflight rejection
+            // must not leave a new Prepared record blocking subsequent work.
+            if record.receipt.status == ChangeStatus::Prepared {
+                record.receipt.status = ChangeStatus::Cancelled;
+                record.receipt.revision += 1;
+                self.save_record(record)?;
+            }
+            return Err(error);
+        }
         record.receipt.status = ChangeStatus::Applying;
         record.receipt.revision += 1;
         self.save_record(record)?;
@@ -309,22 +423,40 @@ impl CanonChangeCoordinator {
                 check_cancelled(cancellation)?;
                 hook(CommitStage::BeforeFile(index))?;
                 self.verify_lease()?;
+                self.validate_chapter_dependencies(record)?;
                 let before_hash = record.receipt.files[index]
                     .before_hash
                     .as_deref()
                     .unwrap_or("absent");
-                apply_canon_file_recoverable(
-                    &self.handle,
-                    if snapshot.before.is_some() {
-                        CanonFileOperationKind::Replace
-                    } else {
-                        CanonFileOperationKind::Create
-                    },
-                    &snapshot.relative_path,
-                    before_hash,
-                    snapshot.after.as_bytes(),
-                    &self.recovery,
-                )
+                if snapshot.entity_kind == CanonEntityKind::Chapter {
+                    crate::canon_apply::apply_chapter_file_recoverable(
+                        &self.handle,
+                        if snapshot.before.is_some() {
+                            crate::canon_apply::ChapterPatchOperationV1::Replace
+                        } else {
+                            crate::canon_apply::ChapterPatchOperationV1::Create
+                        },
+                        &snapshot.relative_path,
+                        record.receipt.files[index].before_hash.as_deref(),
+                        snapshot.after.as_bytes(),
+                        &self.recovery,
+                    )
+                    .map(|_| ())
+                } else {
+                    apply_canon_file_recoverable(
+                        &self.handle,
+                        if snapshot.before.is_some() {
+                            CanonFileOperationKind::Replace
+                        } else {
+                            CanonFileOperationKind::Create
+                        },
+                        &snapshot.relative_path,
+                        before_hash,
+                        snapshot.after.as_bytes(),
+                        &self.recovery,
+                    )
+                    .map(|_| ())
+                }
                 .map_err(|error| {
                     if error.code == "file.source_changed" {
                         ChangeError::SourceChanged
@@ -336,6 +468,8 @@ impl CanonChangeCoordinator {
             }
             check_cancelled(cancellation)?;
             hook(CommitStage::BeforeCommit)?;
+            self.chapter_preflight(record, cancellation)?;
+            self.validate_chapter_dependencies(record)?;
             // Verify the whole batch again: an external editor does not share our lock.
             for (snapshot, receipt) in record.snapshots.iter().zip(&record.receipt.files) {
                 if self.current_hash(&snapshot.relative_path)?.as_deref()
@@ -381,8 +515,9 @@ impl CanonChangeCoordinator {
                 }
                 match &snapshot.before {
                     Some(before) => {
-                        apply_canon_file_recoverable(
+                        apply_change_file_recoverable(
                             &self.handle,
+                            snapshot.entity_kind,
                             CanonFileOperationKind::Replace,
                             &snapshot.relative_path,
                             &receipt.after_hash,
@@ -506,6 +641,9 @@ impl CanonChangeCoordinator {
         let _state = self.state.try_lock().map_err(|_| ChangeError::WriterBusy)?;
         self.verify_lease()?;
         ensure_recovered(&self.records()?)?;
+        if self.nr5 && path.starts_with("chapters/") {
+            return self.save_manual_chapter_locked(path, content, source_hash);
+        }
         save_project_file_recoverable(&self.handle, path, content, source_hash, &self.recovery)
             .map_err(|error| {
                 if error.code == "file.source_changed" {
@@ -561,6 +699,23 @@ impl CanonChangeCoordinator {
         operation: &CanonMutation,
         cancellation: &CancellationToken,
     ) -> Result<(), ChangeError> {
+        if operation.entity_kind == CanonEntityKind::Chapter {
+            let candidate = crate::chapter_contract::ChapterDocument::parse(
+                "chapters/candidate.md",
+                operation.proposed_markdown.as_bytes(),
+            )
+            .map_err(|_| ChangeError::CandidateInvalid)?;
+            let inventory = self.chapter_inventory(cancellation)?;
+            if inventory.len() >= 500
+                || inventory.iter().any(|(_, d)| {
+                    d.identity.chapter_id == candidate.identity.chapter_id
+                        || d.identity.chapter_number == candidate.identity.chapter_number
+                })
+            {
+                return Err(ChangeError::DuplicateTarget);
+            }
+            return Ok(());
+        }
         let title = metadata_field(&operation.proposed_markdown, "title")
             .ok_or(ChangeError::CandidateInvalid)?;
         let index = list_project_files(&self.handle).map_err(|_| ChangeError::TargetInvalid)?;
@@ -590,8 +745,13 @@ impl CanonChangeCoordinator {
             .map_err(|_| ChangeError::TargetInvalid)?;
         match fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.is_file() && !is_link_or_reparse(&metadata) => {
-                let bytes = read_bounded(&target, MAX_CHANGE_FILE_BYTES as u64)
-                    .map_err(|_| ChangeError::SourceChanged)?;
+                let limit = if path.starts_with("chapters/") {
+                    crate::chapter_contract::MAX_CHAPTER_BYTES
+                } else {
+                    MAX_CHANGE_FILE_BYTES
+                };
+                let bytes =
+                    read_bounded(&target, limit as u64).map_err(|_| ChangeError::SourceChanged)?;
                 Ok(Some(sha256_hex(&bytes)))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -622,11 +782,12 @@ impl CanonChangeCoordinator {
         let directory = self.directory()?;
         let mut records = Vec::new();
         let mut total = 0u64;
+        let mut candidates = 0usize;
         for (index, entry) in fs::read_dir(directory)
             .map_err(|_| ChangeError::Io)?
             .enumerate()
         {
-            if index >= MAX_CHANGE_RECORDS * 3 {
+            if index >= self.record_limit() * 3 {
                 return Err(ChangeError::StoreFull);
             }
             let entry = entry.map_err(|_| ChangeError::Io)?;
@@ -637,7 +798,7 @@ impl CanonChangeCoordinator {
             total = total
                 .checked_add(metadata.len())
                 .ok_or(ChangeError::StoreFull)?;
-            if total > MAX_CHANGE_STORE_BYTES {
+            if total > self.store_limit() {
                 return Err(ChangeError::StoreFull);
             }
             let name = entry
@@ -649,11 +810,20 @@ impl CanonChangeCoordinator {
             if name.starts_with(".record-") && name.ends_with(".tmp") {
                 continue;
             }
+            if self.nr5 && chapter::candidates::candidate_file_id(&name).is_some() {
+                candidates += 1;
+                if candidates > chapter::candidates::MAX_CANDIDATES
+                    || metadata.len() > chapter::candidates::MAX_CANDIDATE_RECORD_BYTES
+                {
+                    return Err(ChangeError::StoreFull);
+                }
+                continue;
+            }
             let change_id = name
                 .strip_suffix(".json")
                 .ok_or(ChangeError::RecoveryRequired)?;
             records.push(self.load_record(change_id)?);
-            if records.len() > MAX_CHANGE_RECORDS {
+            if records.len() > self.record_limit() {
                 return Err(ChangeError::StoreFull);
             }
         }
@@ -669,11 +839,14 @@ impl CanonChangeCoordinator {
         if !metadata.is_file() || is_link_or_reparse(&metadata) {
             return Err(ChangeError::RecoveryRequired);
         }
-        let bytes =
-            read_bounded(&target, MAX_RECORD_BYTES).map_err(|_| ChangeError::RecoveryRequired)?;
+        let bytes = read_bounded(&target, self.record_byte_limit())
+            .map_err(|_| ChangeError::RecoveryRequired)?;
         let record: ChangeRecord =
             serde_json::from_slice(&bytes).map_err(|_| ChangeError::RecoveryRequired)?;
         record.validate()?;
+        if !self.nr5 && record.chapter.is_some() {
+            return Err(ChangeError::ChapterSourceUnavailable);
+        }
         if record.project_id != self.project_id() || record.receipt.change_id != change_id {
             return Err(ChangeError::RecoveryRequired);
         }
@@ -686,7 +859,7 @@ impl CanonChangeCoordinator {
             return Err(ChangeError::TargetInvalid);
         }
         let bytes = serde_json::to_vec(record).map_err(|_| ChangeError::Io)?;
-        if bytes.len() as u64 > MAX_RECORD_BYTES {
+        if bytes.len() as u64 > self.record_byte_limit() {
             return Err(ChangeError::StoreFull);
         }
         let records = self.records()?;
@@ -694,7 +867,7 @@ impl CanonChangeCoordinator {
             .iter()
             .any(|old| old.receipt.change_id == record.receipt.change_id);
         if !exists
-            && (records.len() >= MAX_CHANGE_RECORDS
+            && (records.len() >= self.record_limit()
                 || record.receipt.status == ChangeStatus::PendingConfirmation
                     && records
                         .iter()
@@ -723,8 +896,8 @@ impl CanonChangeCoordinator {
             }
         }
         // Leave room for a replacement and its recovery/Undo status update.
-        if stored_bytes + 3 * MAX_RECORD_BYTES > MAX_CHANGE_STORE_BYTES
-            || entries >= MAX_CHANGE_RECORDS * 3 - 3
+        if stored_bytes + 3 * self.record_byte_limit() > self.store_limit()
+            || entries >= self.record_limit() * 3 - 3
         {
             return Err(ChangeError::StoreFull);
         }
@@ -765,6 +938,38 @@ fn check_cancelled(token: &CancellationToken) -> Result<(), ChangeError> {
     }
 }
 
+fn apply_change_file_recoverable(
+    handle: &ProjectHandle,
+    entity_kind: CanonEntityKind,
+    operation: CanonFileOperationKind,
+    path: &str,
+    expected_hash: &str,
+    bytes: &[u8],
+    recovery: &RecoveryStore,
+) -> Result<ProjectFileSaveResult, crate::AppError> {
+    if entity_kind == CanonEntityKind::Chapter {
+        crate::canon_apply::apply_chapter_file_recoverable(
+            handle,
+            if operation == CanonFileOperationKind::Create {
+                crate::canon_apply::ChapterPatchOperationV1::Create
+            } else {
+                crate::canon_apply::ChapterPatchOperationV1::Replace
+            },
+            path,
+            if operation == CanonFileOperationKind::Create {
+                None
+            } else {
+                Some(expected_hash)
+            },
+            bytes,
+            recovery,
+        )
+        .map(|result| result.file)
+    } else {
+        apply_canon_file_recoverable(handle, operation, path, expected_hash, bytes, recovery)
+    }
+}
+
 /// Read-only startup reconciliation. A missing/corrupt receipt is uncertainty,
 /// not evidence that a write did not happen.
 pub fn task_recovery_result(
@@ -773,7 +978,36 @@ pub fn task_recovery_result(
     turn_id: &str,
     call_id_hash: &str,
 ) -> Result<crate::tool_runtime::ToolResult, ChangeError> {
+    task_recovery_result_for(
+        handle,
+        session_id,
+        turn_id,
+        call_id_hash,
+        1,
+        crate::protocol_profile::ToolProtocolProfile::Nr4,
+    )
+}
+
+pub fn task_recovery_result_for(
+    handle: &ProjectHandle,
+    session_id: &str,
+    turn_id: &str,
+    call_id_hash: &str,
+    tool_version: u32,
+    profile: crate::protocol_profile::ToolProtocolProfile,
+) -> Result<crate::tool_runtime::ToolResult, ChangeError> {
     use crate::tool_runtime::{ToolResult, ToolResultStatus};
+    let nr5 = profile == crate::protocol_profile::ToolProtocolProfile::Nr5;
+    if !matches!(tool_version, 1 | 2) || tool_version == 2 && !nr5 {
+        return Err(ChangeError::RecoveryRequired);
+    }
+    let record_limit = if nr5 { 2048 } else { MAX_CHANGE_RECORDS };
+    let store_limit = if nr5 {
+        256 * 1024 * 1024
+    } else {
+        MAX_CHANGE_STORE_BYTES
+    };
+    let record_bytes = if nr5 { 512 * 1024 } else { MAX_RECORD_BYTES };
     let mut directory = handle.root().to_path_buf();
     for component in [".novelgainker", "changes"] {
         directory.push(component);
@@ -785,11 +1019,13 @@ pub fn task_recovery_result(
     }
     let mut found = None;
     let mut total = 0u64;
+    let mut records = 0usize;
+    let mut candidates = 0usize;
     for (index, entry) in fs::read_dir(&directory)
         .map_err(|_| ChangeError::RecoveryRequired)?
         .enumerate()
     {
-        if index >= MAX_CHANGE_RECORDS * 3 {
+        if index >= record_limit * 3 {
             return Err(ChangeError::StoreFull);
         }
         let entry = entry.map_err(|_| ChangeError::RecoveryRequired)?;
@@ -799,7 +1035,7 @@ pub fn task_recovery_result(
             return Err(ChangeError::RecoveryRequired);
         }
         total = total.saturating_add(metadata.len());
-        if total > MAX_CHANGE_STORE_BYTES {
+        if total > store_limit {
             return Err(ChangeError::StoreFull);
         }
         if entry
@@ -809,11 +1045,32 @@ pub fn task_recovery_result(
         {
             continue;
         }
-        let bytes = read_bounded(&entry.path(), MAX_RECORD_BYTES)
-            .map_err(|_| ChangeError::RecoveryRequired)?;
+        if nr5
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| chapter::candidates::candidate_file_id(name).is_some())
+        {
+            candidates += 1;
+            if candidates > chapter::candidates::MAX_CANDIDATES
+                || metadata.len() > chapter::candidates::MAX_CANDIDATE_RECORD_BYTES
+            {
+                return Err(ChangeError::StoreFull);
+            }
+            continue;
+        }
+        records += 1;
+        if records > record_limit {
+            return Err(ChangeError::StoreFull);
+        }
+        let bytes =
+            read_bounded(&entry.path(), record_bytes).map_err(|_| ChangeError::RecoveryRequired)?;
         let record: ChangeRecord =
             serde_json::from_slice(&bytes).map_err(|_| ChangeError::RecoveryRequired)?;
         record.validate()?;
+        if !nr5 && record.chapter.is_some() {
+            return Err(ChangeError::RecoveryRequired);
+        }
         if record.project_id != handle.project_id()
             || entry.file_name().to_str() != Some(&format!("{}.json", record.receipt.change_id))
         {
@@ -826,6 +1083,9 @@ pub fn task_recovery_result(
             continue;
         }
         if found.is_some() {
+            return Err(ChangeError::RecoveryRequired);
+        }
+        if tool_version == 1 && record.chapter.is_some() {
             return Err(ChangeError::RecoveryRequired);
         }
         let (status, error_code) = match record.receipt.status {
@@ -843,7 +1103,7 @@ pub fn task_recovery_result(
         found = Some(ToolResult {
             call_id: record.call_id,
             name: PROPOSE_CHANGE_TOOL_NAME.to_owned(),
-            version: 1,
+            version: tool_version,
             status,
             output_json: if status == ToolResultStatus::Succeeded {
                 Some(

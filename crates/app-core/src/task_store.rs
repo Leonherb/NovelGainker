@@ -1,16 +1,15 @@
 use crate::conversation::ConversationSession;
 use crate::project::ProjectHandle;
-use crate::tool_runtime::{
-    ProviderToolCall, ToolDefinition, ToolResult, ToolResultStatus, MAX_TOOL_CONTINUATION_BYTES,
-};
+use crate::tool_runtime::{ProviderToolCall, ToolDefinition, ToolResult, ToolResultStatus};
 use crate::workspace::{atomic_replace, is_link_or_reparse};
 use crate::AppError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use uuid::Uuid;
 
 const STORE_DIRECTORY: &str = ".novelgainker/tasks";
@@ -18,8 +17,39 @@ const STORE_FILE: &str = "session.json";
 const SCHEMA_VERSION: u16 = 1;
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_TASKS: usize = 10_000;
+
+// A UI snapshot must not hold a Windows metadata/read handle while a worker
+// replaces this store. Serialize the complete local read/modify/write operation;
+// never hold this guard across Provider HTTP or tool execution.
+fn store_coordination(handle: &ProjectHandle) -> Result<Arc<Mutex<()>>, AppError> {
+    static STORES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let mut stores = STORES
+        .get_or_init(Mutex::default)
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
+    stores.retain(|_, lock| lock.strong_count() != 0);
+    let key = handle.root().to_path_buf();
+    if let Some(lock) = stores.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(Mutex::new(()));
+    stores.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
 const RECOVERY_INTERRUPTED_ERROR: &str = "runtime.interrupted";
 const FAILED_TASK_ERRORS: &[&str] = &[
+    "publication.metadata_required",
+    "publication.no_final_chapters",
+    "publication.final_confirmation_required",
+    "publication.invalid_chapter",
+    "publication.unsupported_markdown",
+    "publication.invalid_asset",
+    "publication.unsafe_path",
+    "publication.limit_exceeded",
+    "publication.source_changed",
+    "publication.local_validation_failed",
+    "publication.store_unavailable",
+    "publication.source_required",
     "agent.tool_arguments_invalid",
     "agent.tool_arguments_too_large",
     "agent.tool_definition_invalid",
@@ -120,13 +150,40 @@ pub fn runtime_view(
     now_ms: u64,
     recover_interrupted: bool,
 ) -> Result<ConversationRuntimeView, AppError> {
+    runtime_view_for(
+        handle,
+        conversation,
+        now_ms,
+        recover_interrupted,
+        crate::protocol_profile::ToolProtocolProfile::Nr4,
+    )
+}
+
+/// The current Host determines store capacity; an old task keeps its original
+/// result version even after the project's chapter-capable Host is installed.
+pub fn runtime_view_for(
+    handle: &ProjectHandle,
+    conversation: ConversationSession,
+    now_ms: u64,
+    recover_interrupted: bool,
+    profile: crate::protocol_profile::ToolProtocolProfile,
+) -> Result<ConversationRuntimeView, AppError> {
+    let coordination = store_coordination(handle)?;
+    let _guard = coordination
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
     let mut session = read_or_new(handle)?;
     if recover_interrupted {
         let mut changed = false;
         for task in &mut session.tasks {
             if matches!(task.status, TaskStatus::Queued | TaskStatus::Running) {
                 if task.tool_name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME {
-                    recover_canon_task(handle, task, now_ms)?;
+                    recover_canon_task(handle, task, now_ms, profile)?;
+                    changed = true;
+                    continue;
+                }
+                if task.tool_name == "novelist.publish" {
+                    recover_publication_task(handle, task, now_ms, profile)?;
                     changed = true;
                     continue;
                 }
@@ -158,12 +215,15 @@ fn recover_canon_task(
     handle: &ProjectHandle,
     task: &mut TaskRecord,
     now_ms: u64,
+    profile: crate::protocol_profile::ToolProtocolProfile,
 ) -> Result<(), AppError> {
-    let payload = match crate::canon_change_store::task_recovery_result(
+    let payload = match crate::canon_change_store::task_recovery_result_for(
         handle,
         &task.conversation_session_id,
         &task.turn_id,
         &task.call_id_hash,
+        task.tool_version,
+        profile,
     ) {
         Ok(result) => {
             result
@@ -178,6 +238,48 @@ fn recover_canon_task(
             task.error_code = Some("canon.change_recovery_required".to_owned());
             task.display_label = "写入结果待核对".to_owned();
             serde_json::json!({"status":"failed","errorCode":"canon.change_recovery_required"})
+        }
+    };
+    let bytes = serde_json::to_vec(&payload).map_err(|_| task_error("task.result_invalid"))?;
+    task.result_sha256 = Some(sha256(&bytes));
+    task.result_bytes =
+        Some(u32::try_from(bytes.len()).map_err(|_| task_error("task.result_invalid"))?);
+    task.task_revision = task.task_revision.saturating_add(1);
+    task.updated_at_ms = now_ms.max(task.started_at_ms);
+    Ok(())
+}
+
+fn recover_publication_task(
+    handle: &ProjectHandle,
+    task: &mut TaskRecord,
+    now_ms: u64,
+    profile: crate::protocol_profile::ToolProtocolProfile,
+) -> Result<(), AppError> {
+    let result =
+        if task.tool_version == 2 && profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+            crate::publication::task_recovery_result(
+                handle,
+                &task.conversation_session_id,
+                &task.turn_id,
+                &task.call_id_hash,
+            )
+        } else {
+            Err(crate::publication::PublicationIssue::StoreUnavailable)
+        };
+    let payload = match result {
+        Ok(result) => {
+            result
+                .validate()
+                .map_err(|_| task_error("task.result_invalid"))?;
+            task.status = result_status_to_task_status(result.status);
+            task.error_code = result.error_code.clone();
+            result.provider_payload()
+        }
+        Err(_) => {
+            task.status = TaskStatus::Failed;
+            task.error_code = Some("publication.store_unavailable".to_owned());
+            task.display_label = "出版结果待核对".to_owned();
+            serde_json::json!({"status":"failed","errorCode":"publication.store_unavailable"})
         }
     };
     let bytes = serde_json::to_vec(&payload).map_err(|_| task_error("task.result_invalid"))?;
@@ -210,8 +312,18 @@ pub fn create_queued_task(
     definition: &ToolDefinition,
     now_ms: u64,
 ) -> Result<TaskRecord, AppError> {
-    call.validate_envelope()
+    call.validate_envelope_for(definition.protocol_profile())
         .map_err(|_| task_error("task.invalid"))?;
+    if handle
+        .conversation_session_id()
+        .is_some_and(|id| id != conversation_session_id)
+    {
+        return Err(task_error("task.invalid"));
+    }
+    let coordination = store_coordination(handle)?;
+    let _guard = coordination
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
     let mut session = read_or_new(handle)?;
     let call_id_hash = sha256(call.call_id.as_bytes());
     if session.tasks.iter().any(|task| {
@@ -256,6 +368,10 @@ pub fn transition_task(
     error_code: Option<&str>,
     now_ms: u64,
 ) -> Result<TaskRecord, AppError> {
+    let coordination = store_coordination(handle)?;
+    let _guard = coordination
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
     let mut session = read_or_new(handle)?;
     let task = session
         .tasks
@@ -285,6 +401,10 @@ pub fn transition_task(
 }
 
 pub fn find_turn_tasks(handle: &ProjectHandle, turn_id: &str) -> Result<Vec<TaskRecord>, AppError> {
+    let coordination = store_coordination(handle)?;
+    let _guard = coordination
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
     Ok(read_or_new(handle)?
         .tasks
         .into_iter()
@@ -354,7 +474,15 @@ fn valid_live_terminal_error(status: TaskStatus, error_code: Option<&str>) -> bo
 }
 
 fn read_or_new(handle: &ProjectHandle) -> Result<TaskSession, AppError> {
-    let path = store_path(handle)?;
+    let path = if handle.session_binding().is_some() {
+        crate::conversation_sessions::store_path(
+            handle,
+            crate::conversation_sessions::StoreKind::Task,
+            false,
+        )?
+    } else {
+        store_path(handle)?
+    };
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -373,6 +501,14 @@ fn read_or_new(handle: &ProjectHandle) -> Result<TaskSession, AppError> {
     let session: TaskSession =
         serde_json::from_slice(&bytes).map_err(|_| task_error("task.store_invalid"))?;
     validate_session(&session, handle.project_id())?;
+    if handle.conversation_session_id().is_some_and(|id| {
+        session
+            .tasks
+            .iter()
+            .any(|task| task.conversation_session_id != id)
+    }) {
+        return Err(task_error("task.store_invalid"));
+    }
     Ok(session)
 }
 
@@ -410,7 +546,12 @@ fn validate_session(session: &TaskSession, project_id: &str) -> Result<(), AppEr
             || task.updated_at_ms < task.started_at_ms
             || task.display_label.trim().is_empty()
             || task.display_label.len() > 160
-            || task.arguments_bytes as usize > MAX_TOOL_CONTINUATION_BYTES
+            || task.arguments_bytes as usize
+                > crate::protocol_profile::ToolProtocolProfile::for_definition(
+                    &task.tool_name,
+                    task.tool_version,
+                )
+                .call_envelope_bytes()
             || !valid_stored_task_state(task)
         {
             return Err(task_error("task.store_invalid"));
@@ -420,6 +561,13 @@ fn validate_session(session: &TaskSession, project_id: &str) -> Result<(), AppEr
 }
 
 fn store_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
+    if handle.session_binding().is_some() {
+        return crate::conversation_sessions::store_path(
+            handle,
+            crate::conversation_sessions::StoreKind::Task,
+            true,
+        );
+    }
     let root = handle.root().join(STORE_DIRECTORY);
     match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.is_dir() && !is_link_or_reparse(&metadata) => {}
@@ -433,38 +581,46 @@ fn store_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
 }
 
 fn write_session(handle: &ProjectHandle, session: &TaskSession) -> Result<(), AppError> {
-    let target = store_path(handle)?;
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if !metadata.is_file() || is_link_or_reparse(&metadata) {
-            return Err(task_error("task.store_boundary"));
-        }
-    }
     let bytes = serde_json::to_vec_pretty(session).map_err(|_| task_error("task.store_invalid"))?;
     if bytes.len() as u64 > MAX_STORE_BYTES {
         return Err(task_error("task.store_too_large"));
     }
-    let parent = target
-        .parent()
-        .ok_or_else(|| task_error("task.store_boundary"))?;
-    let temporary = parent.join(format!(".session-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| task_error("task.store_unavailable"))?;
-        file.write_all(&bytes)
-            .and_then(|()| file.write_all(b"\n"))
-            .and_then(|()| file.sync_all())
-            .map_err(|_| task_error("task.store_unavailable"))?;
-        drop(file);
-        atomic_replace(&temporary, &target).map_err(|_| task_error("task.store_unavailable"))?;
-        sync_directory(parent)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    crate::conversation_sessions::with_store_write(
+        handle,
+        crate::conversation_sessions::StoreKind::Task,
+        bytes.len() as u64 + 1,
+        || {
+            let target = store_path(handle)?;
+            if let Ok(metadata) = fs::symlink_metadata(&target) {
+                if !metadata.is_file() || is_link_or_reparse(&metadata) {
+                    return Err(task_error("task.store_boundary"));
+                }
+            }
+            let parent = target
+                .parent()
+                .ok_or_else(|| task_error("task.store_boundary"))?;
+            let temporary = parent.join(format!(".session-{}.tmp", Uuid::new_v4()));
+            let result = (|| {
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&temporary)
+                    .map_err(|_| task_error("task.store_unavailable"))?;
+                file.write_all(&bytes)
+                    .and_then(|()| file.write_all(b"\n"))
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| task_error("task.store_unavailable"))?;
+                drop(file);
+                atomic_replace(&temporary, &target)
+                    .map_err(|_| task_error("task.store_unavailable"))?;
+                sync_directory(parent)
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(temporary);
+            }
+            result
+        },
+    )
 }
 
 #[cfg(windows)]
@@ -632,6 +788,79 @@ mod tests {
         )
         .is_err());
         assert_eq!(find_turn_tasks(&fixture.handle, &turn_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn nr506_task_snapshots_and_atomic_updates_are_coordinated() {
+        let fixture = Fixture::new();
+        let conversation = crate::conversation::load_conversation(&fixture.handle, 1).unwrap();
+        let turn = Uuid::new_v4().to_string();
+        let start = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            for _ in 0..3 {
+                let conversation = &conversation;
+                let turn = &turn;
+                let start = &start;
+                let handle = &fixture.handle;
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..100 {
+                        runtime_view(handle, conversation.clone(), 5, false).unwrap();
+                        find_turn_tasks(handle, turn).unwrap();
+                    }
+                });
+            }
+            start.wait();
+            for index in 0..100 {
+                let call = ProviderToolCall {
+                    call_id: format!("nr506_{index}"),
+                    name: "test.echo".into(),
+                    arguments_json: r#"{"text":"ok"}"#.into(),
+                };
+                let queued = create_queued_task(
+                    &fixture.handle,
+                    &conversation.session_id,
+                    &turn,
+                    &call,
+                    &definition(),
+                    2,
+                )
+                .unwrap();
+                let running = transition_task(
+                    &fixture.handle,
+                    &queued.task_id,
+                    queued.task_revision,
+                    TaskStatus::Running,
+                    None,
+                    None,
+                    3,
+                )
+                .unwrap();
+                let result = ToolResult {
+                    call_id: call.call_id,
+                    name: "test.echo".into(),
+                    version: 1,
+                    status: ToolResultStatus::Succeeded,
+                    output_json: Some(serde_json::json!({"text":"ok"})),
+                    error_code: None,
+                };
+                transition_task(
+                    &fixture.handle,
+                    &running.task_id,
+                    running.task_revision,
+                    TaskStatus::Succeeded,
+                    Some(&result),
+                    None,
+                    4,
+                )
+                .unwrap();
+            }
+        });
+        let tasks = find_turn_tasks(&fixture.handle, &turn).unwrap();
+        assert_eq!(tasks.len(), 100);
+        assert!(tasks
+            .iter()
+            .all(|task| task.status == TaskStatus::Succeeded && task.task_revision == 3));
     }
 
     #[test]

@@ -63,8 +63,13 @@ if (nr4Entered) {
 }
 
 const commandsSource = read("apps/desktop/src-tauri/src/commands_current.rs");
+const handlerDeclarations = (
+  commandsSource.match(/fn run_conversation_provider(?:<R: tauri::Runtime>)?\(/gu) ?? []
+).length;
+if (handlerDeclarations !== 1) throw new Error("Provider worker declaration drift");
 const handlerProviderRuns =
-  (commandsSource.match(/run_conversation_provider\(/gu) ?? []).length - 1;
+  (commandsSource.match(/run_conversation_provider(?:<R: tauri::Runtime>)?\(/gu) ?? []).length -
+  handlerDeclarations;
 const managedRuntimeCalls = (commandsSource.match(/execute_memory_managed_turn\(/gu) ?? []).length;
 const changeRuntimeCalls = (
   commandsSource.match(/execute_memory_managed_turn_with_changes\(/gu) ?? []

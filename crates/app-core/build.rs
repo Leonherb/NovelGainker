@@ -12,6 +12,18 @@ fn required_text<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 
 fn main() {
+    // This package's Windows test executables now link the real desktop dialog
+    // command layer. They need the same Common Controls activation as Tauri;
+    // rlib output has no executable manifest and production app setup is unchanged.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        let manifest = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("tests/windows-test.manifest");
+        println!("cargo:rerun-if-changed=tests/windows-test.manifest");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    }
     const MANIFEST: &str = "provider-presets.v1.json";
     println!("cargo:rerun-if-changed={MANIFEST}");
 

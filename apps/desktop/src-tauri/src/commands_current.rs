@@ -1,6 +1,6 @@
 use app_core::app_state::{AppStateRepository, AppStateSnapshot, UiPreferences};
 use app_core::canon_change::{
-    ChangeActivity, ChangeDecisionRequest, ChangeDetail, ChangeError, ChangeReceipt,
+    ChangeDecisionRequest, ChangeDetail, ChangeError, ChangeListRequest, ChangePage, ChangeReceipt,
     EditorBufferRevision,
 };
 use app_core::canon_change_store::CanonChangeCoordinator;
@@ -29,7 +29,7 @@ use app_core::provider_state::{
 };
 use app_core::recovery::{RecoveryReport, RecoveryStatus, RecoveryStore};
 use app_core::search::{search_project_sources, SearchReport};
-use app_core::task_store::{runtime_view, ConversationRuntimeView, TaskActivity};
+use app_core::task_store::{runtime_view_for, ConversationRuntimeView, TaskActivity};
 use app_core::workspace::{
     check_project_file, list_project_files, read_project_file, validate_project_draft,
     ProjectFileDocument, ProjectFileIndex, ProjectFileSaveResult, ProjectFileWatchStatus,
@@ -37,13 +37,16 @@ use app_core::workspace::{
 };
 use app_core::{health_status, AppError, HealthStatus};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
+include!("commands_sessions.rs");
+include!("commands_session_management.rs");
+include!("commands_retry.rs");
 
 pub struct ProjectRegistry {
     inner: Mutex<ProjectRegistryInner>,
@@ -51,7 +54,14 @@ pub struct ProjectRegistry {
     app_state: AppStateRepository,
     credential_vault: Arc<dyn CredentialVault>,
     provider_run: Mutex<Option<ActiveProviderRun>>,
+    reconciling_sessions: Mutex<HashSet<String>>,
+    conversation_export: Mutex<Option<PendingConversationExport>>,
+    #[cfg(test)]
+    test_client_factory: Option<TestClientFactory>,
 }
+
+#[cfg(test)]
+type TestClientFactory = Arc<dyn Fn() -> Result<ProviderHttpClient, ProviderError> + Send + Sync>;
 
 #[derive(Default)]
 struct ProjectRegistryInner {
@@ -82,7 +92,10 @@ pub struct EditorDocument {
 }
 
 struct ActiveProviderRun {
-    session_id: String,
+    attempt_id: Option<String>,
+    attempt_number: u8,
+    project_key: String,
+    conversation_session_id: String,
     turn_id: Option<String>,
     provider_id: ProviderId,
     cancellation: CancellationToken,
@@ -96,7 +109,19 @@ impl ProjectRegistry {
             app_state: AppStateRepository::open(&app_state_root),
             credential_vault: Arc::new(WindowsCredentialVault::production()),
             provider_run: Mutex::new(None),
+            reconciling_sessions: Mutex::new(HashSet::new()),
+            conversation_export: Mutex::new(None),
+            #[cfg(test)]
+            test_client_factory: None,
         })
+    }
+
+    fn provider_client(&self) -> Result<ProviderHttpClient, ProviderError> {
+        #[cfg(test)]
+        if let Some(factory) = &self.test_client_factory {
+            return factory();
+        }
+        ProviderHttpClient::production()
     }
 
     pub fn cancel_active_provider_run(&self) {
@@ -116,19 +141,29 @@ impl ProjectRegistry {
 
     fn reserve_provider_run(
         &self,
-        session_id: &str,
+        project_key: &str,
+        conversation_session_id: &str,
         provider_id: ProviderId,
     ) -> Result<CancellationToken, AppError> {
         let mut active = self
             .provider_run
             .lock()
             .map_err(|_| AppError::runtime_unavailable())?;
-        if active.is_some() {
+        if active.is_some()
+            || self
+                .reconciling_sessions
+                .lock()
+                .map_err(|_| AppError::runtime_unavailable())?
+                .contains(project_key)
+        {
             return Err(AppError::provider_run_active());
         }
         let cancellation = CancellationToken::default();
         *active = Some(ActiveProviderRun {
-            session_id: session_id.to_owned(),
+            attempt_id: None,
+            attempt_number: 0,
+            project_key: project_key.to_owned(),
+            conversation_session_id: conversation_session_id.to_owned(),
             turn_id: None,
             provider_id,
             cancellation: cancellation.clone(),
@@ -148,6 +183,23 @@ impl ProjectRegistry {
         Ok(())
     }
 
+    fn bind_provider_attempt(
+        &self,
+        turn_id: &str,
+        attempt: &app_core::conversation::RetryState,
+    ) -> Result<(), AppError> {
+        let mut active = self
+            .provider_run
+            .lock()
+            .map_err(|_| AppError::runtime_unavailable())?;
+        let run = active
+            .as_mut()
+            .filter(|run| run.turn_id.as_deref() == Some(turn_id))
+            .ok_or_else(AppError::provider_run_not_found)?;
+        run.attempt_id = Some(attempt.attempt_id.clone());
+        run.attempt_number = attempt.attempt_number;
+        Ok(())
+    }
     fn finish_provider_run(&self, turn_id: &str) {
         if let Ok(mut active) = self.provider_run.lock() {
             if active.as_ref().and_then(|run| run.turn_id.as_deref()) == Some(turn_id) {
@@ -164,26 +216,40 @@ impl ProjectRegistry {
         }
     }
 
-    fn has_active_turn_for_session(&self, session_id: &str) -> bool {
-        self.provider_run
-            .lock()
-            .ok()
-            .and_then(|active| {
-                active
-                    .as_ref()
-                    .map(|run| run.session_id == session_id && run.turn_id.is_some())
+    fn has_active_conversation(&self, session_id: &str, conversation_id: &str) -> bool {
+        let Ok(handle) = session_handle(self, session_id) else {
+            return false;
+        };
+        let project_key = handle.coordination_key();
+        self.provider_run.lock().ok().is_some_and(|active| {
+            active.as_ref().is_some_and(|run| {
+                run.project_key == project_key && run.conversation_session_id == conversation_id
             })
-            .unwrap_or(false)
+        })
     }
 
-    fn cancel_provider_turn(&self, session_id: &str, turn_id: &str) -> bool {
+    fn cancel_provider_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        conversation_id: Option<&str>,
+        attempt_id: Option<&str>,
+    ) -> bool {
+        let Ok(handle) = session_handle(self, session_id) else {
+            return false;
+        };
+        let project_key = handle.coordination_key();
         self.provider_run
             .lock()
             .ok()
             .and_then(|active| {
                 active.as_ref().map(|run| {
-                    let matches =
-                        run.session_id == session_id && run.turn_id.as_deref() == Some(turn_id);
+                    let matches = run.project_key == project_key
+                        && run.turn_id.as_deref() == Some(turn_id)
+                        && conversation_id.is_none_or(|id| run.conversation_session_id == id)
+                        && attempt_id.map_or(run.attempt_number <= 1, |id| {
+                            run.attempt_id.as_deref() == Some(id)
+                        });
                     if matches {
                         run.cancellation.cancel();
                     }
@@ -250,6 +316,8 @@ pub struct AppStateWriteResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationTurnStartResult {
+    pub attempt_id: String,
+    pub attempt_number: u8,
     pub session_id: String,
     pub conversation_session_id: String,
     pub turn_id: String,
@@ -345,25 +413,42 @@ pub fn app_state_save_ui(
 pub fn conversation_session_load(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
+    conversation_session_id: Option<String>,
 ) -> Result<ConversationRuntimeView, AppError> {
-    let handle = session_handle(&state, &session_id)?;
-    let active = state.has_active_turn_for_session(&session_id);
-    let conversation = if active {
+    let history_lease = session_history_lease(&state, &session_id)?;
+    reconcile_session_run(&state, &session_id)?;
+    let handle = selected_session_handle(&state, &session_id, conversation_session_id.as_deref())?;
+    let active = state.has_active_conversation(
+        &session_id,
+        handle
+            .conversation_session_id()
+            .ok_or_else(AppError::runtime_unavailable)?,
+    );
+    let conversation = if active || history_lease.is_none() {
         read_conversation(&handle)?
     } else {
         load_conversation(&handle, now_ms()?)?
     };
-    runtime_view(&handle, conversation, now_ms()?, !active)
+    runtime_view_for(
+        &handle,
+        conversation,
+        now_ms()?,
+        !active && history_lease.is_some(),
+        app_core::protocol_profile::ToolProtocolProfile::Nr5,
+    )
 }
 
 #[tauri::command]
-pub fn conversation_turn_start(
-    app: tauri::AppHandle,
+pub fn conversation_turn_start<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
     message: String,
+    conversation_session_id: Option<String>,
 ) -> Result<ConversationTurnStartResult, AppError> {
-    let handle = session_handle(&state, &session_id)?;
+    let history_lease = require_session_history_lease(&state, &session_id)?;
+    reconcile_session_run(&state, &session_id)?;
+    let handle = selected_session_handle(&state, &session_id, conversation_session_id.as_deref())?;
     let provider_state = load_provider_state(&state.app_state, state.credential_vault.as_ref())?;
     let provider_id = provider_state.selected_provider_id;
     if !provider_state
@@ -375,43 +460,78 @@ pub fn conversation_turn_start(
     }
     let model = preset(provider_id).model.to_owned();
     let started_at_ms = now_ms()?;
-    let cancellation = state.reserve_provider_run(&session_id, provider_id)?;
+    let cancellation = state.reserve_provider_run(
+        &handle.coordination_key(),
+        handle
+            .conversation_session_id()
+            .ok_or_else(AppError::runtime_unavailable)?,
+        provider_id,
+    )?;
+    let reservation = match sessions::reserve_run(&handle, started_at_ms) {
+        Ok(value) => value,
+        Err(error) => {
+            state.release_provider_reservation();
+            return Err(error);
+        }
+    };
     let started =
         match start_conversation_turn(&handle, provider_id, &model, &message, started_at_ms) {
             Ok(started) => started,
             Err(error) => {
+                let _ = sessions::release_run(&handle, &reservation.reservation_id);
                 state.release_provider_reservation();
                 return Err(error);
             }
         };
-    if let Err(error) = state.bind_provider_turn(&started.turn_id) {
-        let _ = finish_conversation_turn(
-            &handle,
-            &started.turn_id,
-            "",
-            ConversationTerminalKind::Failed,
-            Some(&error.code),
-            now_ms().unwrap_or(started_at_ms),
-        );
-        state.release_provider_reservation();
-        return Err(error);
-    }
+    let attempt =
+        match sessions::bind_run_turn(&handle, &reservation.reservation_id, &started.turn_id)
+            .and_then(|_| state.bind_provider_turn(&started.turn_id))
+            .and_then(|_| app_core::conversation::initialize_attempt(&handle, &started.turn_id))
+            .and_then(|attempt| {
+                state
+                    .bind_provider_attempt(&started.turn_id, &attempt)
+                    .map(|()| attempt)
+            }) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = finish_conversation_turn(
+                    &handle,
+                    &started.turn_id,
+                    "",
+                    ConversationTerminalKind::Failed,
+                    Some(&error.code),
+                    now_ms().unwrap_or(started_at_ms),
+                );
+                let _ = sessions::release_run(&handle, &reservation.reservation_id);
+                state.finish_provider_run(&started.turn_id);
+                state.release_provider_reservation();
+                return Err(error);
+            }
+        };
 
     let result = ConversationTurnStartResult {
+        attempt_id: attempt.attempt_id.clone(),
+        attempt_number: attempt.attempt_number,
         session_id: session_id.clone(),
-        conversation_session_id: started.session_id,
+        conversation_session_id: started.session_id.clone(),
         turn_id: started.turn_id.clone(),
         provider_id,
         model: model.clone(),
     };
     let worker_session_id = session_id;
+    let worker_conversation_session_id = started.session_id;
     let worker_turn_id = started.turn_id;
     tauri::async_runtime::spawn_blocking(move || {
+        // Keep physical writer exclusion after the registry row is closed.
+        let _history_lease = history_lease;
         run_conversation_provider(
             app,
             handle,
             worker_session_id,
+            worker_conversation_session_id,
+            reservation.reservation_id,
             worker_turn_id,
+            attempt,
             provider_id,
             model,
             cancellation,
@@ -425,9 +545,16 @@ pub fn conversation_turn_cancel(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
     turn_id: String,
+    conversation_session_id: Option<String>,
+    attempt_id: Option<String>,
 ) -> ConversationTurnCancelResult {
     ConversationTurnCancelResult {
-        cancel_requested: state.cancel_provider_turn(&session_id, &turn_id),
+        cancel_requested: state.cancel_provider_turn(
+            &session_id,
+            &turn_id,
+            conversation_session_id.as_deref(),
+            attempt_id.as_deref(),
+        ),
     }
 }
 
@@ -482,8 +609,8 @@ pub fn provider_select(
 }
 
 #[tauri::command]
-pub async fn provider_connection_test(
-    app: tauri::AppHandle,
+pub async fn provider_connection_test<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     provider_id: String,
 ) -> Result<ProviderStatus, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -513,8 +640,8 @@ pub fn app_state_set_current_file(
 }
 
 #[tauri::command]
-pub async fn project_scan(
-    app: tauri::AppHandle,
+pub async fn project_scan<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, ProjectRegistry>,
     mode: ProjectScanMode,
 ) -> Result<Option<ProjectCandidate>, AppError> {
@@ -722,31 +849,104 @@ fn change_app_error(error: ChangeError) -> AppError {
     }
 }
 
+fn publication_app_error(error: app_core::publication::PublicationIssue) -> AppError {
+    AppError {
+        code: error.code().to_owned(),
+        message_key: "errors.publicationUnavailable".to_owned(),
+        diagnostic: None,
+    }
+}
+
+#[tauri::command]
+pub async fn publication_list(
+    state: tauri::State<'_, ProjectRegistry>,
+    session_id: String,
+    cursor: Option<String>,
+) -> Result<app_core::publication::PublicationPage, AppError> {
+    let changes = changes_for_session(&state, &session_id)?;
+    if cursor.as_ref().is_some_and(|value| value.len() > 72) {
+        return Err(publication_app_error(
+            app_core::publication::PublicationIssue::SourceRequired,
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        changes
+            .publication_list(cursor.as_deref())
+            .map_err(publication_app_error)
+    })
+    .await
+    .map_err(|_| publication_app_error(app_core::publication::PublicationIssue::StoreUnavailable))?
+}
+
+#[tauri::command]
+pub async fn publication_detail(
+    state: tauri::State<'_, ProjectRegistry>,
+    session_id: String,
+    artifact_id: String,
+) -> Result<app_core::publication::PublicationDetail, AppError> {
+    let changes = changes_for_session(&state, &session_id)?;
+    if uuid::Uuid::parse_str(&artifact_id).is_err() || artifact_id.len() != 36 {
+        return Err(publication_app_error(
+            app_core::publication::PublicationIssue::SourceRequired,
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        changes
+            .publication_detail(&artifact_id)
+            .map_err(publication_app_error)
+    })
+    .await
+    .map_err(|_| publication_app_error(app_core::publication::PublicationIssue::StoreUnavailable))?
+}
+
 fn changes_for_session(
     state: &ProjectRegistry,
     session_id: &str,
 ) -> Result<Arc<CanonChangeCoordinator>, AppError> {
-    lock_registry(state)?
+    let handle = selected_session_handle(state, session_id, None)?;
+    changes_for_handle(state, session_id, handle)
+}
+fn changes_for_handle(
+    state: &ProjectRegistry,
+    session_id: &str,
+    handle: ProjectHandle,
+) -> Result<Arc<CanonChangeCoordinator>, AppError> {
+    let coordinator = lock_registry(state)?
         .sessions
         .get(session_id)
         .ok_or_else(AppError::project_session_not_found)?
         .changes
         .clone()
-        .ok_or_else(AppError::project_writer_required)
+        .ok_or_else(AppError::project_writer_required)?;
+    coordinator
+        .for_conversation(handle)
+        .map(Arc::new)
+        .map_err(change_app_error)
 }
 
 #[tauri::command]
 pub async fn canon_change_list(
     state: tauri::State<'_, ProjectRegistry>,
-    session_id: String,
-) -> Result<Vec<ChangeActivity>, AppError> {
-    let handle = session_handle(&state, &session_id)?;
+    request: ChangeListRequest,
+    conversation_session_id: Option<String>,
+) -> Result<ChangePage, AppError> {
+    request.validate().map_err(change_app_error)?;
+    let handle = selected_session_handle(
+        &state,
+        &request.project_session_id,
+        conversation_session_id.as_deref(),
+    )?;
     let conversation = read_conversation(&handle)?;
-    match changes_for_session(&state, &session_id) {
+    match changes_for_handle(&state, &request.project_session_id, handle) {
         Ok(changes) => changes
-            .activities(&conversation.session_id)
+            .activities_page(&conversation.session_id, &request)
             .map_err(change_app_error),
-        Err(error) if error.code == "project.writer_required" => Ok(Vec::new()),
+        Err(error) if error.code == "project.writer_required" => Ok(ChangePage {
+            schema_version: 1,
+            items: Vec::new(),
+            next_cursor: None,
+            candidates: Vec::new(),
+        }),
         Err(error) => Err(error),
     }
 }
@@ -756,10 +956,11 @@ pub async fn canon_change_detail(
     state: tauri::State<'_, ProjectRegistry>,
     session_id: String,
     change_id: String,
+    conversation_session_id: Option<String>,
 ) -> Result<ChangeDetail, AppError> {
-    let handle = session_handle(&state, &session_id)?;
+    let handle = selected_session_handle(&state, &session_id, conversation_session_id.as_deref())?;
     let conversation = read_conversation(&handle)?;
-    changes_for_session(&state, &session_id)?
+    changes_for_handle(&state, &session_id, handle)?
         .detail(&conversation.session_id, &change_id)
         .map_err(change_app_error)
 }
@@ -768,11 +969,21 @@ pub async fn canon_change_detail(
 pub async fn canon_change_decide(
     state: tauri::State<'_, ProjectRegistry>,
     request: ChangeDecisionRequest,
+    conversation_session_id: Option<String>,
 ) -> Result<ChangeReceipt, AppError> {
     request.validate().map_err(change_app_error)?;
-    let handle = session_handle(&state, &request.project_session_id)?;
+    let handle = selected_session_handle(
+        &state,
+        &request.project_session_id,
+        conversation_session_id.as_deref(),
+    )?;
     let conversation = read_conversation(&handle)?;
-    changes_for_session(&state, &request.project_session_id)?
+    if request.decision == app_core::canon_change::ChangeDecision::Confirm
+        && sessions::is_archived(&handle)?
+    {
+        return Err(session_export_error("sessions.archived"));
+    }
+    changes_for_handle(&state, &request.project_session_id, handle)?
         .decide(
             &conversation.session_id,
             &request.change_id,
@@ -844,6 +1055,14 @@ pub fn project_close(
     session_id: String,
 ) -> Result<ProjectCloseResult, AppError> {
     state.cancel_active_provider_run();
+    if let Ok(mut pending) = state.conversation_export.lock() {
+        if pending
+            .as_ref()
+            .is_some_and(|entry| entry.project_session_id == session_id && !entry.in_flight)
+        {
+            *pending = None;
+        }
+    }
     let closed = lock_registry(&state)?
         .sessions
         .remove(&session_id)
@@ -912,8 +1131,12 @@ fn register_session(
     let changes = write_lease
         .as_ref()
         .map(|lease| {
-            CanonChangeCoordinator::new(handle.clone(), lease.clone(), state.recovery_store.clone())
-                .map(Arc::new)
+            CanonChangeCoordinator::new_nr5(
+                handle.clone(),
+                lease.clone(),
+                state.recovery_store.clone(),
+            )
+            .map(Arc::new)
         })
         .transpose()
         .map_err(change_app_error)?;
@@ -980,18 +1203,34 @@ fn lock_registry(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_conversation_provider(
-    app: tauri::AppHandle,
+fn run_conversation_provider<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     handle: ProjectHandle,
     session_id: String,
+    conversation_session_id: String,
+    reservation_id: String,
     turn_id: String,
+    attempt: app_core::conversation::RetryState,
     provider_id: ProviderId,
     model: String,
     cancellation: CancellationToken,
 ) {
     let state = app.state::<ProjectRegistry>();
+    let emit_event = |event| {
+        app.emit(
+            "conversation-turn-event",
+            ScopedConversationEvent {
+                attempt_id: &attempt.attempt_id,
+                attempt_number: attempt.attempt_number,
+                conversation_session_id: &conversation_session_id,
+                event,
+            },
+        )
+    };
     let mut last_sequence = 0u32;
-    let client = ProviderHttpClient::production().map_err(AppError::from_provider_error);
+    let client = state
+        .provider_client()
+        .map_err(AppError::from_provider_error);
     let execution = client.and_then(|client| {
         let mut outcome = None;
         state
@@ -1001,50 +1240,41 @@ fn run_conversation_provider(
                     AgentRuntimeEvent::Provider(event) => match event {
                         NormalizedEvent::TextDelta { delta, .. } => {
                             last_sequence = last_sequence.saturating_add(1);
-                            let _ = app.emit(
-                                "conversation-turn-event",
-                                ConversationTurnEvent::TextDelta {
-                                    session_id: session_id.clone(),
-                                    turn_id: turn_id.clone(),
-                                    provider_id,
-                                    model: model.clone(),
-                                    sequence: last_sequence,
-                                    delta,
-                                },
-                            );
-                        }
-                        NormalizedEvent::Usage { usage, .. } => {
-                            last_sequence = last_sequence.saturating_add(1);
-                            let _ = app.emit(
-                                "conversation-turn-event",
-                                ConversationTurnEvent::Usage {
-                                    session_id: session_id.clone(),
-                                    turn_id: turn_id.clone(),
-                                    provider_id,
-                                    model: model.clone(),
-                                    sequence: last_sequence,
-                                    usage,
-                                },
-                            );
-                        }
-                        NormalizedEvent::Completed { .. } => {}
-                    },
-                    AgentRuntimeEvent::Task(task_activity) => {
-                        last_sequence = last_sequence.saturating_add(1);
-                        let _ = app.emit(
-                            "conversation-turn-event",
-                            ConversationTurnEvent::TaskActivity {
+                            let _ = emit_event(ConversationTurnEvent::TextDelta {
                                 session_id: session_id.clone(),
                                 turn_id: turn_id.clone(),
                                 provider_id,
                                 model: model.clone(),
                                 sequence: last_sequence,
-                                task_activity,
-                            },
-                        );
+                                delta,
+                            });
+                        }
+                        NormalizedEvent::Usage { usage, .. } => {
+                            last_sequence = last_sequence.saturating_add(1);
+                            let _ = emit_event(ConversationTurnEvent::Usage {
+                                session_id: session_id.clone(),
+                                turn_id: turn_id.clone(),
+                                provider_id,
+                                model: model.clone(),
+                                sequence: last_sequence,
+                                usage,
+                            });
+                        }
+                        NormalizedEvent::Completed { .. } => {}
+                    },
+                    AgentRuntimeEvent::Task(task_activity) => {
+                        last_sequence = last_sequence.saturating_add(1);
+                        let _ = emit_event(ConversationTurnEvent::TaskActivity {
+                            session_id: session_id.clone(),
+                            turn_id: turn_id.clone(),
+                            provider_id,
+                            model: model.clone(),
+                            sequence: last_sequence,
+                            task_activity,
+                        });
                     }
                 };
-                let coordinator = changes_for_session(&state, &session_id).ok();
+                let coordinator = changes_for_handle(&state, &session_id, handle.clone()).ok();
                 outcome = Some(if let Some(coordinator) = coordinator {
                     execute_memory_managed_turn_with_changes(
                         &client,
@@ -1074,51 +1304,42 @@ fn run_conversation_provider(
         outcome.ok_or_else(AppError::runtime_unavailable)?
     });
 
-    state.finish_provider_run(&turn_id);
+    let completed_turn_id = turn_id.clone();
     let sequence = last_sequence.saturating_add(1);
     match execution {
         Ok(terminal) => match terminal.state {
             ConversationProviderTerminalState::Completed => {
-                let _ = app.emit(
-                    "conversation-turn-event",
-                    ConversationTurnEvent::Completed {
-                        session_id,
-                        turn_id,
-                        provider_id,
-                        model,
-                        sequence,
-                        finish_reason: terminal.finish_reason.unwrap_or(FinishReason::Unknown),
-                    },
-                );
+                let _ = emit_event(ConversationTurnEvent::Completed {
+                    session_id,
+                    turn_id,
+                    provider_id,
+                    model,
+                    sequence,
+                    finish_reason: terminal.finish_reason.unwrap_or(FinishReason::Unknown),
+                });
             }
             ConversationProviderTerminalState::Cancelled => {
-                let _ = app.emit(
-                    "conversation-turn-event",
-                    ConversationTurnEvent::Cancelled {
-                        session_id,
-                        turn_id,
-                        provider_id,
-                        model,
-                        sequence,
-                    },
-                );
+                let _ = emit_event(ConversationTurnEvent::Cancelled {
+                    session_id,
+                    turn_id,
+                    provider_id,
+                    model,
+                    sequence,
+                });
             }
             ConversationProviderTerminalState::Incomplete => {
                 let error = terminal
                     .provider_error
                     .map(AppError::from_provider_error)
                     .unwrap_or_else(|| AppError::from_provider_error(ProviderError::protocol()));
-                let _ = app.emit(
-                    "conversation-turn-event",
-                    ConversationTurnEvent::Failed {
-                        session_id,
-                        turn_id,
-                        provider_id,
-                        model,
-                        sequence,
-                        error,
-                    },
-                );
+                let _ = emit_event(ConversationTurnEvent::Failed {
+                    session_id,
+                    turn_id,
+                    provider_id,
+                    model,
+                    sequence,
+                    error,
+                });
             }
         },
         Err(error) => {
@@ -1130,19 +1351,18 @@ fn run_conversation_provider(
                 Some(&error.code),
                 now_ms().unwrap_or(1),
             );
-            let _ = app.emit(
-                "conversation-turn-event",
-                ConversationTurnEvent::Failed {
-                    session_id,
-                    turn_id,
-                    provider_id,
-                    model,
-                    sequence,
-                    error,
-                },
-            );
+            let _ = emit_event(ConversationTurnEvent::Failed {
+                session_id,
+                turn_id,
+                provider_id,
+                model,
+                sequence,
+                error,
+            });
         }
     }
+    let _ = sessions::release_run(&handle, &reservation_id);
+    state.finish_provider_run(&completed_turn_id);
 }
 
 fn now_ms() -> Result<u64, AppError> {

@@ -57,7 +57,7 @@ Generated evidence is written below `target/qa/`:
 - `nr-306/`: embedded Pack and historical NR-3 read-only contract regression
 - `nr-406/`: current five-directory transactions, actual dual Provider 4+1 chains, validation.json, full quality.json and NR-G5 technical manifest
 
-NR-G1 through NR-G4 machine claims remain frozen. Current later-stage checks write separate regression manifests, recording the current IPC/Pack separately from historical claims. NR-406 validation is not product approval: after a full successful `pnpm quality`, `node scripts/nr406-nrg5-e2e.mjs --submit` requires matching fresh evidence before producing `nr-g5-manifest.json`. NR-G5 approval remains false until the user decides.
+NR-G1 through NR-G5 technical machine claims remain frozen. Current later-stage checks write separate regression manifests, recording the current IPC/Pack separately from historical claims. NR-406 validation is not product approval: after a full successful `pnpm quality`, `node scripts/nr406-nrg5-e2e.mjs --submit` requires matching fresh evidence before producing `nr-g5-manifest.json`. Its false approval is the submission-time snapshot; the user's subsequent NR-G5 approval is recorded in BMAD `current_gate` and the product approval report. Old `gate`/`nr4_packet` blocks are explicitly scoped compatibility snapshots; NR-501 must separate the old checkers' historical baseline from current approval.
 
 ## Test boundaries
 
@@ -69,7 +69,7 @@ NR-G1 through NR-G4 machine claims remain frozen. Current later-stage checks wri
 - Conversation Turn code may call only the zero-retry `complete_once_cancellable` and `stream_once_cancellable` paths. Retrying Provider methods remain limited to non-Conversation connection checks.
 - NR-4 allows at most 4 Agent + 1 Compactor attempts and 17,408 requested output tokens; two reads and one mutation, four targets, 8 KiB total candidate, 160 KiB cumulative Continuation and 256 KiB actual native body. No automatic retry. Historical read-only profiles remain tested separately. Provider Usage is observation only; response bytes retain the independent 8 MiB ceiling.
 - A new production TS/TSX or Rust file is automatically included in the release scan; tests and historical Story documents are intentionally not counted as production references.
-- NR-G4 is approved; NR-4-D1 implementation is authorized through NR-406, stopping at NR-G5 technical submission. No NR-5 implementation or real Provider Live Smoke is authorized. Scripted providers prove Host/protocol behavior, not model intent or semantic quality.
+- NR-G5 is approved. The remaining plan contains 12 NR-5–6 Stories, ending at NR-G7, with no cloud sync. Production is still NR-4. R04 product behaviors are accepted; R05 uses multi-user application testing, not automated Live batches or sole-owner self-testing. See the [multi-user test plan](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md). R01–R03 and remaining engineering/batch arrangements are pending. No assistant Live credential use, recruitment or distribution is authorized. Participants will operate synthetic projects themselves and voluntarily share redacted evidence; never collect keys, full hidden state or raw protocol. Scripted providers prove Host/protocol behavior, not model intent or semantic quality.
 
 ## Recovery and local operation
 

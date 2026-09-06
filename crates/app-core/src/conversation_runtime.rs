@@ -207,28 +207,37 @@ where
 
     if let Ok(Some(plan)) = plan_compaction(&session, active_memory.as_ref(), profile) {
         if let Ok(request) = build_compactor_request(&plan, profile) {
-            match client.complete_once_cancellable_blocking(
-                provider_id,
-                key,
-                &request,
-                cancellation,
-            ) {
-                Ok(response) if response.finish_reason == FinishReason::Stop => {
-                    if let Ok(committed) = commit_compaction(
-                        handle,
-                        &session,
-                        &plan,
-                        &response.text,
-                        timestamp_ms,
-                        profile,
-                    ) {
-                        active_memory = Some(committed);
+            if crate::conversation::reserve_request(
+                handle,
+                turn_id,
+                crate::conversation::RequestKind::Compactor,
+                request.max_output_tokens,
+            )
+            .map_err(AppError::from_provider_error)?
+            {
+                match client.complete_once_cancellable_blocking(
+                    provider_id,
+                    key,
+                    &request,
+                    cancellation,
+                ) {
+                    Ok(response) if response.finish_reason == FinishReason::Stop => {
+                        if let Ok(committed) = commit_compaction(
+                            handle,
+                            &session,
+                            &plan,
+                            &response.text,
+                            timestamp_ms,
+                            profile,
+                        ) {
+                            active_memory = Some(committed);
+                        }
                     }
+                    Err(error) if error.kind == ProviderErrorKind::Cancelled => {
+                        return terminalize_cancelled_turn(handle, turn_id, error, timestamp_ms);
+                    }
+                    Ok(_) | Err(_) => {}
                 }
-                Err(error) if error.kind == ProviderErrorKind::Cancelled => {
-                    return terminalize_cancelled_turn(handle, turn_id, error, timestamp_ms);
-                }
-                Ok(_) | Err(_) => {}
             }
         }
     }
@@ -332,6 +341,8 @@ where
         .map_err(AppError::from_provider_error)?;
     let mut visible_text = String::new();
     let attempt_one = stream_agent_attempt(
+        handle,
+        turn_id,
         client,
         provider_id,
         key,
@@ -420,6 +431,8 @@ where
         .continue_after_tool(continuation, result, NR2_AGENT_ATTEMPT_OUTPUT_BUDGET)
         .map_err(AppError::from_provider_error)?;
     let attempt_two = stream_agent_attempt(
+        handle,
+        turn_id,
         client,
         provider_id,
         key,
@@ -471,6 +484,7 @@ fn execute_registered_tool<F>(
 where
     F: FnMut(AgentRuntimeEvent) + Send,
 {
+    crate::conversation::tool_dispatched(handle, turn_id)?;
     let queued = create_queued_task(
         handle,
         &session.session_id,
@@ -636,6 +650,8 @@ fn execute_bounded_tool(
 
 #[allow(clippy::too_many_arguments)]
 fn stream_agent_attempt<F>(
+    handle: &ProjectHandle,
+    turn_id: &str,
     client: &ProviderHttpClient,
     provider_id: ProviderId,
     key: &[u8],
@@ -647,6 +663,12 @@ fn stream_agent_attempt<F>(
 where
     F: FnMut(AgentRuntimeEvent) + Send,
 {
+    crate::conversation::reserve_request(
+        handle,
+        turn_id,
+        crate::conversation::RequestKind::Agent,
+        request.max_output_tokens,
+    )?;
     client.stream_once_cancellable_blocking(provider_id, key, request, cancellation, &mut |event| {
         if let NormalizedEvent::TextDelta { delta, .. } = &event {
             visible_text.push_str(delta);
@@ -757,6 +779,10 @@ fn terminalize_cancelled_turn_with_text(
 #[cfg(test)]
 mod tests {
     include!("conversation_nr403_tests.rs");
+    include!("conversation_nr502_tests.rs");
+    include!("conversation_nr503_tests.rs");
+    include!("conversation_nr504_tests.rs");
+    include!("conversation_nr505_tests.rs");
     use super::{
         bind_novelist_runtime, execute_agent_turn, execute_with_profile,
         execute_with_profile_and_registry, normalize_provider_tool_arguments, AgentRuntimeEvent,
@@ -1802,6 +1828,71 @@ mod tests {
             NR2_COMPACTOR_OUTPUT_BUDGET + 2 * NR2_AGENT_ATTEMPT_OUTPUT_BUDGET,
             NR2_CUMULATIVE_OUTPUT_BUDGET
         );
+    }
+
+    #[test]
+    fn nr603_actual_compactor_is_not_reissued_after_explicit_retry() {
+        let fixture = Fixture::new();
+        for index in 0..8 {
+            fixture.complete_turn(index);
+        }
+        let turn = fixture.start_turn(200);
+        let attempt = crate::conversation::initialize_attempt(&fixture.handle, &turn).unwrap();
+        let (endpoint, first_count) =
+            spawn_sequence(vec![LoopbackReply::Completion, LoopbackReply::Unavailable]);
+        let first = ProviderHttpClient::for_test(ProviderId::Openai, endpoint).unwrap();
+        let failed = execute_with_profile(
+            &first,
+            &fixture.handle,
+            &turn,
+            ProviderId::Openai,
+            b"synthetic-loopback-key",
+            &CancellationToken::default(),
+            201,
+            profile(),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            failed
+                .session
+                .turns
+                .last()
+                .unwrap()
+                .retry_state
+                .as_ref()
+                .unwrap()
+                .outcome,
+            crate::conversation::RetryOutcome::Eligible
+        );
+        crate::conversation::begin_retry(&fixture.handle, &turn, &attempt.attempt_id, 202).unwrap();
+        let (endpoint, second_count) = spawn_sequence(vec![LoopbackReply::MainStream]);
+        let second = ProviderHttpClient::for_test(ProviderId::Openai, endpoint).unwrap();
+        let terminal = execute_with_profile(
+            &second,
+            &fixture.handle,
+            &turn,
+            ProviderId::Openai,
+            b"synthetic-loopback-key",
+            &CancellationToken::default(),
+            203,
+            profile(),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(terminal.state, ConversationProviderTerminalState::Completed);
+        let state = terminal
+            .session
+            .turns
+            .last()
+            .unwrap()
+            .retry_state
+            .as_ref()
+            .unwrap();
+        assert_eq!(state.compactor_requests, 1);
+        assert_eq!(state.agent_requests, 2);
+        assert_eq!(first_count.load(Ordering::SeqCst), 2);
+        assert_eq!(second_count.load(Ordering::SeqCst), 1);
     }
 
     #[test]

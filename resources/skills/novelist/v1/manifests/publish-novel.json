@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "publish-novel",
-  "description": "对出版元数据、章节状态、封面条件和连续性进行只读预检。",
+  "description": "依据明确出版要求，读取方法后调用当前原生 Host 完成本地 EPUB 预检或构建。",
   "usage": "仅在作者明确讨论出版、导出、构建或 EPUB 验证时采用。",
   "instructionResource": "instructions/publish-novel.md",
   "templateResources": [],

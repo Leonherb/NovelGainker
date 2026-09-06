@@ -157,7 +157,7 @@ export function parseValidationReport(value: unknown): ValidationReport {
   if (
     value.eligibleForAiApply !== eligible ||
     value.eligibleForFinal !== eligible ||
-    value.eligibleForEpub !== eligible
+    value.eligibleForEpub !== false
   ) {
     throw new Error("Invalid validation eligibility");
   }

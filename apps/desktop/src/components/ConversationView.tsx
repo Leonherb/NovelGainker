@@ -13,6 +13,8 @@ import {
   requestConversationSession,
   requestConversationTurnCancel,
   requestConversationTurnStart,
+  requestConversationTurnRetry,
+  type ConversationTurn,
   type ConversationSession,
   type ConversationRuntimeView,
   type ConversationTurnEvent,
@@ -22,16 +24,32 @@ import {
 import { normalizeAppError, type AppError } from "../lib/tauri/health";
 import { PROVIDER_PRESENTATION } from "./provider-settings-model";
 import { CanonChangeView } from "./CanonChangeView";
-import { requestCanonChanges, type ChangeActivity } from "../lib/tauri/canon-change";
+import {
+  requestCanonChangesPage,
+  type ChangeActivity,
+  type ChapterCandidateActivity,
+} from "../lib/tauri/canon-change";
+import { ChapterCandidateView } from "./ChapterCandidateView";
+import { PublicationView } from "./PublicationView";
+import { usePublicationRecords } from "./use-publication-history";
+import { ConversationEventCursor } from "../lib/conversation-event-cursor";
 
-type ConversationViewProps = {
+export type ConversationViewProps = {
   projectSessionId: string | null;
+  conversationSessionId?: string | null;
+  otherTurnActive?: boolean;
+  readOnly?: boolean;
+  onBranch?: (turnId: string) => void;
+  initialDraft?: string;
+  onDraftChange?: (text: string) => void;
   providerState: ProviderStateSnapshot;
   onRunActiveChange?: (active: boolean) => void;
   onCanonChanged?: () => void;
+  changeRefreshToken?: number;
 };
 
 type ActiveTurn = {
+  attemptId: string | null;
   turnId: string;
   providerId: "deepseek" | "openai";
   model: string;
@@ -61,14 +79,37 @@ const TASK_STATUS_LABELS: Record<TaskActivity["status"], string> = {
 
 export function ConversationView({
   projectSessionId,
+  conversationSessionId = null,
+  otherTurnActive = false,
+  readOnly = false,
+  onBranch,
+  initialDraft = "",
+  onDraftChange,
   providerState,
   onRunActiveChange = () => undefined,
   onCanonChanged,
+  changeRefreshToken = 0,
 }: ConversationViewProps) {
   const [session, setSession] = useState<ConversationSession | null>(null);
   const [taskActivities, setTaskActivities] = useState<TaskActivity[]>([]);
+  const publicationTasks = taskActivities
+    .filter(
+      (task) =>
+        task.displayLabel === "本地 EPUB 预检 / 构建" &&
+        !["queued", "running"].includes(task.status),
+    )
+    .map((task) => `${task.taskId}:${task.taskRevision}`)
+    .join("|");
+  const lastStoredTurn = session?.turns[session.turns.length - 1];
+  const publications = usePublicationRecords(
+    projectSessionId,
+    `${changeRefreshToken}:${lastStoredTurn?.turnId}:${lastStoredTurn?.status}:${publicationTasks}`,
+  );
   const [changes, setChanges] = useState<ChangeActivity[]>([]);
+  const [chapterCandidates, setChapterCandidates] = useState<ChapterCandidateActivity[]>([]);
   const [changeError, setChangeError] = useState(false);
+  const [moreChanges, setMoreChanges] = useState(false);
+  const changePagesRef = useRef(1);
   const changesBusyRef = useRef(false);
   const changesAgainRef = useRef(false);
   const savedSignatureRef = useRef("");
@@ -86,8 +127,40 @@ export function ConversationView({
     do {
       changesAgainRef.current = false;
       try {
-        const incoming = await requestCanonChanges(projectSessionId);
+        let page = await requestCanonChangesPage(
+          projectSessionId,
+          null,
+          null,
+          undefined,
+          conversationSessionId,
+        );
+        const incoming = [...page.items];
+        const candidates = page.candidates ?? [];
+        const cursors = new Set<string>();
+        for (
+          let index = 1;
+          index < changePagesRef.current && page.nextCursor !== null;
+          index += 1
+        ) {
+          if (cursors.has(page.nextCursor)) throw new Error("Repeated change cursor");
+          cursors.add(page.nextCursor);
+          page = await requestCanonChangesPage(
+            projectSessionId,
+            page.nextCursor,
+            null,
+            undefined,
+            conversationSessionId,
+          );
+          incoming.push(...page.items);
+        }
+        if (
+          incoming.length > 2048 ||
+          new Set(incoming.map((entry) => entry.receipt.changeId)).size !== incoming.length
+        )
+          throw new Error("Invalid change pagination");
         setChanges(incoming);
+        setChapterCandidates(candidates);
+        setMoreChanges(page.nextCursor !== null);
         setChangeError(false);
         const signature = incoming
           .filter((entry) => ["committed", "undone"].includes(entry.receipt.status))
@@ -100,11 +173,29 @@ export function ConversationView({
         }
       } catch {
         setChangeError(true);
+        setChanges((current) =>
+          current.map((entry) =>
+            entry.chapterSourceState ? { ...entry, chapterSourceState: "unavailable" } : entry,
+          ),
+        );
       }
     } while (changesAgainRef.current);
     changesBusyRef.current = false;
-  }, [projectSessionId]);
-  const [draft, setDraft] = useState("");
+  }, [projectSessionId, conversationSessionId]);
+  useEffect(() => {
+    let disposed = false;
+    if (changeRefreshToken > 0)
+      queueMicrotask(() => {
+        if (!disposed) void loadChanges();
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [changeRefreshToken, loadChanges]);
+  const [draft, setDraft] = useState(initialDraft);
+  useEffect(() => {
+    onDraftChange?.(draft);
+  }, [draft, onDraftChange]);
   const [activeTurn, setActiveTurn] = useState<ActiveTurn | null>(null);
   const [trackedTurnId, setTrackedTurnId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -116,6 +207,8 @@ export function ConversationView({
   const [error, setError] = useState<AppError | null>(null);
   const messageCanvasRef = useRef<HTMLDivElement>(null);
   const trackedTurnIdRef = useRef<string | null>(null);
+  const eventCursorRef = useRef(new ConversationEventCursor());
+  const retryBusyRef = useRef(false);
 
   const selectedProvider = providerState.providers.find(
     (provider) => provider.providerId === providerState.selectedProviderId,
@@ -139,12 +232,17 @@ export function ConversationView({
       setTaskActivities([]);
       return null;
     }
-    const loaded = await requestConversationSession(projectSessionId);
+    const loaded = await requestConversationSession(projectSessionId, conversationSessionId);
+    if (conversationSessionId !== null && loaded.conversation.sessionId !== conversationSessionId) {
+      throw { code: "contract.invalid_response", messageKey: "errors.invalidRuntimeResponse" };
+    }
+    if (eventCursorRef.current.isOlder(loaded.conversation)) return null;
     void loadChanges();
+    eventCursorRef.current.observe(loaded.conversation);
     setSession(loaded.conversation);
     setTaskActivities((current) => loaded.taskActivities.reduce(mergeTaskActivity, current));
     return loaded;
-  }, [projectSessionId, loadChanges]);
+  }, [projectSessionId, conversationSessionId, loadChanges]);
 
   const applyLoadedSession = useCallback(
     (loaded: ConversationRuntimeView, expectedTurnId: string | null) => {
@@ -165,10 +263,12 @@ export function ConversationView({
       if (runningTurn) {
         trackTurn(runningTurn.turnId);
         setActiveTurn((current) =>
-          current?.turnId === runningTurn.turnId
+          current?.turnId === runningTurn.turnId &&
+          current.attemptId === (runningTurn.retryState?.attemptId ?? current.attemptId)
             ? current
             : {
                 turnId: runningTurn.turnId,
+                attemptId: runningTurn.retryState?.attemptId ?? null,
                 providerId: runningTurn.providerId,
                 model: runningTurn.model,
                 text: "",
@@ -216,7 +316,12 @@ export function ConversationView({
     let unlisten: (() => void) | undefined;
 
     const handleEvent = (event: ConversationTurnEvent) => {
-      if (!active || event.sessionId !== projectSessionId) {
+      if (
+        !active ||
+        event.sessionId !== projectSessionId ||
+        (conversationSessionId !== null && event.conversationSessionId !== conversationSessionId) ||
+        !eventCursorRef.current.accept(event)
+      ) {
         return;
       }
 
@@ -231,6 +336,7 @@ export function ConversationView({
               }
             : {
                 turnId: event.turnId,
+                attemptId: event.attemptId,
                 providerId: event.providerId,
                 model: event.model,
                 text: event.delta,
@@ -290,6 +396,7 @@ export function ConversationView({
     loadChanges,
     loadSession,
     projectSessionId,
+    conversationSessionId,
     reconcileTurn,
     recordSynchronizationFailure,
     trackTurn,
@@ -338,6 +445,8 @@ export function ConversationView({
       !selectedProvider?.configured ||
       synchronizationBlocked ||
       runActive ||
+      otherTurnActive ||
+      readOnly ||
       draft.trim().length === 0
     ) {
       return;
@@ -347,12 +456,18 @@ export function ConversationView({
     setStarting(true);
     setError(null);
     try {
-      const started = await requestConversationTurnStart(projectSessionId, message);
+      const started = await requestConversationTurnStart(
+        projectSessionId,
+        message,
+        conversationSessionId,
+      );
+      eventCursorRef.current.expect(started);
       setDraft("");
       trackTurn(started.turnId);
       setStarting(false);
       setActiveTurn({
         turnId: started.turnId,
+        attemptId: started.attemptId,
         providerId: started.providerId,
         model: started.model,
         text: "",
@@ -370,6 +485,57 @@ export function ConversationView({
           })
           .catch(() => undefined);
       }
+    }
+  };
+
+  const retryTurn = async (turn: ConversationTurn) => {
+    if (
+      !projectSessionId ||
+      !session ||
+      !turn.retryState ||
+      turn.retryState.outcome !== "eligible" ||
+      turn.turnId !== lastStoredTurn?.turnId ||
+      readOnly ||
+      runActive ||
+      otherTurnActive ||
+      synchronizationBlocked ||
+      retryBusyRef.current
+    )
+      return;
+    retryBusyRef.current = true;
+    setStarting(true);
+    setError(null);
+    trackTurn(turn.turnId);
+    try {
+      const started = await requestConversationTurnRetry(
+        projectSessionId,
+        session.sessionId,
+        turn.turnId,
+        turn.retryState.attemptId,
+      );
+      if (
+        started.turnId !== turn.turnId ||
+        started.conversationSessionId !== session.sessionId ||
+        started.attemptNumber !== 2
+      )
+        throw new Error("Retry identity mismatch");
+      eventCursorRef.current.expect(started);
+      setActiveTurn({
+        turnId: started.turnId,
+        attemptId: started.attemptId,
+        providerId: started.providerId,
+        model: started.model,
+        text: "",
+        phase: "connecting",
+      });
+      await reconcileTurn(turn.turnId);
+    } catch (failure: unknown) {
+      setError(normalizeAppError(failure));
+      // Lost acknowledgement reconciles Store only, never resubmits the request.
+      await reconcileTurn(turn.turnId).catch(() => undefined);
+    } finally {
+      setStarting(false);
+      retryBusyRef.current = false;
     }
   };
 
@@ -394,7 +560,13 @@ export function ConversationView({
       current?.turnId === turnId ? { ...current, phase: "stopping" } : current,
     );
     try {
-      const result = await requestConversationTurnCancel(projectSessionId, turnId);
+      const result = await requestConversationTurnCancel(
+        projectSessionId,
+        turnId,
+        undefined,
+        activeTurn.attemptId,
+        session?.sessionId ?? conversationSessionId,
+      );
       if (!result.cancelRequested) {
         await reconcileTurn(turnId);
       }
@@ -428,21 +600,23 @@ export function ConversationView({
       .catch(recordSynchronizationFailure);
   };
 
-  const composerHint = !projectSessionId
-    ? "请先新建或打开一个小说工程。"
-    : listenerState === "pending"
-      ? "正在准备对话连接。"
-      : listenerState === "failed" || synchronizationFailure
-        ? "状态同步失败，请重试。"
-        : !selectedProvider?.configured
-          ? "请先在左侧配置 " + providerName + "。"
-          : activeTurn?.phase === "stopping"
-            ? "正在停止，本次已生成的内容会保留。"
-            : trackedTurnId && !activeTurn
-              ? "正在同步本次回复状态。"
-              : runActive
-                ? "AI 正在回复。"
-                : "Enter 发送，Shift + Enter 换行";
+  const composerHint = readOnly
+    ? "当前会话只读；可以保留输入草稿，但不能发送。"
+    : !projectSessionId
+      ? "请先新建或打开一个小说工程。"
+      : listenerState === "pending"
+        ? "正在准备对话连接。"
+        : listenerState === "failed" || synchronizationFailure
+          ? "状态同步失败，请重试。"
+          : !selectedProvider?.configured
+            ? "请先在左侧配置 " + providerName + "。"
+            : activeTurn?.phase === "stopping"
+              ? "正在停止，本次已生成的内容会保留。"
+              : trackedTurnId && !activeTurn
+                ? "正在同步本次回复状态。"
+                : runActive
+                  ? "AI 正在回复。"
+                  : "Enter 发送，Shift + Enter 换行";
 
   const taskForTurn = (turnId: string) =>
     taskActivities
@@ -478,8 +652,30 @@ export function ConversationView({
                   <span>{message.role === "user" ? "已保存" : turn.model}</span>
                 </header>
                 <p>{message.content}</p>
+                {onBranch && turn.status !== "running" && index === turn.messages.length - 1 ? (
+                  <button
+                    type="button"
+                    disabled={runActive || otherTurnActive}
+                    onClick={() => onBranch(turn.turnId)}
+                  >
+                    从此轮分支
+                  </button>
+                ) : null}
                 {message.role === "assistant" && index === turn.messages.length - 1 ? (
                   <>
+                    {projectSessionId
+                      ? chapterCandidates
+                          .filter((candidate) => candidate.turnId === turn.turnId)
+                          .map((candidate) => (
+                            <ChapterCandidateView
+                              key={candidate.candidateId}
+                              sessionId={projectSessionId}
+                              candidate={candidate}
+                              conversationSessionId={session.sessionId}
+                              onChanged={() => void loadChanges()}
+                            />
+                          ))
+                      : null}
                     {projectSessionId
                       ? changes
                           .filter(
@@ -492,6 +688,7 @@ export function ConversationView({
                               key={activity.receipt.changeId}
                               sessionId={projectSessionId}
                               activity={activity}
+                              confirmationDisabled={readOnly}
                               onChanged={() => void loadChanges()}
                             />
                           ))
@@ -501,7 +698,59 @@ export function ConversationView({
                         {TASK_STATUS_LABELS[taskForTurn(turn.turnId).status]}
                       </div>
                     ) : null}
+                    {projectSessionId
+                      ? publications.items
+                          .filter(
+                            (item) =>
+                              item.sessionId === session.sessionId && item.turnId === turn.turnId,
+                          )
+                          .map((receipt) => (
+                            <PublicationView
+                              key={`${receipt.artifactId}:${receipt.status}`}
+                              projectSessionId={projectSessionId}
+                              receipt={receipt}
+                            />
+                          ))
+                      : null}
                     <footer>{STATUS_LABELS[turn.status]}</footer>
+                    {turn.turnId === lastStoredTurn?.turnId &&
+                    ["failed", "not_generated", "cancelled"].includes(turn.status) ? (
+                      <div className="conversation-task-activity">
+                        {turn.retryState?.outcome === "eligible" ? (
+                          <>
+                            <p>
+                              本轮没有生成正文或执行工具。可用原消息重试一次，会重新请求模型并计入原轮次预算；不是断点续传。
+                            </p>
+                            <button
+                              type="button"
+                              disabled={
+                                readOnly ||
+                                runActive ||
+                                otherTurnActive ||
+                                synchronizationBlocked ||
+                                !providerState.providers.some(
+                                  (p) => p.providerId === turn.providerId && p.configured,
+                                )
+                              }
+                              onClick={() => void retryTurn(turn)}
+                            >
+                              用原消息重试一次
+                            </button>
+                          </>
+                        ) : (
+                          <p>
+                            本轮不能整轮重放。原内容及已保存结果会保留；如需继续，请确认后发送新的一轮。
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          disabled={readOnly || runActive || otherTurnActive || draft.length > 0}
+                          onClick={() => setDraft(turn.messages[0].content)}
+                        >
+                          准备新一轮（发送前可修改）
+                        </button>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
               </article>
@@ -529,6 +778,7 @@ export function ConversationView({
                         key={activity.receipt.changeId}
                         sessionId={projectSessionId}
                         activity={activity}
+                        confirmationDisabled={readOnly}
                         onChanged={() => void loadChanges()}
                       />
                     ))
@@ -545,10 +795,54 @@ export function ConversationView({
               ) : null}
             </article>
           ) : null}
+          {projectSessionId && session
+            ? changes
+                .filter(
+                  (entry) =>
+                    entry.conversationSessionId === session.sessionId &&
+                    entry.turnId !== activeTurn?.turnId &&
+                    !session.turns.some((turn) => turn.turnId === entry.turnId),
+                )
+                .map((activity) => (
+                  <div key={activity.receipt.changeId} className="conversation-local-change">
+                    <p>本地文件保存记录（不是聊天消息）</p>
+                    <CanonChangeView
+                      sessionId={projectSessionId}
+                      activity={activity}
+                      confirmationDisabled={readOnly}
+                      onChanged={() => void loadChanges()}
+                    />
+                  </div>
+                ))
+            : null}
+          {moreChanges ? (
+            <button
+              type="button"
+              onClick={() => {
+                changePagesRef.current = Math.min(changePagesRef.current + 1, 21);
+                void loadChanges();
+              }}
+            >
+              加载更早的保存记录（每页最多 100 条）
+            </button>
+          ) : null}
+          {publications.more ? (
+            <button type="button" disabled={publications.busy} onClick={publications.loadMore}>
+              加载更早的出版记录（每页最多 20 条）
+            </button>
+          ) : null}
         </div>
       </div>
 
       <form className="composer-shell" onSubmit={submit}>
+        {publications.failed ? (
+          <div className="canon-change-load-error" role="status">
+            出版结果暂时无法核对，聊天仍可继续；先前回执不代表当前产物仍有效。
+            <button type="button" disabled={publications.busy} onClick={publications.refresh}>
+              重新核对出版结果
+            </button>
+          </div>
+        ) : null}
         {changeError ? (
           <div className="canon-change-load-error" role="status">
             保存结果暂时无法核对，聊天仍可继续。
@@ -602,6 +896,8 @@ export function ConversationView({
                 !selectedProvider?.configured ||
                 synchronizationBlocked ||
                 runActive ||
+                otherTurnActive ||
+                readOnly ||
                 draft.trim().length === 0
               }
               type="submit"

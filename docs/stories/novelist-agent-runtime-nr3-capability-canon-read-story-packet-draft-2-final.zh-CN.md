@@ -72,7 +72,7 @@ NR-3 不包含：
 - 外部图片 Provider、网络、Shell、Process、Opener、Python Sidecar；
 - 多 Tool Round、并行 Tool、后台 Tool 或 Provider 自动重试；
 - 新窗口、第四栏、Skill 选择器、Task Center 或右侧 History；
-- 多 Conversation Session、Cloud Sync 或 NR-4～NR-7 能力；
+- 多 Conversation Session 或 NR-4～NR-6 能力；
 - 真实 Provider Live Smoke。
 
 用户要求写入时，AI 可以在对话中讨论、拟稿或说明建议，但必须明确内容尚未保存；不得伪造成功，也不得把“当前阶段无写工具”转换为“本次回复未完成”。

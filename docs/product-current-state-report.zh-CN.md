@@ -1,6 +1,6 @@
 # NovelGainker 当前产品报告
 
-更新日期：2026-09-05；版本：0.1.0。现行实现已到 NR-4，NR-401～406 各自完整质量门通过。NR-G4 已批准；NR-G5 技术提交完成，产品批准待定。
+更新日期：2026-09-05；版本：0.1.0。现行实现已到 NR-4，NR-401～406 各自完整质量门通过，NR-G5 已获产品批准。后续 NR-5～NR-6 共12项Story已形成并自评，尚未实施，不计入下列现行能力。
 
 ## 已实现
 
@@ -38,13 +38,17 @@ Markdown 与 assets 是唯一 Canon。`.novelgainker/` 分开保存 Conversation
 - NR-5 正式章节写入及独立章节来源维护未开放；NR-4 可处理用户明确引用章节的资料更新，不修改章节文件。
 - 有九项能力的方法资料，不代表九项都有可执行工具：例如图像生成、出版、完整连续性闭环不因方法存在而自动获得执行环境。
 - 自动化只验证受控 Provider 输出下的 Host/协议与事务行为；真实 DeepSeek/OpenAI 意图识别、Skill 选择、摘要及写作质量尚未正式验证。
-- 最小只读 Live Smoke 已由用户明确放弃并接受风险；NR-6 完整验证保留。这不是已通过真实 Provider 兼容性验证。
+- 最小只读 Live Smoke 已由用户明确放弃并接受风险；NR-6完整验证改为多用户直接试用，见[测试方案](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md)。R04前三项产品行为已接受；尚未发放或执行测试，不等于真实Provider兼容性已通过。
 - AI 更新当前限可证明原始字节与规范化文本一致的小型 UTF-8 文档；不安全地转换编码或截断大文件不是回退方案。
 - 不保证任意外部编辑器看见多文件原子变化；只保证应用内协调与可恢复部分失败。
-- 多会话分支、云同步、Provider 断点续传不在 NR-4 范围。
+- 多会话分支、Provider断点续传不在NR-4范围。云同步不是用户需求，已从整个计划移除，不列为未来功能。
+
+五项补漏方案NG-F01～NG-F05已获用户接受并落实到后续Story验收，包括32个非归档名额（归档计总存储）。这是设计决定，不改变上述当前生产能力；内联工具详情、定稿失效、完整链及安装升级/最终版复验均待后续实施。
 
 ## 验证与下一步
 
-NR-401～406 已分别通过 `pnpm quality`，exit 0。NR-406 新增五目录真实事务、双 Provider 4 Agent + 1 Compactor、超限零落盘和失败续聊证据；最终完整质量检查 25 个步骤全部通过，112 项前端测试及 67 项定向检查通过。[NR-G5 技术报告](reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md) 与匹配源码的技术 Manifest 已形成，产品批准另行进行。
+NR-401～406 已分别通过 `pnpm quality`，exit 0。NR-406 新增五目录真实事务、双 Provider 4 Agent + 1 Compactor、超限零落盘和失败续聊证据；最终完整质量检查 25 个步骤全部通过，112 项前端测试及 67 项定向检查通过。[NR-G5 技术报告](reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md) 保持冻结，[后续产品批准](reviews/novelist-agent-runtime-nr-g5-product-approval.zh-CN.md) 单独记录。下一步裁决[联合 Story 的 R01～R05](stories/novelist-agent-runtime-nr5-nr6-story-packet-draft-1.zh-CN.md)，不是重新批准 NR-G5。
+
+决策补充：上文联合R01～R05中，R04产品行为已接受、R05多用户测试方式已确定；仍待R01～R03、未确认工程边界和试用批次安排，不重复要求批准已接受的三项行为。
 
 权威入口：[架构](architecture.zh-CN.md)、[开发与验证](development.md)、[交付状态](sprint-plan.zh-CN.md)、[NR-4 实施记录](reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md)。历史规划及 Gate 的“当时未实施”不代表当前状态。

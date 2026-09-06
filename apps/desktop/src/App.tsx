@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
-import { ConversationView } from "./components/ConversationView";
+import { SessionConversationView } from "./components/SessionConversationView";
 import { HealthRuntimeSummary, HealthStatusCard } from "./components/HealthStatus";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { DEFAULT_PROVIDER_STATE } from "./components/provider-settings-model";
@@ -84,6 +84,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   const rightResizePointerRef = useRef<number | null>(null);
   const [projectSessionId, setProjectSessionId] = useState<string | null>(null);
   const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0);
+  const [changeRefreshToken, setChangeRefreshToken] = useState(0);
   const [workspaceOpenPath] = useState<string | null>(null);
   const desktopRuntime = isTauriRuntime();
 
@@ -402,10 +403,11 @@ function App({ diagnosticsEnabled = false }: AppProps) {
         ) : null}
 
         <main aria-label={ZH_CN.conversation.ariaLabel} className="conversation-panel">
-          <ConversationView
+          <SessionConversationView
             key={projectSessionId ?? "no-project"}
             onRunActiveChange={setConversationRunActive}
             onCanonChanged={() => setWorkspaceRefreshToken((value) => value + 1)}
+            changeRefreshToken={changeRefreshToken}
             projectSessionId={projectSessionId}
             providerState={providerState}
           />
@@ -466,6 +468,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
                 externalRefreshToken={workspaceRefreshToken}
                 navigatorHost={projectSessionId ? projectNavigatorHost : startupNavigatorHost}
                 onAppStateChanged={() => void loadAppState(false)}
+                onFileSaved={() => setChangeRefreshToken((value) => value + 1)}
                 onFileOpenRequested={revealFileReview}
                 recentProjects={recentProjects}
                 onSessionChange={handleProjectSessionChange}

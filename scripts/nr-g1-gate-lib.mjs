@@ -11,6 +11,30 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  currentNr5Authorization,
+  currentNr6Authorization,
+  currentNr602Authorization,
+  currentNr603Authorization,
+} from "./nr-stage-state.mjs";
+export const NR602_SESSION_COMMANDS = [
+  "conversation_session_manage",
+  "conversation_export_prepare",
+  "conversation_export_commit",
+];
+export const NR603_RETRY_COMMANDS = ["conversation_turn_retry"];
+
+export const NR601_SESSION_COMMANDS = [
+  "conversation_session_list",
+  "conversation_session_create",
+  "conversation_session_rename",
+  "conversation_session_activate",
+];
+
+const NR5_PUBLICATION_COMMANDS = ["publication_list", "publication_detail"];
+export function hasApprovedPublicationIpc(status) {
+  return currentNr5Authorization(status);
+}
 
 export const CONVERSATION_COMMANDS = [
   "conversation_session_load",
@@ -221,6 +245,101 @@ export function inspectIpcClosure(repositoryRoot) {
   );
 
   const nr4 = manifest.some((command) => NR4_COMMANDS.includes(command));
+  const publication = manifest.some((command) => NR5_PUBLICATION_COMMANDS.includes(command));
+  const sessions = manifest.some((command) => NR601_SESSION_COMMANDS.includes(command));
+  const management = manifest.some((command) => NR602_SESSION_COMMANDS.includes(command));
+  const retry = manifest.some((command) => NR603_RETRY_COMMANDS.includes(command));
+  if (retry) {
+    if (
+      !management ||
+      !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((file) =>
+        currentNr603Authorization(read(file)),
+      )
+    ) {
+      throw new Error("NR-603 requires frozen NR-602 full quality and current authorization");
+    }
+    for (const [file, hash] of [
+      [
+        "target/qa/nr-602/quality.json",
+        "ea1421aa835117bc8ea9fb8aa8c1877f24fe24c03fe562d8b31c096b38b75001",
+      ],
+      [
+        "target/qa/nr-602/validation.json",
+        "5b510cf6f0406db3a86435ac3562aa609df5a43f9fc498e3ef164c0b0e2b7f06",
+      ],
+    ])
+      if (
+        createHash("sha256")
+          .update(readFileSync(path.join(repositoryRoot, file)))
+          .digest("hex") !== hash
+      )
+        throw new Error("Frozen NR-602 evidence drift");
+  }
+  if (management) {
+    if (
+      !sessions ||
+      !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((relative) =>
+        currentNr602Authorization(read(relative)),
+      )
+    )
+      throw new Error("NR-602 IPC requires frozen NR-601 full quality and current authorization");
+    for (const [file, expected] of [
+      [
+        "target/qa/nr-601/quality.json",
+        "9f617a5518518de20ca66d87597ddde50f31aa1c1a302668c8cb73cc8be1d773",
+      ],
+      [
+        "target/qa/nr-601/validation.json",
+        "fb22fd0dd3455a2ed56252ad626ceb55881ddad525e6bcc1da0376a75e831c3e",
+      ],
+    ])
+      if (
+        createHash("sha256")
+          .update(readFileSync(path.join(repositoryRoot, file)))
+          .digest("hex") !== expected
+      )
+        throw new Error("Frozen NR-601 evidence drift");
+  }
+  if (sessions) {
+    if (
+      !publication ||
+      !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((relative) =>
+        currentNr6Authorization(read(relative)),
+      )
+    )
+      throw new Error("Session IPC requires approved continuous entry after NR-G6 technical pass");
+    for (const [file, expected] of [
+      [
+        "docs/reviews/novelist-agent-runtime-nr-g6-technical-submission.zh-CN.md",
+        "bdf59cb8982cc4f783b5e569133265dce7a189153d9de49eda7d1f997364e1d8",
+      ],
+      [
+        "target/qa/nr-506/nr-g6-manifest.json",
+        "166e2ef11c69230329ee3eba07d478098cfd40adb1db3cb3f15ddf24b83325d1",
+      ],
+      [
+        "target/qa/nr-506/quality.json",
+        "098ca628049e23eb684692bb42968f7489f28fd4cfc3a90f89ae1a0044683541",
+      ],
+    ]) {
+      if (
+        createHash("sha256")
+          .update(readFileSync(path.join(repositoryRoot, file)))
+          .digest("hex") !== expected
+      )
+        throw new Error("Frozen NR-G6 technical evidence drift");
+    }
+  }
+  if (
+    publication &&
+    !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((relative) =>
+      hasApprovedPublicationIpc(read(relative)),
+    )
+  ) {
+    throw new Error(
+      "Publication IPC requires the existing explicit NR-5/NR-6 implementation approval",
+    );
+  }
   if (
     nr4 &&
     !["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((relative) =>
@@ -232,7 +351,14 @@ export function inspectIpcClosure(repositoryRoot) {
     );
   }
   assertSameCommands(
-    [...BASELINE_COMMANDS, ...(nr4 ? NR4_COMMANDS : [])].sort(),
+    [
+      ...BASELINE_COMMANDS,
+      ...(nr4 ? NR4_COMMANDS : []),
+      ...(publication ? NR5_PUBLICATION_COMMANDS : []),
+      ...(sessions ? NR601_SESSION_COMMANDS : []),
+      ...(management ? NR602_SESSION_COMMANDS : []),
+      ...(retry ? NR603_RETRY_COMMANDS : []),
+    ].sort(),
     manifest,
     "approved manifest",
   );
@@ -244,7 +370,7 @@ export function inspectIpcClosure(repositoryRoot) {
   ]) {
     assertSameCommands(manifest, commands, label);
   }
-  const conversation = manifest.filter((command) => command.startsWith("conversation_"));
+  const conversation = manifest.filter((command) => CONVERSATION_COMMANDS.includes(command));
   assertSameCommands([...CONVERSATION_COMMANDS].sort(), conversation, "Conversation");
   return {
     manifest,
@@ -255,6 +381,16 @@ export function inspectIpcClosure(repositoryRoot) {
     conversation,
     baselineManifest: BASELINE_COMMANDS,
     nr4Commands: nr4 ? [...NR4_COMMANDS].sort() : [],
+    publicationCommands: publication ? [...NR5_PUBLICATION_COMMANDS].sort() : [],
+    sessionCommands: [
+      ...(sessions ? NR601_SESSION_COMMANDS : []),
+      ...(management ? NR602_SESSION_COMMANDS : []),
+      ...(retry ? NR603_RETRY_COMMANDS : []),
+    ].sort(),
+    sessionCatalogCommands: sessions ? [...NR601_SESSION_COMMANDS].sort() : [],
+    sessionManagementCommands: management ? [...NR602_SESSION_COMMANDS].sort() : [],
+    retryCommands: retry ? [...NR603_RETRY_COMMANDS].sort() : [],
+    allConversationCommands: manifest.filter((command) => command.startsWith("conversation_")),
   };
 }
 

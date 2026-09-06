@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationView } from "./ConversationView";
 import { DEFAULT_PROVIDER_STATE } from "./provider-settings-model";
 import * as conversationApi from "../lib/tauri/conversation";
+import * as publicationApi from "../lib/tauri/publication";
 
 const PROJECT_SESSION_ID = "10000000-0000-4000-8000-000000000001";
 const CONVERSATION_SESSION_ID = "20000000-0000-4000-8000-000000000002";
@@ -59,6 +60,11 @@ describe("NR-005 ConversationView", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(publicationApi, "requestPublications").mockResolvedValue({
+      schemaVersion: 1,
+      items: [],
+      nextCursor: null,
+    });
     emit = undefined;
     vi.spyOn(conversationApi, "listenConversationTurnEvents").mockImplementation(
       async (handler) => {
@@ -66,6 +72,65 @@ describe("NR-005 ConversationView", () => {
         return () => undefined;
       },
     );
+  });
+
+  it("NR-505 keeps partial reply and independently committed EPUB fact while publication queries never start a turn", async () => {
+    const text = "已经说明的非空正文。\n\n本次内容未生成完成。";
+    vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(
+      runtimeView({
+        ...runningSession,
+        turns: [
+          {
+            ...runningSession.turns[0],
+            status: "failed",
+            updatedAtMs: 2,
+            messages: [
+              ...runningSession.turns[0].messages,
+              {
+                messageId: ASSISTANT_MESSAGE_ID,
+                role: "assistant",
+                content: text,
+                createdAtMs: 2,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const start = vi.spyOn(conversationApi, "requestConversationTurnStart");
+    vi.mocked(publicationApi.requestPublications).mockResolvedValue({
+      schemaVersion: 1,
+      nextCursor: null,
+      items: [
+        {
+          schemaVersion: 1,
+          artifactId: PROJECT_ID,
+          sessionId: CONVERSATION_SESSION_ID,
+          turnId: TURN_ID,
+          status: "generated",
+          chapterCount: 1,
+          skippedDrafts: 0,
+          withoutCover: true,
+          relativePath: "published/" + PROJECT_ID + ".epub",
+          outputHash: "a".repeat(64),
+          sizeBytes: 2048,
+          issue: null,
+        },
+      ],
+    });
+    vi.spyOn(publicationApi, "requestPublicationDetail").mockRejectedValue(
+      new Error("synthetic unavailable"),
+    );
+    render(
+      <ConversationView projectSessionId={PROJECT_SESSION_ID} providerState={configuredProvider} />,
+    );
+    await screen.findByText("EPUB 已生成（本地产物，未上架）");
+    expect(screen.getByText(/已经说明的非空正文/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "查看出版依据" }));
+    await screen.findByText(/以上是先前回执/);
+    expect(screen.getByText(/已经说明的非空正文/)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "对话输入" })).toBeEnabled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("sends ordinary chat, shows the saved user message, and streams natural text", async () => {
@@ -98,6 +163,8 @@ describe("NR-005 ConversationView", () => {
     vi.spyOn(conversationApi, "requestConversationTurnStart").mockResolvedValue({
       sessionId: PROJECT_SESSION_ID,
       conversationSessionId: CONVERSATION_SESSION_ID,
+      attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      attemptNumber: 1,
       turnId: TURN_ID,
       providerId: "openai",
       model: "gpt-5.6-terra",
@@ -115,6 +182,9 @@ describe("NR-005 ConversationView", () => {
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
         turnId: TURN_ID,
         providerId: "openai",
         model: "gpt-5.6-terra",
@@ -127,6 +197,9 @@ describe("NR-005 ConversationView", () => {
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
         turnId: TURN_ID,
         providerId: "openai",
         model: "gpt-5.6-terra",
@@ -147,6 +220,9 @@ describe("NR-005 ConversationView", () => {
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
         turnId: TURN_ID,
         providerId: "openai",
         model: "gpt-5.6-terra",
@@ -166,6 +242,9 @@ describe("NR-005 ConversationView", () => {
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
         turnId: TURN_ID,
         providerId: "openai",
         model: "gpt-5.6-terra",
@@ -177,6 +256,55 @@ describe("NR-005 ConversationView", () => {
     await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
     expect(await screen.findByText("已完成")).toBeInTheDocument();
   });
+
+  it.each([
+    ["failed", "本次回复未生成。"],
+    ["failed", "保留非空内容。\n\n本次内容未生成完成。"],
+    ["completed", "工具参数无效，但仍可继续讨论。"],
+  ] as const)(
+    "NR-506 keeps %s text and allows composing after a failed tool: %s",
+    async (status, text) => {
+      const snapshot = runtimeView({
+        ...runningSession,
+        turns: [
+          {
+            ...runningSession.turns[0],
+            status,
+            updatedAtMs: 2,
+            messages: [
+              ...runningSession.turns[0].messages,
+              { messageId: ASSISTANT_MESSAGE_ID, role: "assistant", content: text, createdAtMs: 2 },
+            ],
+          },
+        ],
+      });
+      snapshot.taskActivities = [
+        {
+          taskId: PROJECT_ID,
+          sessionId: CONVERSATION_SESSION_ID,
+          turnId: TURN_ID,
+          status: "failed",
+          displayLabel: "内部工具标签",
+          taskRevision: 3,
+        },
+      ];
+      vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(snapshot);
+      const start = vi.spyOn(conversationApi, "requestConversationTurnStart");
+      render(
+        <ConversationView
+          projectSessionId={PROJECT_SESSION_ID}
+          providerState={configuredProvider}
+        />,
+      );
+      await screen.findByText(text, { exact: false, normalizer: (value) => value });
+      const input = screen.getByRole("textbox", { name: "对话输入" });
+      await userEvent.type(input, "继续讨论");
+      expect(input).toHaveValue("继续讨论");
+      expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+      expect(start).not.toHaveBeenCalled();
+      expect(screen.queryByText("内部工具标签")).not.toBeInTheDocument();
+    },
+  );
 
   it("requests idempotent stop and keeps the visible incomplete text", async () => {
     const user = userEvent.setup();
@@ -207,6 +335,8 @@ describe("NR-005 ConversationView", () => {
     vi.spyOn(conversationApi, "requestConversationTurnStart").mockResolvedValue({
       sessionId: PROJECT_SESSION_ID,
       conversationSessionId: CONVERSATION_SESSION_ID,
+      attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      attemptNumber: 1,
       turnId: TURN_ID,
       providerId: "openai",
       model: "gpt-5.6-terra",
@@ -222,12 +352,21 @@ describe("NR-005 ConversationView", () => {
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "今天天气怎么样？");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await user.click(await screen.findByRole("button", { name: "停止" }));
-    expect(cancel).toHaveBeenCalledWith(PROJECT_SESSION_ID, TURN_ID);
+    expect(cancel).toHaveBeenCalledWith(
+      PROJECT_SESSION_ID,
+      TURN_ID,
+      undefined,
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      CONVERSATION_SESSION_ID,
+    );
     expect(screen.getByRole("button", { name: "正在停止" })).toBeDisabled();
 
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
         turnId: TURN_ID,
         providerId: "openai",
         model: "gpt-5.6-terra",

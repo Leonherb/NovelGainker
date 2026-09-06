@@ -39,6 +39,7 @@ pub enum CanonEntityKind {
     Material,
     Plot,
     Outline,
+    Chapter,
 }
 
 impl CanonEntityKind {
@@ -49,6 +50,7 @@ impl CanonEntityKind {
             Self::Material => "materials",
             Self::Plot => "plot",
             Self::Outline => "outlines",
+            Self::Chapter => "chapters",
         }
     }
 
@@ -59,6 +61,7 @@ impl CanonEntityKind {
             Self::Material => "create-material",
             Self::Plot => "create-plot",
             Self::Outline => "novel-story-telling",
+            Self::Chapter => "novel-story-telling",
         }
     }
 
@@ -69,6 +72,7 @@ impl CanonEntityKind {
             Self::Material => "material",
             Self::Plot => "plot",
             Self::Outline => "outline",
+            Self::Chapter => "chapter",
         }
     }
 
@@ -104,6 +108,7 @@ pub enum ChangeSourceKind {
     AcceptedSuggestion,
     AiSuggestion,
     ChapterCommit,
+    ManualSave,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,10 +243,87 @@ pub struct ChangeRecord {
     /// Original committed revision at the start of a local inverse transaction.
     /// Immutable snapshots stay in their forward orientation.
     pub undo_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter: Option<ChapterAuthority>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chapter_dependencies: Vec<crate::continuity::ChapterDependency>,
+}
+
+/// Host-issued normalized authority; never accepted as Provider-supplied proof.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChapterAuthority {
+    pub generation: u64,
+    pub candidate_id: String,
+    pub identity: crate::chapter_contract::ChapterIdentity,
+    pub intent: crate::chapter_contract::ChapterIntent,
+    pub final_confirmed: bool,
+    pub final_invalidated: bool,
 }
 
 impl ChangeRecord {
     pub fn validate(&self) -> Result<(), ChangeError> {
+        if (self.source_kind == ChangeSourceKind::ChapterCommit)
+            != !self.chapter_dependencies.is_empty()
+            || self.chapter_dependencies.len() > MAX_CHANGE_REFERENCES
+            || !self.chapter_dependencies.is_empty() && self.chapter.is_some()
+        {
+            return Err(ChangeError::RecoveryRequired);
+        }
+        let mut dependency_paths = BTreeSet::new();
+        for source in &self.chapter_dependencies {
+            source.validate()?;
+            if source.project_id != self.project_id
+                || !dependency_paths.insert(&source.relative_path)
+            {
+                return Err(ChangeError::RecoveryRequired);
+            }
+        }
+        let chapter_record = self
+            .snapshots
+            .iter()
+            .any(|s| s.entity_kind == CanonEntityKind::Chapter);
+        if self.source_kind == ChangeSourceKind::ManualSave
+            && (!chapter_record
+                || self.sources.len() != 1
+                || self
+                    .receipt
+                    .files
+                    .first()
+                    .is_none_or(|file| file.after_hash != self.sources[0].content_hash)
+                || self.chapter.as_ref().is_some_and(|c| c.final_confirmed))
+        {
+            return Err(ChangeError::RecoveryRequired);
+        }
+        if chapter_record != self.chapter.is_some() {
+            return Err(ChangeError::RecoveryRequired);
+        }
+        if let Some(chapter) = &self.chapter {
+            if self.snapshots.len() != 1
+                || chapter.generation == 0
+                || !valid_id(&chapter.candidate_id)
+                || !matches!(
+                    chapter.intent,
+                    crate::chapter_contract::ChapterIntent::WriteAndSave
+                        | crate::chapter_contract::ChapterIntent::AcceptCandidate
+                )
+                || chapter.identity.validate().is_err()
+                || self.sources.len() != 1
+            {
+                return Err(ChangeError::RecoveryRequired);
+            }
+            let document = crate::chapter_contract::ChapterDocument::parse(
+                &self.snapshots[0].relative_path,
+                self.snapshots[0].after.as_bytes(),
+            )
+            .map_err(|_| ChangeError::RecoveryRequired)?;
+            if document.identity != chapter.identity
+                || chapter.final_confirmed
+                    && document.status != crate::chapter_contract::ChapterStatus::Final
+            {
+                return Err(ChangeError::RecoveryRequired);
+            }
+        }
         if self.schema_version != CHANGE_SCHEMA_VERSION
             || self.receipt.schema_version != CHANGE_SCHEMA_VERSION
             || !valid_id(&self.project_id)
@@ -302,7 +384,12 @@ impl ChangeRecord {
             validate_candidate(snapshot.entity_kind, &snapshot.after)
                 .map_err(|_| ChangeError::RecoveryRequired)?;
             after_bytes += snapshot.after.len();
-            if after_bytes > MAX_CHANGE_BODY_BYTES
+            if after_bytes
+                > if chapter_record {
+                    crate::chapter_contract::MAX_CHAPTER_BYTES
+                } else {
+                    MAX_CHANGE_BODY_BYTES
+                }
                 || !paths.insert(snapshot.relative_path.to_lowercase())
                 || snapshot.relative_path != receipt.relative_path
                 || sha256_hex(snapshot.after.as_bytes()) != receipt.after_hash
@@ -318,7 +405,20 @@ impl ChangeRecord {
             if let Some(before) = &snapshot.before {
                 validate_candidate(snapshot.entity_kind, before)
                     .map_err(|_| ChangeError::RecoveryRequired)?;
-                if metadata_field(before, "id") != metadata_field(&snapshot.after, "id") {
+                if snapshot.entity_kind == CanonEntityKind::Chapter {
+                    let old = crate::chapter_contract::ChapterDocument::parse(
+                        &snapshot.relative_path,
+                        before.as_bytes(),
+                    )
+                    .map_err(|_| ChangeError::RecoveryRequired)?;
+                    if self
+                        .chapter
+                        .as_ref()
+                        .is_none_or(|c| c.identity != old.identity)
+                    {
+                        return Err(ChangeError::RecoveryRequired);
+                    }
+                } else if metadata_field(before, "id") != metadata_field(&snapshot.after, "id") {
                     return Err(ChangeError::RecoveryRequired);
                 }
             }
@@ -333,6 +433,59 @@ pub struct ChangeActivity {
     pub conversation_session_id: String,
     pub turn_id: String,
     pub receipt: ChangeReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter_source_state: Option<crate::continuity::ChapterSourceState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChangeListRequest {
+    pub project_session_id: String,
+    #[serde(deserialize_with = "required_nullable_string")]
+    pub turn_id: Option<String>,
+    #[serde(deserialize_with = "required_nullable_string")]
+    pub cursor: Option<String>,
+    pub limit: u16,
+}
+
+fn required_nullable_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
+impl ChangeListRequest {
+    pub fn validate(&self) -> Result<(), ChangeError> {
+        if !valid_id(&self.project_session_id)
+            || !(1..=100).contains(&self.limit)
+            || self.turn_id.as_ref().is_some_and(|id| !valid_id(id))
+            || self
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.is_empty() || cursor.len() > 1024)
+        {
+            return Err(ChangeError::InvalidRequest);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChangePage {
+    pub schema_version: u16,
+    pub items: Vec<ChangeActivity>,
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<ChapterCandidateActivity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChapterCandidateActivity {
+    pub candidate_id: String,
+    pub turn_id: String,
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,19 +529,61 @@ pub struct EditorBufferRevision {
 /// Accounting contract. Consumed before HTTP or executor side effects.
 #[derive(Default)]
 pub struct ChangeTurnBudget {
+    protocol_profile: crate::protocol_profile::ToolProtocolProfile,
     agent_attempts: usize,
     read_rounds: usize,
     mutation_rounds: usize,
+    publication_rounds: usize,
     compactor_used: bool,
     requested_tokens: u32,
 }
 
 impl ChangeTurnBudget {
+    pub fn max_agent_attempts(&self) -> usize {
+        if self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+            crate::chapter_contract::NR5_AGENT_ATTEMPTS
+        } else {
+            MAX_NR4_AGENT_ATTEMPTS
+        }
+    }
+
+    fn output_limit(&self) -> u32 {
+        if self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+            crate::chapter_contract::NR5_REQUESTED_OUTPUT_TOKENS
+        } else {
+            NR4_CUMULATIVE_OUTPUT_TOKENS
+        }
+    }
+
+    pub fn tool_available(&self, name: &str) -> bool {
+        let nr5 = self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5;
+        if self.agent_attempts + 1 >= self.max_agent_attempts() {
+            return false;
+        }
+        match name {
+            crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME => {
+                self.read_rounds < if nr5 { 4 } else { MAX_NR4_READ_ROUNDS }
+                    && (nr5 || self.mutation_rounds == 0)
+            }
+            PROPOSE_CHANGE_TOOL_NAME => {
+                self.mutation_rounds < if nr5 { 2 } else { MAX_NR4_MUTATION_ROUNDS }
+            }
+            "novelist.publish" => nr5 && self.publication_rounds == 0,
+            _ => false,
+        }
+    }
+
+    pub fn for_protocol(protocol_profile: crate::protocol_profile::ToolProtocolProfile) -> Self {
+        Self {
+            protocol_profile,
+            ..Self::default()
+        }
+    }
     pub fn consume_agent(&mut self, requested_tokens: u32) -> Result<(), ChangeError> {
-        if self.agent_attempts >= MAX_NR4_AGENT_ATTEMPTS
+        if self.agent_attempts >= self.max_agent_attempts()
             || requested_tokens == 0
             || requested_tokens > 4096
-            || self.requested_tokens + requested_tokens > NR4_CUMULATIVE_OUTPUT_TOKENS
+            || self.requested_tokens + requested_tokens > self.output_limit()
         {
             return Err(ChangeError::BudgetExceeded);
         }
@@ -398,7 +593,7 @@ impl ChangeTurnBudget {
     }
 
     pub fn consume_compactor(&mut self) -> Result<(), ChangeError> {
-        if self.compactor_used || self.requested_tokens + 1024 > NR4_CUMULATIVE_OUTPUT_TOKENS {
+        if self.compactor_used || self.requested_tokens + 1024 > self.output_limit() {
             return Err(ChangeError::BudgetExceeded);
         }
         self.compactor_used = true;
@@ -407,7 +602,10 @@ impl ChangeTurnBudget {
     }
 
     pub fn consume_read(&mut self) -> Result<(), ChangeError> {
-        if self.mutation_rounds != 0 || self.read_rounds >= MAX_NR4_READ_ROUNDS {
+        let nr5 = self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5;
+        if (!nr5 && self.mutation_rounds != 0)
+            || self.read_rounds >= if nr5 { 4 } else { MAX_NR4_READ_ROUNDS }
+        {
             return Err(ChangeError::BudgetExceeded);
         }
         self.read_rounds += 1;
@@ -421,15 +619,57 @@ impl ChangeTurnBudget {
         final_request_bytes: usize,
         continuation_bytes: usize,
     ) -> Result<(), ChangeError> {
-        if self.mutation_rounds >= MAX_NR4_MUTATION_ROUNDS
-            || self.agent_attempts >= MAX_NR4_AGENT_ATTEMPTS
-            || self.requested_tokens + 4096 > NR4_CUMULATIVE_OUTPUT_TOKENS
-            || final_request_bytes > NR4_REQUEST_BYTES
-            || continuation_bytes > NR4_CONTINUATION_BYTES
+        if self.mutation_rounds
+            >= if self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+                2
+            } else {
+                MAX_NR4_MUTATION_ROUNDS
+            }
         {
             return Err(ChangeError::BudgetExceeded);
         }
+        self.reserve_final_response(final_request_bytes, continuation_bytes)?;
         self.mutation_rounds += 1;
+        Ok(())
+    }
+
+    pub fn consume_publication(
+        &mut self,
+        final_request_bytes: usize,
+        continuation_bytes: usize,
+    ) -> Result<(), ChangeError> {
+        if self.protocol_profile != crate::protocol_profile::ToolProtocolProfile::Nr5
+            || self.publication_rounds != 0
+        {
+            return Err(ChangeError::BudgetExceeded);
+        }
+        self.reserve_final_response(final_request_bytes, continuation_bytes)?;
+        self.publication_rounds += 1;
+        Ok(())
+    }
+
+    fn reserve_final_response(
+        &self,
+        final_request_bytes: usize,
+        continuation_bytes: usize,
+    ) -> Result<(), ChangeError> {
+        if self.agent_attempts >= self.max_agent_attempts()
+            || self.requested_tokens + 4096 > self.output_limit()
+            || final_request_bytes
+                > if self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+                    crate::chapter_contract::NR5_REQUEST_BYTES
+                } else {
+                    NR4_REQUEST_BYTES
+                }
+            || continuation_bytes
+                > if self.protocol_profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+                    crate::chapter_contract::NR5_CONTINUATION_BYTES
+                } else {
+                    NR4_CONTINUATION_BYTES
+                }
+        {
+            return Err(ChangeError::BudgetExceeded);
+        }
         Ok(())
     }
 }
@@ -512,6 +752,8 @@ pub struct ChangeEvidence {
     methods: BTreeMap<String, String>,
     reads: BTreeMap<String, ReadEvidence>,
     source_catalog: Vec<Value>,
+    chapter_draft_id: String,
+    chapter_sources: BTreeMap<String, crate::continuity::ChapterDependency>,
 }
 
 impl ChangeEvidence {
@@ -572,6 +814,8 @@ impl ChangeEvidence {
             methods: BTreeMap::new(),
             reads: BTreeMap::new(),
             source_catalog,
+            chapter_draft_id: Uuid::new_v4().to_string(),
+            chapter_sources: BTreeMap::new(),
         })
     }
 
@@ -627,7 +871,12 @@ impl ChangeEvidence {
         dirty_revision: Option<u64>,
     ) -> Result<(String, String), ChangeError> {
         kind.validate_path(path)?;
-        if content.len() > MAX_CHANGE_FILE_BYTES || self.reads.len() >= 8 {
+        let limit = if kind == CanonEntityKind::Chapter {
+            crate::chapter_contract::MAX_CHAPTER_BYTES
+        } else {
+            MAX_CHANGE_FILE_BYTES
+        };
+        if content.len() > limit || self.reads.len() >= 8 {
             return Err(ChangeError::BudgetExceeded);
         }
         if sha256_hex(content.as_bytes()) != source_hash {
@@ -654,6 +903,82 @@ impl ChangeEvidence {
         self.reads
             .get(receipt_id)
             .map(|read| read.relative_path.as_str())
+    }
+
+    pub(crate) fn chapter_read(
+        &self,
+        receipt_id: &str,
+    ) -> Option<crate::chapter_contract::ChapterReadReceipt> {
+        let read = self.reads.get(receipt_id)?;
+        if read.entity_kind != CanonEntityKind::Chapter {
+            return None;
+        }
+        let document = crate::chapter_contract::ChapterDocument::parse(
+            &read.relative_path,
+            read.content.as_bytes(),
+        )
+        .ok()?;
+        Some(crate::chapter_contract::ChapterReadReceipt {
+            receipt_id: receipt_id.to_owned(),
+            scope: crate::chapter_contract::ChapterScope {
+                project_id: self.project_id.clone(),
+                session_id: self.session_id.clone(),
+                turn_id: self.turn_id.clone(),
+            },
+            identity: document.identity,
+            content_hash: read.source_hash.clone(),
+            complete: true,
+        })
+    }
+
+    pub(crate) fn has_chapter_method(&self, receipt_id: &str) -> bool {
+        self.methods
+            .get(receipt_id)
+            .is_some_and(|capability| capability == "novel-story-telling")
+    }
+
+    pub(crate) fn has_publication_method(&self, receipt_id: &str) -> bool {
+        self.methods
+            .get(receipt_id)
+            .is_some_and(|capability| capability == "publish-novel")
+    }
+
+    pub(crate) fn chapter_scope(&self) -> crate::chapter_contract::ChapterScope {
+        crate::chapter_contract::ChapterScope {
+            project_id: self.project_id.clone(),
+            session_id: self.session_id.clone(),
+            turn_id: self.turn_id.clone(),
+        }
+    }
+
+    pub(crate) fn chapter_draft_id(&self) -> &str {
+        &self.chapter_draft_id
+    }
+
+    pub(crate) fn chapter_read_for_identity(
+        &self,
+        identity: &crate::chapter_contract::ChapterIdentity,
+    ) -> Option<crate::chapter_contract::ChapterReadReceipt> {
+        self.reads.keys().find_map(|key| {
+            self.chapter_read(key)
+                .filter(|read| &read.identity == identity)
+        })
+    }
+
+    pub(crate) fn current_user_source(&self, source: &SourceReference) -> bool {
+        self.current_user_messages.contains(&source.message_id)
+            && self
+                .sources
+                .get(&source.message_id)
+                .is_some_and(|(role, hash)| {
+                    *role == ConversationRole::User && hash == &source.content_hash
+                })
+    }
+
+    pub(crate) fn chapter_target_matches(&self, receipt_id: &str, target_id: &str) -> bool {
+        self.reads.get(receipt_id).is_some_and(|read| {
+            read.entity_kind == CanonEntityKind::Chapter && read.target_id == target_id
+        })
     }
 
     pub fn validate_request(&self, value: &Value) -> Result<ValidatedChange, ChangeError> {
@@ -782,6 +1107,107 @@ impl ChangeEvidence {
             request_hash: sha256_hex(&bytes),
         })
     }
+
+    pub(crate) fn validate_citation(
+        &self,
+        citation: &crate::continuity::SourceCitation,
+    ) -> Result<(), ChangeError> {
+        let read = self
+            .reads
+            .get(&citation.read_receipt_id)
+            .ok_or(ChangeError::IncompleteRead)?;
+        if read.relative_path != citation.relative_path
+            || read.source_hash != citation.content_hash
+            || citation.start_line == 0
+            || citation.end_line < citation.start_line
+            || citation.end_line - citation.start_line >= 32
+            || citation.quote.is_empty()
+            || citation.quote.len() > 2048
+        {
+            return Err(ChangeError::SourceInvalid);
+        }
+        let chapter_id = if read.entity_kind == CanonEntityKind::Chapter {
+            Some(
+                crate::chapter_contract::ChapterDocument::parse(
+                    &read.relative_path,
+                    read.content.as_bytes(),
+                )
+                .map_err(|_| ChangeError::SourceInvalid)?
+                .identity
+                .chapter_id,
+            )
+        } else {
+            None
+        };
+        if chapter_id != citation.chapter_id {
+            return Err(ChangeError::SourceInvalid);
+        }
+        let lines = read.content.lines().collect::<Vec<_>>();
+        if citation.end_line as usize > lines.len()
+            || lines[citation.start_line as usize - 1..citation.end_line as usize].join("\n")
+                != citation.quote
+        {
+            return Err(ChangeError::SourceInvalid);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bind_chapter_source(
+        &mut self,
+        source: crate::continuity::ChapterDependency,
+    ) -> Result<(), ChangeError> {
+        source.validate()?;
+        let read = self
+            .chapter_read(&source.read_receipt_id)
+            .ok_or(ChangeError::IncompleteRead)?;
+        if source.project_id != self.project_id
+            || source.identity != read.identity
+            || source.after_hash != read.content_hash
+            || self.target_path(&source.read_receipt_id) != Some(&source.relative_path)
+        {
+            return Err(ChangeError::SourceInvalid);
+        }
+        self.chapter_sources
+            .insert(source.relative_path.clone(), source);
+        Ok(())
+    }
+
+    pub(crate) fn chapter_dependencies(&self) -> Vec<crate::continuity::ChapterDependency> {
+        self.chapter_sources.values().cloned().collect()
+    }
+
+    pub(crate) fn remove_chapter_source(&mut self, path: &str) {
+        self.chapter_sources.remove(path);
+    }
+
+    pub(crate) fn has_delivered_read(&self, receipt_id: &str) -> bool {
+        self.reads.contains_key(receipt_id)
+    }
+
+    pub(crate) fn validate_request_nr5(
+        &self,
+        value: &Value,
+    ) -> Result<ValidatedChange, ChangeError> {
+        if value["sourceKind"] != "chapter_commit" {
+            return self.validate_request(value);
+        }
+        if self.chapter_sources.is_empty() {
+            return Err(ChangeError::ChapterSourceUnavailable);
+        }
+        let mut trigger = value.clone();
+        trigger["sourceKind"] = json!("user_decision");
+        let mut validated = self.validate_request(&trigger)?;
+        validated.request.source_kind = ChangeSourceKind::ChapterCommit;
+        validated.request_hash =
+            sha256_hex(&serde_json::to_vec(value).map_err(|_| ChangeError::InvalidRequest)?);
+        if matches!(
+            validated.request.risk,
+            ChangeRisk::SemanticConflict | ChangeRisk::AmbiguousTarget
+        ) {
+            validated.eligibility = ChangeEligibility::ConversationOnly;
+        }
+        Ok(validated)
+    }
 }
 
 pub fn propose_change_definition() -> ToolDefinition {
@@ -824,6 +1250,14 @@ pub fn propose_change_definition() -> ToolDefinition {
 }
 
 pub fn validate_candidate(kind: CanonEntityKind, content: &str) -> Result<(), ChangeError> {
+    if kind == CanonEntityKind::Chapter {
+        return crate::chapter_contract::ChapterDocument::parse(
+            "chapters/validation.md",
+            content.as_bytes(),
+        )
+        .map(|_| ())
+        .map_err(|_| ChangeError::CandidateInvalid);
+    }
     if content.is_empty()
         || content.len() > MAX_CHANGE_FILE_BYTES
         || content.starts_with('\u{feff}')

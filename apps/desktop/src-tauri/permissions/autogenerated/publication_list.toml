@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-publication-list"
+description = "Enables the publication_list command without any pre-configured scope."
+commands.allow = ["publication_list"]
+
+[[permission]]
+identifier = "deny-publication-list"
+description = "Denies the publication_list command without any pre-configured scope."
+commands.deny = ["publication_list"]

@@ -22,6 +22,11 @@ const MAX_MESSAGES: usize = 10_000;
 pub const NOT_GENERATED_TEXT: &str = "本次回复未生成。";
 pub const INCOMPLETE_TEXT: &str = "本次内容未生成完成。";
 
+#[path = "conversation_retry.rs"]
+mod retry;
+pub use retry::{begin_retry, initialize_attempt, retry_state, RetryOutcome, RetryState};
+pub(crate) use retry::{reserve_request, tool_dispatched, RequestKind};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationTurnStatus {
@@ -60,6 +65,8 @@ pub struct ConversationTurn {
     pub messages: Vec<ConversationMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_state: Option<RetryState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +115,9 @@ pub fn load_conversation(
     let mut changed = false;
     for turn in &mut session.turns {
         if turn.status == ConversationTurnStatus::Running {
+            if let Some(state) = &mut turn.retry_state {
+                state.outcome = RetryOutcome::Blocked;
+            }
             turn.status = ConversationTurnStatus::NotGenerated;
             turn.updated_at_ms = now_ms.max(turn.started_at_ms);
             turn.messages
@@ -124,6 +134,18 @@ pub fn load_conversation(
 
 pub fn read_conversation(handle: &ProjectHandle) -> Result<ConversationSession, AppError> {
     read_or_new(handle)
+}
+
+/// Called under the Host writer lease when a local editor event first needs a
+/// stable session owner. This persists no invented user/assistant messages.
+pub(crate) fn ensure_conversation_session(
+    handle: &ProjectHandle,
+) -> Result<ConversationSession, AppError> {
+    let session = read_or_new(handle)?;
+    if !store_path(handle)?.exists() {
+        write_session(handle, &session)?;
+    }
+    Ok(session)
 }
 
 pub fn start_conversation_turn(
@@ -161,6 +183,7 @@ pub fn start_conversation_turn(
             created_at_ms: now_ms,
         }],
         error_code: None,
+        retry_state: None,
     });
     validate_session(&session, handle.project_id())?;
     write_session(handle, &session)?;
@@ -187,6 +210,13 @@ where
     F: FnMut(NormalizedEvent) + Send,
 {
     let mut accumulated = String::new();
+    reserve_request(
+        handle,
+        turn_id,
+        RequestKind::Agent,
+        request.max_output_tokens,
+    )
+    .map_err(AppError::from_provider_error)?;
     let result = client.stream_once_cancellable_blocking(
         provider_id,
         key,
@@ -263,6 +293,7 @@ pub fn finish_conversation_turn(
     turn.status = status;
     turn.updated_at_ms = now_ms.max(turn.started_at_ms);
     turn.error_code = sanitize_error_code(error_code);
+    retry::terminalize_retry(turn, accumulated_text, kind);
     turn.messages.push(assistant_message(&visible_text, now_ms));
     validate_session(&session, handle.project_id())?;
     write_session(handle, &session)?;
@@ -335,10 +366,19 @@ fn assistant_message(content: &str, now_ms: u64) -> ConversationMessage {
 }
 
 fn read_or_new(handle: &ProjectHandle) -> Result<ConversationSession, AppError> {
+    crate::conversation_sessions::with_store_read(handle, || read_or_new_uncoordinated(handle))
+}
+// Callers outside this module must hold the session catalog lock and a writer lease.
+pub(crate) fn read_or_new_uncoordinated(
+    handle: &ProjectHandle,
+) -> Result<ConversationSession, AppError> {
     let path = store_path(handle)?;
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if handle.session_binding().is_some() {
+                return Err(conversation_error("conversation.store_unavailable"));
+            }
             return Ok(new_session(handle));
         }
         Err(_) => return Err(conversation_error("conversation.store_unavailable")),
@@ -350,6 +390,12 @@ fn read_or_new(handle: &ProjectHandle) -> Result<ConversationSession, AppError> 
     let session: ConversationSession = serde_json::from_slice(&bytes)
         .map_err(|_| conversation_error("conversation.store_invalid"))?;
     validate_session(&session, handle.project_id())?;
+    if handle
+        .conversation_session_id()
+        .is_some_and(|id| id != session.session_id)
+    {
+        return Err(conversation_error("conversation.store_invalid"));
+    }
     Ok(session)
 }
 
@@ -376,6 +422,7 @@ fn validate_session(session: &ConversationSession, project_id: &str) -> Result<(
         return Err(conversation_error("conversation.store_invalid"));
     }
     for turn in &session.turns {
+        retry::validate_retry(turn)?;
         if Uuid::parse_str(&turn.turn_id).is_err()
             || turn.model.is_empty()
             || turn.model.len() > 160
@@ -432,6 +479,13 @@ fn sanitize_error_code(value: Option<&str>) -> Option<String> {
 }
 
 fn store_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
+    if handle.session_binding().is_some() {
+        return crate::conversation_sessions::store_path(
+            handle,
+            crate::conversation_sessions::StoreKind::Conversation,
+            true,
+        );
+    }
     let root = handle.root().join(STORE_DIRECTORY);
     match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.is_dir() && !is_link_or_reparse(&metadata) => {}
@@ -446,41 +500,48 @@ fn store_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
 }
 
 fn write_session(handle: &ProjectHandle, session: &ConversationSession) -> Result<(), AppError> {
-    let target = store_path(handle)?;
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if !metadata.is_file() || is_link_or_reparse(&metadata) {
-            return Err(conversation_error("conversation.store_boundary"));
-        }
-    }
     let bytes = serde_json::to_vec_pretty(session)
         .map_err(|_| conversation_error("conversation.store_invalid"))?;
     if bytes.len() as u64 > MAX_STORE_BYTES {
         return Err(conversation_error("conversation.store_too_large"));
     }
-    let parent = target
-        .parent()
-        .ok_or_else(|| conversation_error("conversation.store_boundary"))?;
-    let temporary = parent.join(format!(".session-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| conversation_error("conversation.store_unavailable"))?;
-        file.write_all(&bytes)
-            .and_then(|()| file.write_all(b"\n"))
-            .and_then(|()| file.sync_all())
-            .map_err(|_| conversation_error("conversation.store_unavailable"))?;
-        drop(file);
-        atomic_replace(&temporary, &target)
-            .map_err(|_| conversation_error("conversation.store_unavailable"))?;
-        sync_directory(parent)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    crate::conversation_sessions::with_store_write(
+        handle,
+        crate::conversation_sessions::StoreKind::Conversation,
+        bytes.len() as u64 + 1,
+        || {
+            let target = store_path(handle)?;
+            if let Ok(metadata) = fs::symlink_metadata(&target) {
+                if !metadata.is_file() || is_link_or_reparse(&metadata) {
+                    return Err(conversation_error("conversation.store_boundary"));
+                }
+            }
+            let parent = target
+                .parent()
+                .ok_or_else(|| conversation_error("conversation.store_boundary"))?;
+            let temporary = parent.join(format!(".session-{}.tmp", Uuid::new_v4()));
+            let result = (|| {
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&temporary)
+                    .map_err(|_| conversation_error("conversation.store_unavailable"))?;
+                file.write_all(&bytes)
+                    .and_then(|()| file.write_all(b"\n"))
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| conversation_error("conversation.store_unavailable"))?;
+                drop(file);
+                atomic_replace(&temporary, &target)
+                    .map_err(|_| conversation_error("conversation.store_unavailable"))?;
+                sync_directory(parent)?;
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(temporary);
+            }
+            result
+        },
+    )
 }
 
 #[cfg(windows)]
@@ -501,6 +562,7 @@ fn conversation_error(code: &'static str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    include!("nr603_retry_tests.rs");
     use super::{
         execute_provider_turn, finish_conversation_turn, load_conversation,
         recent_visible_messages, start_conversation_turn, ConversationProviderTerminalState,

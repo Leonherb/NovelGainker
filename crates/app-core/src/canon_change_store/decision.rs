@@ -1,20 +1,144 @@
 use super::*;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PageCursor {
+    version: u16,
+    project_id: String,
+    session_id: String,
+    turn_id: Option<String>,
+    limit: u16,
+    snapshot: String,
+    offset: usize,
+}
 
 impl CanonChangeCoordinator {
+    pub fn activities_page(
+        &self,
+        conversation_session_id: &str,
+        request: &ChangeListRequest,
+    ) -> Result<ChangePage, ChangeError> {
+        request.validate()?;
+        let _state = self.state.try_lock().map_err(|_| ChangeError::WriterBusy)?;
+        let session = read_conversation(&self.handle).map_err(|_| ChangeError::SourceInvalid)?;
+        if session.session_id != conversation_session_id {
+            return Err(ChangeError::SourceInvalid);
+        }
+        let all_records = self.records()?;
+        let candidates = self
+            .chapter_candidate_activities(&session, &all_records)?
+            .into_iter()
+            .filter(|candidate| {
+                request
+                    .turn_id
+                    .as_ref()
+                    .is_none_or(|turn| turn == &candidate.turn_id)
+            })
+            .collect();
+        let mut records = all_records
+            .iter()
+            .filter(|record| {
+                record.conversation_session_id == conversation_session_id
+                    && request
+                        .turn_id
+                        .as_ref()
+                        .is_none_or(|turn| turn == &record.turn_id)
+            })
+            .collect::<Vec<_>>();
+        let order = session
+            .turns
+            .iter()
+            .enumerate()
+            .map(|(index, turn)| (turn.turn_id.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        // Manual save events have no fabricated chat Turn. They are included at
+        // the front and rendered separately from the chat's actual messages.
+        records.sort_by(|a, b| {
+            let a_order = order.get(a.turn_id.as_str()).copied().unwrap_or(usize::MAX);
+            let b_order = order.get(b.turn_id.as_str()).copied().unwrap_or(usize::MAX);
+            b_order
+                .cmp(&a_order)
+                .then_with(|| b.receipt.change_id.cmp(&a.receipt.change_id))
+        });
+        let snapshot = sha256_hex(
+            &serde_json::to_vec(
+                &records
+                    .iter()
+                    .map(|record| {
+                        (
+                            &record.receipt.change_id,
+                            record.receipt.revision,
+                            record.receipt.status,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|_| ChangeError::Io)?,
+        );
+        let offset = if let Some(cursor) = &request.cursor {
+            let bytes = URL_SAFE_NO_PAD
+                .decode(cursor)
+                .map_err(|_| ChangeError::InvalidRequest)?;
+            let cursor: PageCursor =
+                serde_json::from_slice(&bytes).map_err(|_| ChangeError::InvalidRequest)?;
+            if cursor.version != 1
+                || cursor.project_id != self.project_id()
+                || cursor.session_id != conversation_session_id
+                || cursor.turn_id != request.turn_id
+                || cursor.limit != request.limit
+                || cursor.snapshot != snapshot
+                || cursor.offset == 0
+                || cursor.offset >= records.len()
+                || !cursor.offset.is_multiple_of(usize::from(request.limit))
+            {
+                return Err(ChangeError::RevisionConflict);
+            }
+            cursor.offset
+        } else {
+            0
+        };
+        let end = offset
+            .saturating_add(usize::from(request.limit))
+            .min(records.len());
+        let next_cursor = if end < records.len() {
+            let cursor = PageCursor {
+                version: 1,
+                project_id: self.project_id().to_owned(),
+                session_id: conversation_session_id.to_owned(),
+                turn_id: request.turn_id.clone(),
+                limit: request.limit,
+                snapshot,
+                offset: end,
+            };
+            Some(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&cursor).map_err(|_| ChangeError::Io)?))
+        } else {
+            None
+        };
+        let items = records
+            .into_iter()
+            .skip(offset)
+            .take(usize::from(request.limit))
+            .map(|record| self.activity_with_source_state(record, &all_records))
+            .collect();
+        Ok(ChangePage {
+            schema_version: 1,
+            items,
+            next_cursor,
+            candidates,
+        })
+    }
     pub fn activities(
         &self,
         conversation_session_id: &str,
     ) -> Result<Vec<ChangeActivity>, ChangeError> {
         let _state = self.state.try_lock().map_err(|_| ChangeError::WriterBusy)?;
-        Ok(self
-            .records()?
-            .into_iter()
+        let records = self.records()?;
+        Ok(records
+            .iter()
             .filter(|record| record.conversation_session_id == conversation_session_id)
-            .map(|record| ChangeActivity {
-                conversation_session_id: record.conversation_session_id,
-                turn_id: record.turn_id,
-                receipt: record.receipt,
-            })
+            .map(|record| self.activity_with_source_state(record, &records))
             .collect())
     }
 
@@ -37,11 +161,7 @@ impl CanonChangeCoordinator {
             })
             .collect();
         Ok(ChangeDetail {
-            activity: ChangeActivity {
-                conversation_session_id: record.conversation_session_id,
-                turn_id: record.turn_id,
-                receipt: record.receipt,
-            },
+            activity: self.activity_with_source_state(&record, &self.records()?),
             files,
         })
     }
@@ -56,6 +176,33 @@ impl CanonChangeCoordinator {
         decision: ChangeDecision,
         cancellation: &CancellationToken,
     ) -> Result<ChangeReceipt, ChangeError> {
+        // Reuse the closed local discard action for an opaque draft ID. It
+        // cannot confirm/save a draft or touch Canon; existing changes win in
+        // the unlikely event of an ID collision.
+        if self.nr5
+            && decision == ChangeDecision::Discard
+            && Uuid::parse_str(change_id)
+                .is_ok_and(|id| !id.is_nil() && id.to_string() == change_id)
+            && fs::symlink_metadata(self.directory()?.join(format!("{change_id}.json"))).is_err()
+            && fs::symlink_metadata(
+                self.directory()?
+                    .join(format!(".candidate-{change_id}.json")),
+            )
+            .is_ok()
+        {
+            check_cancelled(cancellation)?;
+            if revision != 1 {
+                return Err(ChangeError::RevisionConflict);
+            }
+            self.discard_displayed_chapter(change_id, conversation_session_id)?;
+            return Ok(ChangeReceipt {
+                schema_version: CHANGE_SCHEMA_VERSION,
+                change_id: change_id.to_owned(),
+                revision: 2,
+                status: ChangeStatus::Rejected,
+                files: Vec::new(),
+            });
+        }
         self.decide_with_hook(
             conversation_session_id,
             change_id,

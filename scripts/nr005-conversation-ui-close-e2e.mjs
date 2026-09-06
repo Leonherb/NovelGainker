@@ -2,11 +2,28 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { currentNr6Authorization } from "./nr-stage-state.mjs";
 
 const root = process.cwd();
 const read = (relative) => readFileSync(path.join(root, relative), "utf8");
 const app = read("apps/desktop/src/App.tsx");
 const conversation = read("apps/desktop/src/components/ConversationView.tsx");
+const sessionsMounted = app.includes("<SessionConversationView");
+const sessions = sessionsMounted
+  ? read("apps/desktop/src/components/SessionConversationView.tsx")
+  : "";
+if (
+  sessionsMounted &&
+  (!["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"].every((file) =>
+    currentNr6Authorization(read(file)),
+  ) ||
+    !sessions.includes("<ConversationView") ||
+    !sessions.includes("conversationSessionId={selected}") ||
+    !sessions.includes("key={selected}"))
+)
+  throw new Error(
+    "NR-601 wrapper requires approved entry and a keyed, scoped original ConversationView",
+  );
 const workspace = read("apps/desktop/src/components/ProjectWorkspace.tsx");
 const rustWindow = read("apps/desktop/src-tauri/src/lib.rs");
 
@@ -18,13 +35,13 @@ for (const required of [
   "requestConversationTurnCancel",
   "正在停止",
 ]) {
-  if (!app.includes(required) && !conversation.includes(required)) {
+  if (![app, conversation, sessions].some((source) => source.includes(required))) {
     throw new Error("NR-005 conversation UI missing: " + required);
   }
 }
 
 for (const forbidden of ["ConversationPlaceholder", "History", "锚定", "Control JSON"]) {
-  if (app.includes(forbidden) || conversation.includes(forbidden)) {
+  if ([app, conversation, sessions].some((source) => source.includes(forbidden))) {
     throw new Error("NR-005 middle column exposes retired UI concept: " + forbidden);
   }
 }
@@ -77,6 +94,7 @@ const testFiles = [
   "src/components/ConversationView.reconciliation.test.tsx",
   "src/components/ProjectWorkspace.test.tsx",
 ];
+if (sessionsMounted) testFiles.push("src/components/SessionConversationView.test.tsx");
 const tests = spawnSync(
   process.execPath,
   [pnpmCli, "--filter", "@novelgainker/desktop", "exec", "vitest", "run", ...testFiles],
@@ -106,7 +124,7 @@ writeFileSync(
       automatedExternalRequests: 0,
       liveProviderSmokeExecuted: false,
       uiCloseSha256: createHash("sha256")
-        .update(app + conversation + workspace + rustWindow)
+        .update(app + conversation + sessions + workspace + rustWindow)
         .digest("hex"),
     },
     null,

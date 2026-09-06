@@ -45,6 +45,7 @@ export type ProjectWorkspaceProps = {
   externalRefreshToken?: number;
   navigatorHost?: HTMLElement | null;
   onAppStateChanged?: () => void;
+  onFileSaved?: () => void;
   onFileOpenRequested?: () => void;
   recentProjects?: RecentProject[];
   onSessionChange?: (session: ProjectSession | null) => void;
@@ -146,6 +147,7 @@ export function ProjectWorkspace({
   externalRefreshToken = 0,
   navigatorHost,
   onAppStateChanged = () => undefined,
+  onFileSaved,
   onFileOpenRequested = () => undefined,
   recentProjects = [],
   onSessionChange = () => undefined,
@@ -507,13 +509,14 @@ export function ProjectWorkspace({
       }
       setDocument({
         ...savingDocument,
-        content: savingContent,
+        content: result.savedContent ?? savingContent,
         contentHash: result.contentHash,
         modifiedTimeMs: result.modifiedTimeMs,
         sizeBytes: result.sizeBytes,
         bom: result.bom,
         lineEnding: result.lineEnding,
       });
+      if (result.savedContent !== undefined) setDraft(result.savedContent);
       dirtyRef.current = false;
       if (globalThis.document.activeElement !== editorRef.current) updateEditorReservation(false);
       setExternalConflict(null);
@@ -522,10 +525,15 @@ export function ProjectWorkspace({
       setValidationStale(false);
       setValidationError(null);
       setEditorNotice(
-        result.validation.diagnostics.length > 0
-          ? diagnosticsCopy.savedWithIssues
-          : diagnosticsCopy.savedValid,
+        result.savedContent !== undefined
+          ? result.chapterFinalizationConfirmed
+            ? "章节已保存；当前版本已有定稿确认。"
+            : "章节已保存；当前版本仍需确认定稿。"
+          : result.validation.diagnostics.length > 0
+            ? diagnosticsCopy.savedWithIssues
+            : diagnosticsCopy.savedValid,
       );
+      onFileSaved?.();
       return true;
     } catch (saveFailure: unknown) {
       setSaveError(presentProjectError(saveFailure));

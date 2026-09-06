@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-conversation-session-list"
+description = "Enables the conversation_session_list command without any pre-configured scope."
+commands.allow = ["conversation_session_list"]
+
+[[permission]]
+identifier = "deny-conversation-session-list"
+description = "Denies the conversation_session_list command without any pre-configured scope."
+commands.deny = ["conversation_session_list"]

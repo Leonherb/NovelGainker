@@ -27,6 +27,7 @@ export type ChangeActivity = {
   conversationSessionId: string;
   turnId: string;
   receipt: ChangeReceipt;
+  chapterSourceState?: "current" | "stale" | "unavailable";
 };
 export type ChangeDetail = {
   activity: ChangeActivity;
@@ -34,6 +35,13 @@ export type ChangeDetail = {
     relativePath: string;
     lines: { kind: "context" | "removed" | "added"; text: string }[];
   }[];
+};
+export type ChapterCandidateActivity = { candidateId: string; turnId: string; contentHash: string };
+export type ChangePage = {
+  schemaVersion: 1;
+  items: ChangeActivity[];
+  nextCursor: string | null;
+  candidates?: ChapterCandidateActivity[];
 };
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 const nativeInvoke: Invoke = (command, args) => invoke(command, args);
@@ -69,8 +77,18 @@ function path(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.length <= 512 &&
-    /^(characters|world|materials|plot|outlines)\/[\p{L}\p{N} _./-]+\.md$/u.test(value) &&
-    !value.split("/").some((part) => !part || part === "." || part === "..")
+    /^(characters|world|materials|plot|outlines|chapters)\/[\p{L}\p{N} _./-]+\.md$/u.test(value) &&
+    (!value.startsWith("chapters/") || value.split("/").length === 2) &&
+    !value
+      .split("/")
+      .some(
+        (part) =>
+          !part ||
+          part === "." ||
+          part === ".." ||
+          /[. ]$/u.test(part) ||
+          /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(part),
+      )
   );
 }
 export function parseChangeReceipt(value: unknown): ChangeReceipt {
@@ -101,13 +119,28 @@ export function parseChangeReceipt(value: unknown): ChangeReceipt {
   return value as ChangeReceipt;
 }
 export function parseChangeActivity(value: unknown): ChangeActivity {
-  object(value, ["conversationSessionId", "turnId", "receipt"]);
+  const hasSourceState =
+    typeof value === "object" && value !== null && "chapterSourceState" in value;
+  object(
+    value,
+    hasSourceState
+      ? ["conversationSessionId", "turnId", "receipt", "chapterSourceState"]
+      : ["conversationSessionId", "turnId", "receipt"],
+  );
   if (!id(value.conversationSessionId) || !id(value.turnId))
     throw new Error("Invalid change context");
+  if (
+    hasSourceState &&
+    !["current", "stale", "unavailable"].includes(String(value.chapterSourceState))
+  )
+    throw new Error("Invalid chapter source state");
   return {
     conversationSessionId: value.conversationSessionId,
     turnId: value.turnId,
     receipt: parseChangeReceipt(value.receipt),
+    ...(hasSourceState
+      ? { chapterSourceState: value.chapterSourceState as "current" | "stale" | "unavailable" }
+      : {}),
   };
 }
 export function parseChangeActivities(value: unknown): ChangeActivity[] {
@@ -116,6 +149,46 @@ export function parseChangeActivities(value: unknown): ChangeActivity[] {
   if (new Set(entries.map((entry) => entry.receipt.changeId)).size !== entries.length)
     throw new Error("Duplicate change");
   return entries;
+}
+export function parseChangePage(value: unknown): ChangePage {
+  const hasCandidates = typeof value === "object" && value !== null && "candidates" in value;
+  object(
+    value,
+    hasCandidates
+      ? ["schemaVersion", "items", "nextCursor", "candidates"]
+      : ["schemaVersion", "items", "nextCursor"],
+  );
+  if (
+    value.schemaVersion !== 1 ||
+    (value.nextCursor !== null &&
+      (typeof value.nextCursor !== "string" || !/^[A-Za-z0-9_-]{1,1024}$/u.test(value.nextCursor)))
+  )
+    throw new Error("Invalid change page");
+  const items = parseChangeActivities(value.items);
+  if (value.nextCursor !== null && items.length === 0) throw new Error("Empty cursor page");
+  if (hasCandidates) {
+    if (!Array.isArray(value.candidates) || value.candidates.length > 8)
+      throw new Error("Invalid candidates");
+    const seen = new Set<string>();
+    for (const candidate of value.candidates) {
+      object(candidate, ["candidateId", "turnId", "contentHash"]);
+      if (
+        !id(candidate.candidateId) ||
+        !id(candidate.turnId) ||
+        typeof candidate.contentHash !== "string" ||
+        !hash.test(candidate.contentHash) ||
+        seen.has(candidate.candidateId)
+      )
+        throw new Error("Invalid candidate");
+      seen.add(candidate.candidateId);
+    }
+  }
+  return {
+    schemaVersion: 1,
+    items,
+    nextCursor: value.nextCursor as string | null,
+    ...(hasCandidates ? { candidates: value.candidates as ChapterCandidateActivity[] } : {}),
+  };
 }
 export function parseChangeDetail(value: unknown): ChangeDetail {
   object(value, ["activity", "files"]);
@@ -128,7 +201,7 @@ export function parseChangeDetail(value: unknown): ChangeDetail {
     if (
       file.relativePath !== activity.receipt.files[index].relativePath ||
       !Array.isArray(file.lines) ||
-      file.lines.length > 16384
+      file.lines.length > (String(file.relativePath).startsWith("chapters/") ? 65536 : 16384)
     )
       throw new Error("Invalid diff target");
     const lines = file.lines.map((line) => {
@@ -165,24 +238,49 @@ async function request<T>(
   }
 }
 export function requestCanonChanges(sessionId: string, call: Invoke = nativeInvoke) {
-  return request(CANON_CHANGE_LIST_COMMAND, { sessionId }, parseChangeActivities, call);
+  return requestCanonChangesPage(sessionId, null, null, call).then((page) => page.items);
+}
+export function requestCanonChangesPage(
+  sessionId: string,
+  cursor: string | null = null,
+  turnId: string | null = null,
+  call: Invoke = nativeInvoke,
+  conversationSessionId: string | null = null,
+) {
+  return request(
+    CANON_CHANGE_LIST_COMMAND,
+    {
+      request: { projectSessionId: sessionId, turnId, cursor, limit: 100 },
+      ...(conversationSessionId === null ? {} : { conversationSessionId }),
+    },
+    parseChangePage,
+    call,
+  );
 }
 export function requestCanonChangeDetail(
   sessionId: string,
   changeId: string,
   call: Invoke = nativeInvoke,
+  conversationSessionId: string | null = null,
 ) {
-  return request(CANON_CHANGE_DETAIL_COMMAND, { sessionId, changeId }, parseChangeDetail, call);
+  return request(
+    CANON_CHANGE_DETAIL_COMMAND,
+    { sessionId, changeId, ...(conversationSessionId === null ? {} : { conversationSessionId }) },
+    parseChangeDetail,
+    call,
+  );
 }
 export function requestCanonChangeDecision(
   sessionId: string,
   receipt: ChangeReceipt,
   decision: "confirm" | "discard" | "undo" | "retry_recovery",
   call: Invoke = nativeInvoke,
+  conversationSessionId: string | null = null,
 ) {
   return request(
     CANON_CHANGE_DECIDE_COMMAND,
     {
+      ...(conversationSessionId === null ? {} : { conversationSessionId }),
       request: {
         projectSessionId: sessionId,
         changeId: receipt.changeId,

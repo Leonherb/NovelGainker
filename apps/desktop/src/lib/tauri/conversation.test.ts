@@ -21,6 +21,9 @@ const TURN_ID = "40000000-0000-4000-8000-000000000004";
 const MESSAGE_ID = "50000000-0000-4000-8000-000000000005";
 const IDENTITY = {
   sessionId: PROJECT_SESSION_ID,
+  conversationSessionId: CONVERSATION_SESSION_ID,
+  attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  attemptNumber: 1,
   turnId: TURN_ID,
   providerId: "openai" as const,
   model: "gpt-5.6-terra",
@@ -60,6 +63,8 @@ describe("Conversation IPC contract", () => {
     const started = {
       ...IDENTITY,
       conversationSessionId: CONVERSATION_SESSION_ID,
+      attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      attemptNumber: 1,
     };
     expect(parseConversationTurnStarted(started)).toEqual(started);
     expect(() => parseConversationTurnStarted({ ...started, apiKey: "secret" })).toThrow();
@@ -162,12 +167,27 @@ describe("Conversation IPC contract", () => {
       })
       .mockResolvedValueOnce(started)
       .mockResolvedValueOnce({ cancelRequested: true });
-    await requestConversationSession(PROJECT_SESSION_ID, invokeCommand);
-    await requestConversationTurnStart(PROJECT_SESSION_ID, "随便聊聊", invokeCommand);
+    await requestConversationSession(PROJECT_SESSION_ID, CONVERSATION_SESSION_ID, invokeCommand);
+    await requestConversationTurnStart(
+      PROJECT_SESSION_ID,
+      "随便聊聊",
+      CONVERSATION_SESSION_ID,
+      invokeCommand,
+    );
     await requestConversationTurnCancel(PROJECT_SESSION_ID, TURN_ID, invokeCommand);
     expect(invokeCommand.mock.calls).toEqual([
-      [CONVERSATION_SESSION_LOAD_COMMAND, { sessionId: PROJECT_SESSION_ID }],
-      [CONVERSATION_TURN_START_COMMAND, { sessionId: PROJECT_SESSION_ID, message: "随便聊聊" }],
+      [
+        CONVERSATION_SESSION_LOAD_COMMAND,
+        { sessionId: PROJECT_SESSION_ID, conversationSessionId: CONVERSATION_SESSION_ID },
+      ],
+      [
+        CONVERSATION_TURN_START_COMMAND,
+        {
+          sessionId: PROJECT_SESSION_ID,
+          message: "随便聊聊",
+          conversationSessionId: CONVERSATION_SESSION_ID,
+        },
+      ],
       [CONVERSATION_TURN_CANCEL_COMMAND, { sessionId: PROJECT_SESSION_ID, turnId: TURN_ID }],
     ]);
     expect(JSON.stringify(invokeCommand.mock.calls)).not.toMatch(

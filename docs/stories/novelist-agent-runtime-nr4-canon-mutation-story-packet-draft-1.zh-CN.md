@@ -18,11 +18,11 @@
 
 这不是“每次写入都弹确认”的产品。用户明确决定、纠正和任务可以自动落盘；AI 自己的建议、猜测和备选方案不能静默成为 Canon。来源有歧义、目标有冲突或变化具破坏性时才等待选择。
 
-本阶段不交付章节写入/提交、EPUB、图像生成、任意文件操作、删除/重命名/实体合并工具、后台批量维护、通用多任务 Agent、自动 Provider 重试、云同步或外部 Skill Runtime。NR-5～NR-7 未形成 Packet、未获实施授权。不恢复独立 Pre-NR-4 计划，也不重开 NR-G4。
+本阶段不交付章节写入/提交、EPUB、图像生成、任意文件操作、删除/重命名/实体合并工具、后台批量维护、通用多任务 Agent、自动 Provider 重试或外部 Skill Runtime。NR-5～NR-6 在本稿形成时未形成 Packet、未获实施授权。不恢复独立 Pre-NR-4 计划，也不重开 NR-G4。
 
 ## 2. 依据与现状核对
 
-规范来源为[已批准能力总计划 §2、§3.3、§5](../novelist-agent-runtime-nr2-nr7-capability-delivery-plan-draft-2.zh-CN.md)、[NR-3 Final](novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md)、[NR-G4 批准记录](../reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md)及 `CLAUDE.md`。总计划中 NR-G2 的“当前状态”是形成时快照，当前进度以 BMAD 状态为准。
+规范来源为[已批准能力总计划 §2、§3.3、§5](../novelist-agent-runtime-nr2-nr6-capability-delivery-plan-draft-2.zh-CN.md)、[NR-3 Final](novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md)、[NR-G4 批准记录](../reviews/novelist-agent-runtime-nr-g4-gate-rereview.zh-CN.md)及 `CLAUDE.md`。总计划中 NR-G2 的“当前状态”是形成时快照，当前进度以 BMAD 状态为准。
 
 | 实现证据                                                        | 对 NR-4 的约束                                                                                          |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |

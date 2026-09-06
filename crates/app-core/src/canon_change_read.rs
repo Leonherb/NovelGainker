@@ -1,7 +1,7 @@
 //! Evidence is issued only for method/file bytes actually delivered to the model.
 use crate::canon_change::{CanonEntityKind, ChangeError, ChangeEvidence, MAX_CHANGE_FILE_BYTES};
 use crate::capability_pack::ValidatedCapabilityPack;
-use crate::tool_runtime::MAX_TOOL_RESULT_BYTES;
+use crate::protocol_profile::ToolProtocolProfile;
 use crate::workspace::sha256_hex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -18,9 +18,16 @@ struct DeliveredFile {
 #[derive(Clone, Default)]
 pub struct DeliveredCanonReads {
     files: BTreeMap<String, DeliveredFile>,
+    profile: ToolProtocolProfile,
 }
 
 impl DeliveredCanonReads {
+    pub fn for_profile(profile: ToolProtocolProfile) -> Self {
+        Self {
+            profile,
+            ..Self::default()
+        }
+    }
     /// Transactional in-memory update: an oversized/failed result issues no receipts.
     pub fn annotate(
         &mut self,
@@ -53,16 +60,24 @@ impl DeliveredCanonReads {
                 targets.push(target);
             }
         }
+        let chapter_method = capability_id == "novel-story-telling";
         candidate["changeEvidence"] = json!({
             "methodReceiptId": method_receipt,
             "capabilityId": capability_id,
             "completeTargets": targets,
             "notice": "只有 completeTargets 中的完整原文回执可用于更新；搜索、列表、截断片段不构成更新权限。"
         });
+        if self.profile == ToolProtocolProfile::Nr5 && chapter_method {
+            candidate["chapterCandidateIdentity"] = json!({
+                "chapterId": next_evidence.chapter_draft_id(),
+                "candidateId": next_evidence.chapter_draft_id(),
+                "notice": "新章试写若要支持下一轮接受这版，在唯一完整 markdown 代码块中使用此 Host chapterId；更新候选保持完整读取的原章节 ID。此标识不表示已保存。"
+            });
+        }
         if serde_json::to_vec(&candidate)
             .map_err(|_| ChangeError::InvalidRequest)?
             .len()
-            > MAX_TOOL_RESULT_BYTES
+            > self.profile.result_bytes()
         {
             return Err(ChangeError::BudgetExceeded);
         }
@@ -86,6 +101,7 @@ impl DeliveredCanonReads {
             CanonEntityKind::Material,
             CanonEntityKind::Plot,
             CanonEntityKind::Outline,
+            CanonEntityKind::Chapter,
         ]
         .into_iter()
         .find(|kind| kind.validate_path(path).is_ok()) else {
@@ -97,7 +113,15 @@ impl DeliveredCanonReads {
         else {
             return Ok(None);
         };
-        if size > MAX_CHANGE_FILE_BYTES {
+        let maximum = if kind == CanonEntityKind::Chapter {
+            if self.profile != ToolProtocolProfile::Nr5 {
+                return Ok(None);
+            }
+            crate::chapter_contract::MAX_CHAPTER_BYTES
+        } else {
+            MAX_CHANGE_FILE_BYTES
+        };
+        if size > maximum {
             return Ok(None);
         }
         let Some(hash) = item["contentHash"].as_str() else {

@@ -38,9 +38,18 @@ const steps = [
   ["NR-301 embedded Novelist Pack integrity", ["pack:nr301:check"]],
   ["NR-306 evidence and NR-G4 technical submission manifest", ["e2e:nr306"]],
   ["NR-406 Canon transactions and NR-G5 validation", ["e2e:nr406"]],
+  ["NR-501 chapter contracts and current approval", ["e2e:nr501"]],
   ["Rust format check", ["format:rust"]],
   ["Rust Clippy", ["lint:rust"]],
   ["Rust tests", ["test:rust"]],
+  ["NR-502 chapter commit integration evidence", ["e2e:nr502"]],
+  ["NR-503 continuity and chapter-source evidence", ["e2e:nr503"]],
+  ["NR-504 nonlinear loop and native budget evidence", ["e2e:nr504"]],
+  ["NR-505 production publication and independent EPUB structure evidence", ["e2e:nr505"]],
+  ["NR-506 actual desktop IPC twelve-chapter and fault chains", ["e2e:nr506"]],
+  ["NR-601 session isolation and captured desktop runs", ["e2e:nr601"]],
+  ["NR-602 branch archive clear and visible export", ["e2e:nr602"]],
+  ["NR-603 explicit retry and attempt-scoped reconciliation", ["e2e:nr603"]],
   ["Sprint 1 offline E2E", ["e2e:sprint1"]],
   ["Tauri debug build", ["build:test:debug"]],
   ["Debug desktop smoke test", ["smoke:desktop:debug"]],
@@ -72,9 +81,9 @@ for (const [name, args] of steps) {
   completedSteps.push({ name, args, exitCode: result.status });
 }
 
-mkdirSync("target/qa/nr-406", { recursive: true });
+mkdirSync("target/qa/nr-603", { recursive: true });
 writeFileSync(
-  "target/qa/nr-406/quality.json",
+  "target/qa/nr-603/regression-quality.json",
   JSON.stringify(
     {
       schemaVersion: 1,

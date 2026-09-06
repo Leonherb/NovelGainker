@@ -7,7 +7,7 @@ mod nr403 {
     use crate::recovery::RecoveryStore;
     use serde_json::{json, Value};
 
-    fn emit(
+    pub(super) fn emit(
         stream: &mut std::net::TcpStream,
         provider: ProviderId,
         index: usize,
@@ -53,7 +53,7 @@ mod nr403 {
         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
     }
 
-    fn last_result(body: &Value, provider: ProviderId) -> Value {
+    pub(super) fn last_result(body: &Value, provider: ProviderId) -> Value {
         let text = match provider {
             ProviderId::Deepseek => body["messages"].as_array().unwrap().last().unwrap()["content"]
                 .as_str()
@@ -71,6 +71,10 @@ mod nr403 {
 
     #[test]
     fn nr406_zero_tool_chat_and_invalid_write_reply_preserve_conversation_without_canon() {
+        zero_tool_chat_for(false);
+    }
+
+    pub(super) fn zero_tool_chat_for(nr5: bool) {
         for provider in [ProviderId::Deepseek, ProviderId::Openai] {
             for invalid in [false, true] {
                 let fixture = Fixture::new();
@@ -81,7 +85,7 @@ mod nr403 {
                         .unwrap(),
                 );
                 let coordinator = Arc::new(
-                    CanonChangeCoordinator::new(
+                    (if nr5 { CanonChangeCoordinator::new_nr5 } else { CanonChangeCoordinator::new })(
                         fixture.handle.clone(),
                         lease,
                         RecoveryStore::new(fixture.root.join("fixture-recovery")).unwrap(),
@@ -117,12 +121,12 @@ mod nr403 {
                                 &mut stream,
                                 provider,
                                 index,
-                                Some(("novelist_propose_change", json!({"schemaVersion":1}))),
+                                Some(("novelist_propose_change", json!({"schemaVersion":if nr5 { 2 } else { 1 }}))),
                             );
                         } else {
                             if invalid {
                                 assert_eq!(last_result(&body, provider)["status"], "failed");
-                                assert_eq!(body["tool_choice"], "none");
+                                assert_eq!(body["tool_choice"], if nr5 { "auto" } else { "none" });
                             }
                             emit(&mut stream, provider, index, None);
                         }

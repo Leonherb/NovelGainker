@@ -33,5 +33,5 @@ workflow:
 metadata:
   created: "2026-08-29T18:12:34Z"
   bmad_version: "6.0.0"
-  last_updated: "2026-09-01T12:00:00+08:00"
-  baseline_note: "NR-001～NR-006 与 NR-G1 Remediation 已完成，NR-G1 产品批准；当前只等待批准 NR-1 Draft 2 Final，未授权实施或真实 Provider Live Smoke。"
+  last_updated: "2026-09-05"
+  baseline_note: "NR-G5已批准，实际实现仍NR-4；后续12项Story至NR-G7，无云同步。R04行为、32个非归档名额、R05多用户方式及NG-F01～NG-F05五项补漏方案已接受。R01～R03其余整包决定与总容量/catalog/证据合同及批次安排待核定；未实施/发放/测试，无助手自动Live授权。"

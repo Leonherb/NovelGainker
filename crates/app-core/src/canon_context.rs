@@ -1,9 +1,10 @@
 use crate::capability_pack::{ValidatedCapabilityPack, MAX_CAPABILITY_INSTRUCTION_BYTES};
 use crate::project::ProjectHandle;
+use crate::protocol_profile::ToolProtocolProfile;
 use crate::provider_core::CancellationToken;
 use crate::tool_runtime::{
     ToolContractError, ToolDefinition, ToolExecutionContext, ToolExecutionOutput, ToolExecutor,
-    ToolResultStatus, MAX_TOOL_RESULT_BYTES,
+    ToolResultStatus,
 };
 use crate::workspace::{
     check_project_file, list_project_files, read_project_file, ProjectFileDocument,
@@ -118,6 +119,11 @@ impl NovelistReadContextRequestV1 {
 }
 
 pub fn deepseek_novelist_read_context_input_schema() -> Value {
+    deepseek_novelist_read_context_input_schema_for(ToolProtocolProfile::Nr4)
+}
+
+pub fn deepseek_novelist_read_context_input_schema_for(profile: ToolProtocolProfile) -> Value {
+    let maximum = canon_fragment_limit(profile);
     let mut schema = NovelistReadContextRequestV1::input_schema();
     schema["required"] = json!(["capabilityId"]);
     schema["properties"]["capabilityResources"]["items"]["required"] = json!(["resourceId"]);
@@ -136,13 +142,16 @@ pub fn deepseek_novelist_read_context_input_schema() -> Value {
     ));
     let operation = &mut schema["properties"]["canonOperations"]["items"];
     operation["description"] = Value::String(format!(
-        "list 必须提供非空 scopes 和 limit（1..={MAX_CANON_LIST_PATHS}）；search 必须提供非空 scopes、query、caseSensitive、limit（1..={MAX_CANON_SEARCH_MATCHES}）；read 初次读取必须提供 relativePath、startLine（从 1 开始）、maxBytes（1..={MAX_CANON_FRAGMENT_BYTES}），分页继续必须提供 relativePath、cursor、maxBytes。无关字段可省略或为 null。"
+        "list 必须提供非空 scopes 和 limit（1..={MAX_CANON_LIST_PATHS}）；search 必须提供非空 scopes、query、caseSensitive、limit（1..={MAX_CANON_SEARCH_MATCHES}）；read 初次读取必须提供 relativePath、startLine（从 1 开始）、maxBytes（1..={maximum}），分页继续必须提供 relativePath、cursor、maxBytes。无关字段可省略或为 null。"
     ));
     // Provider-visible bounds mirror the unchanged executor budgets.
     operation["properties"]["limit"]["minimum"] = json!(1);
     operation["properties"]["limit"]["maximum"] = json!(MAX_CANON_LIST_PATHS);
     operation["properties"]["maxBytes"]["minimum"] = json!(1);
-    operation["properties"]["maxBytes"]["maximum"] = json!(MAX_CANON_FRAGMENT_BYTES);
+    operation["properties"]["maxBytes"]["maximum"] = json!(maximum);
+    operation["properties"]["maxBytes"]["description"] = json!(format!(
+        "read 必须为 1..={maximum} 字节；list 和 search 必须为 null。"
+    ));
     operation["properties"]["startLine"]["minimum"] = json!(1);
     schema
 }
@@ -278,6 +287,26 @@ pub struct NovelistReadContextExecutorV1 {
     changes: Option<ChangeReadBinding>,
 }
 
+fn canon_fragment_limit(profile: ToolProtocolProfile) -> usize {
+    match profile {
+        ToolProtocolProfile::Nr4 => MAX_CANON_FRAGMENT_BYTES,
+        ToolProtocolProfile::Nr5 => crate::chapter_contract::MAX_CHAPTER_BYTES,
+    }
+}
+
+pub fn novelist_read_context_definition_for(profile: ToolProtocolProfile) -> ToolDefinition {
+    let mut definition = novelist_read_context_definition();
+    if profile == ToolProtocolProfile::Nr5 {
+        definition.version = 2;
+        definition.input_schema["properties"]["canonOperations"]["items"]["properties"]
+            ["maxBytes"]["description"] = json!(format!(
+            "read 必须为 1..={} 字节；只向实际完整送达且哈希吻合的章节签发更新回执。",
+            canon_fragment_limit(profile)
+        ));
+    }
+    definition
+}
+
 struct ChangeReadBinding {
     coordinator: Arc<crate::canon_change_store::CanonChangeCoordinator>,
     evidence: Arc<Mutex<crate::canon_change::ChangeEvidence>>,
@@ -305,16 +334,27 @@ impl NovelistReadContextExecutorV1 {
         coordinator: Arc<crate::canon_change_store::CanonChangeCoordinator>,
         evidence: Arc<Mutex<crate::canon_change::ChangeEvidence>>,
     ) -> Self {
+        let profile = coordinator.protocol_profile();
         self.changes = Some(ChangeReadBinding {
             coordinator,
             evidence,
-            delivered: Mutex::new(crate::canon_change_read::DeliveredCanonReads::default()),
+            delivered: Mutex::new(crate::canon_change_read::DeliveredCanonReads::for_profile(
+                profile,
+            )),
         });
         self
+    }
+
+    fn profile(&self) -> ToolProtocolProfile {
+        self.changes
+            .as_ref()
+            .map(|binding| binding.coordinator.protocol_profile())
+            .unwrap_or_default()
     }
 }
 
 struct ValidatedRequest<'a> {
+    profile: ToolProtocolProfile,
     capability_id: &'a str,
     instruction_resource: &'a str,
     resources: &'a [CapabilityResourceRequestV1],
@@ -322,6 +362,7 @@ struct ValidatedRequest<'a> {
 }
 
 struct ValidatedCanonOperation<'a> {
+    profile: ToolProtocolProfile,
     operation: &'a CanonOperationV1,
     cursor: Option<CanonCursorV1>,
     binding_sha256: String,
@@ -329,12 +370,12 @@ struct ValidatedCanonOperation<'a> {
 
 impl ToolExecutor for NovelistReadContextExecutorV1 {
     fn validate_arguments(&self, arguments: &Value) -> Result<(), &'static str> {
-        novelist_read_context_definition()
+        novelist_read_context_definition_for(self.profile())
             .validate_arguments(arguments)
             .map_err(|_| "agent.tool_arguments_invalid")?;
         let request: NovelistReadContextRequestV1 = serde_json::from_value(arguments.clone())
             .map_err(|_| "agent.tool_arguments_invalid")?;
-        validate_request(&self.pack, &request)
+        validate_request(&self.pack, &request, self.profile())
             .map(|_| ())
             .map_err(|_| "agent.tool_arguments_invalid")
     }
@@ -354,7 +395,7 @@ impl ToolExecutor for NovelistReadContextExecutorV1 {
         {
             return invalid_arguments();
         }
-        if novelist_read_context_definition()
+        if novelist_read_context_definition_for(self.profile())
             .validate_arguments(arguments)
             .is_err()
         {
@@ -365,7 +406,7 @@ impl ToolExecutor for NovelistReadContextExecutorV1 {
             Ok(value) => value,
             Err(_) => return invalid_arguments(),
         };
-        let request = match validate_request(&self.pack, &request) {
+        let request = match validate_request(&self.pack, &request, self.profile()) {
             Ok(value) => value,
             Err(()) => return invalid_arguments(),
         };
@@ -393,10 +434,17 @@ impl ToolExecutor for NovelistReadContextExecutorV1 {
                             .delivered
                             .try_lock()
                             .map_err(|_| crate::canon_change::ChangeError::WriterBusy)?;
-                        delivered.annotate(&mut evidence, &self.pack, &mut output)?;
+                        let mut next_evidence = evidence.clone();
+                        let mut next_delivered = delivered.clone();
+                        next_delivered.annotate(&mut next_evidence, &self.pack, &mut output)?;
+                        changes
+                            .coordinator
+                            .annotate_chapter_sources(&mut next_evidence, &mut output)?;
+                        *evidence = next_evidence;
+                        *delivered = next_delivered;
                     } else if serialized_len(&output)
                         .map_err(|_| crate::canon_change::ChangeError::BudgetExceeded)?
-                        > MAX_TOOL_RESULT_BYTES
+                        > self.profile().result_bytes()
                     {
                         return Err(crate::canon_change::ChangeError::BudgetExceeded);
                     }
@@ -431,6 +479,7 @@ impl ToolExecutor for NovelistReadContextExecutorV1 {
 fn validate_request<'a>(
     pack: &'a ValidatedCapabilityPack,
     request: &'a NovelistReadContextRequestV1,
+    profile: ToolProtocolProfile,
 ) -> Result<ValidatedRequest<'a>, ()> {
     let capability = pack.capability(request.capability_id.trim()).ok_or(())?;
     if request.capability_resources.len() > MAX_CAPABILITY_RESOURCES
@@ -456,9 +505,14 @@ fn validate_request<'a>(
     }
     let mut operations = Vec::with_capacity(request.canon_operations.len());
     for operation in &request.canon_operations {
-        operations.push(validate_operation(operation, &capability.read_scopes)?);
+        operations.push(validate_operation(
+            operation,
+            &capability.read_scopes,
+            profile,
+        )?);
     }
     Ok(ValidatedRequest {
+        profile,
         capability_id: &capability.id,
         instruction_resource: &capability.instruction_resource,
         resources: &request.capability_resources,
@@ -469,6 +523,7 @@ fn validate_request<'a>(
 fn validate_operation<'a>(
     operation: &'a CanonOperationV1,
     capability_scopes: &BTreeSet<String>,
+    profile: ToolProtocolProfile,
 ) -> Result<ValidatedCanonOperation<'a>, ()> {
     let mut unique_scopes = HashSet::new();
     if operation.scopes.iter().any(|scope| {
@@ -534,7 +589,8 @@ fn validate_operation<'a>(
                 || operation.case_sensitive.is_some()
                 || operation.limit.is_some()
                 || !allowed_path(path)
-                || !(1..=MAX_CANON_FRAGMENT_BYTES as u64).contains(&operation.max_bytes.ok_or(())?)
+                || !(1..=canon_fragment_limit(profile) as u64)
+                    .contains(&operation.max_bytes.ok_or(())?)
                 || (operation.cursor.is_some() == operation.start_line.is_some())
                 || operation.start_line.is_some_and(|line| line == 0)
                 || cursor.as_ref().is_some_and(|cursor| {
@@ -549,6 +605,7 @@ fn validate_operation<'a>(
         }
     }
     Ok(ValidatedCanonOperation {
+        profile,
         operation,
         cursor,
         binding_sha256,
@@ -706,18 +763,19 @@ const RESERVATION_MARKER: char = '~';
 
 struct BundleBudgetWriter {
     value: Value,
+    limit: usize,
 }
 
 impl BundleBudgetWriter {
-    fn new(value: Value) -> Result<Self, BuildError> {
-        if serialized_len(&value)? > MAX_TOOL_RESULT_BYTES {
+    fn new(value: Value, limit: usize) -> Result<Self, BuildError> {
+        if serialized_len(&value)? > limit {
             return Err(BuildError::Io);
         }
-        Ok(Self { value })
+        Ok(Self { value, limit })
     }
 
     fn fits(&self, candidate: &Value) -> bool {
-        serialized_len(candidate).is_ok_and(|size| size <= MAX_TOOL_RESULT_BYTES)
+        serialized_len(candidate).is_ok_and(|size| size <= self.limit)
     }
 
     fn try_commit(&mut self, candidate: Value) -> bool {
@@ -774,7 +832,7 @@ impl BundleBudgetWriter {
     }
 
     fn finish(self) -> Result<Value, BuildError> {
-        if serialized_len(&self.value)? > MAX_TOOL_RESULT_BYTES {
+        if serialized_len(&self.value)? > self.limit {
             return Err(BuildError::Io);
         }
         Ok(self.value)
@@ -806,24 +864,33 @@ fn build_bundle_v2(
         .iter()
         .map(canon_result_reservation)
         .collect::<Vec<_>>();
-    let mut writer = BundleBudgetWriter::new(json!({
-        "schemaVersion": 1,
-        "capability": {
-            "sourceType": "capability_method",
-            "id": request.capability_id,
-            "instructionResourceId": request.instruction_resource,
-            "sourceSha256": pack.resource_sha256(request.instruction_resource),
-            "instruction": ""
-        },
-        "capabilityResources": capability_resources,
-        "canon": canon,
-        "limits": {
-            "capabilityResources": MAX_CAPABILITY_RESOURCES,
-            "canonOperations": MAX_CANON_OPERATIONS,
-            "uniqueCanonFiles": MAX_CANON_UNIQUE_FILES,
-            "toolResultBytes": MAX_TOOL_RESULT_BYTES
-        }
-    }))?;
+    let mut writer = BundleBudgetWriter::new(
+        json!({
+            "schemaVersion": 1,
+            "capability": {
+                "sourceType": "capability_method",
+                "id": request.capability_id,
+                "instructionResourceId": request.instruction_resource,
+                "sourceSha256": pack.resource_sha256(request.instruction_resource),
+                "instruction": ""
+            },
+            "capabilityResources": capability_resources,
+            "canon": canon,
+            "limits": {
+                "capabilityResources": MAX_CAPABILITY_RESOURCES,
+                "canonOperations": MAX_CANON_OPERATIONS,
+                "uniqueCanonFiles": MAX_CANON_UNIQUE_FILES,
+                "toolResultBytes": request.profile.result_bytes()
+            }
+        }),
+        request.profile.result_bytes().saturating_sub(
+            if request.profile == ToolProtocolProfile::Nr5 {
+                4096
+            } else {
+                0
+            },
+        ),
+    )?;
 
     writer.commit_longest_utf8(
         instruction_source,
@@ -872,7 +939,11 @@ fn build_bundle_v2(
         let paths = canon_paths_v2(project)?;
         let catalog_sha256 = canon_catalog_sha256(&paths);
         let mut opened_files = HashSet::new();
-        let mut canon_budget = MAX_CANON_CONTENT_BYTES;
+        let mut canon_budget = if request.profile == ToolProtocolProfile::Nr5 {
+            crate::chapter_contract::MAX_CHAPTER_BYTES
+        } else {
+            MAX_CANON_CONTENT_BYTES
+        };
         for (index, operation) in request.operations.iter().enumerate() {
             if cancellation.is_cancelled() {
                 return Err(BuildError::Cancelled);
@@ -923,7 +994,7 @@ fn validate_final_bundle(
     pack: &ValidatedCapabilityPack,
     request: &ValidatedRequest<'_>,
 ) -> Result<(), BuildError> {
-    if serialized_len(bundle)? > MAX_TOOL_RESULT_BYTES
+    if serialized_len(bundle)? > request.profile.result_bytes()
         || bundle["schemaVersion"].as_u64() != Some(1)
         || bundle["capability"]["sourceType"].as_str() != Some("capability_method")
         || bundle["capability"]["id"].as_str() != Some(request.capability_id)
@@ -1641,7 +1712,7 @@ fn execute_read_v2(
         );
     }
     opened_files.insert(path.to_owned());
-    let document = match read_stable_project_file_v2(project, path) {
+    let document = match read_stable_project_file_for(project, path, operation.profile) {
         Ok(document) => document,
         Err(()) => {
             return commit_canon_item(
@@ -1687,7 +1758,7 @@ fn execute_read_v2(
         .map(|cursor| cursor.byte_position as usize)
         .unwrap_or(0);
     let maximum = (input.max_bytes.ok_or(BuildError::Io)? as usize)
-        .min(MAX_CANON_FRAGMENT_BYTES)
+        .min(canon_fragment_limit(operation.profile))
         .min(*canon_budget);
     let best = commit_best_read_chunk(
         writer, index, operation, path, &document, start_line, start_byte, maximum,
@@ -1718,8 +1789,14 @@ fn commit_best_read_chunk(
 ) -> Result<ReadChunk, BuildError> {
     let mut low = 0usize;
     let mut high = maximum.saturating_add(1);
-    let mut best =
-        read_chunk(&document.content, start_line, start_byte, 0).ok_or(BuildError::Io)?;
+    let mut best = read_chunk(
+        &document.content,
+        start_line,
+        start_byte,
+        0,
+        operation.profile,
+    )
+    .ok_or(BuildError::Io)?;
     let zero_item = read_item(operation, path, document, start_line, start_byte, &best)?;
     let mut best_value = writer.value.clone();
     best_value["canon"][index] = zero_item;
@@ -1729,8 +1806,14 @@ fn commit_best_read_chunk(
     best_value = writer.value.clone();
     while low < high {
         let middle = low + (high - low) / 2;
-        let chunk =
-            read_chunk(&document.content, start_line, start_byte, middle).ok_or(BuildError::Io)?;
+        let chunk = read_chunk(
+            &document.content,
+            start_line,
+            start_byte,
+            middle,
+            operation.profile,
+        )
+        .ok_or(BuildError::Io)?;
         let item = read_item(operation, path, document, start_line, start_byte, &chunk)?;
         let mut candidate = writer.value.clone();
         candidate["canon"][index] = item;
@@ -1797,6 +1880,7 @@ fn read_chunk(
     start_line: usize,
     start_byte: usize,
     maximum: usize,
+    profile: ToolProtocolProfile,
 ) -> Option<ReadChunk> {
     if start_line == 0 {
         return None;
@@ -1838,7 +1922,7 @@ fn read_chunk(
             byte_position = 0;
             continue;
         }
-        if !content.is_empty() && byte_position == 0 {
+        if profile == ToolProtocolProfile::Nr4 && !content.is_empty() && byte_position == 0 {
             break;
         }
         let partial = truncate_utf8_v2(line_remaining, remaining);
@@ -1891,6 +1975,29 @@ fn read_stable_project_file_v2(
     Ok(document)
 }
 
+fn read_stable_project_file_for(
+    project: &ProjectHandle,
+    path: &str,
+    profile: ToolProtocolProfile,
+) -> Result<ProjectFileDocument, ()> {
+    let mut document = read_stable_project_file_v2(project, path)?;
+    if profile == ToolProtocolProfile::Nr5 && path.starts_with("chapters/") {
+        // The read DTO removes only the BOM, not CRLF. Restore only that prefix;
+        // normalizing or encoding here would no longer prove delivered disk bytes.
+        let mut bytes = Vec::with_capacity(document.content.len() + 3);
+        if document.bom == crate::workspace::Utf8Bom::Utf8 {
+            bytes.extend_from_slice(&[0xef, 0xbb, 0xbf]);
+        }
+        bytes.extend_from_slice(document.content.as_bytes());
+        if sha256_hex(&bytes) != document.content_hash || bytes.len() as u64 != document.size_bytes
+        {
+            return Err(());
+        }
+        document.content = String::from_utf8(bytes).map_err(|_| ())?;
+    }
+    Ok(document)
+}
+
 fn truncate_utf8_v2(value: &str, maximum: usize) -> &str {
     if value.len() <= maximum {
         return value;
@@ -1915,6 +2022,7 @@ mod tests {
     use super::*;
     use crate::capability_pack::embedded_pack;
     use crate::project::{inspect_project_root, open_project, ProjectScanMode};
+    use crate::tool_runtime::MAX_TOOL_RESULT_BYTES;
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;

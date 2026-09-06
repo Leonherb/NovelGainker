@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-conversation-export-prepare"
+description = "Enables the conversation_export_prepare command without any pre-configured scope."
+commands.allow = ["conversation_export_prepare"]
+
+[[permission]]
+identifier = "deny-conversation-export-prepare"
+description = "Denies the conversation_export_prepare command without any pre-configured scope."
+commands.deny = ["conversation_export_prepare"]

@@ -138,6 +138,17 @@ pub fn load_valid_memory(
     session: &ConversationSession,
     profile: ContextProfile,
 ) -> Option<ConversationMemory> {
+    crate::conversation_sessions::with_store_read(handle, || {
+        Ok(load_valid_memory_uncoordinated(handle, session, profile))
+    })
+    .ok()
+    .flatten()
+}
+fn load_valid_memory_uncoordinated(
+    handle: &ProjectHandle,
+    session: &ConversationSession,
+    profile: ContextProfile,
+) -> Option<ConversationMemory> {
     validate_context_profile(profile).ok()?;
     let path = memory_file_path(handle).ok()?;
     let metadata = fs::symlink_metadata(&path).ok()?;
@@ -773,38 +784,52 @@ fn is_sha256(value: &str) -> bool {
 }
 
 fn write_memory(handle: &ProjectHandle, memory: &ConversationMemory) -> Result<(), AppError> {
-    let target = ensure_memory_file_path(handle)?;
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if !metadata.is_file() || is_link_or_reparse(&metadata) {
-            return Err(memory_boundary());
-        }
-    }
     let bytes = serde_json::to_vec_pretty(memory).map_err(|_| memory_invalid())?;
     if bytes.len() as u64 > MAX_MEMORY_STORE_BYTES {
         return Err(memory_invalid());
     }
-    let parent = target.parent().ok_or_else(memory_boundary)?;
-    let temporary = parent.join(format!(".state-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| memory_unavailable())?;
-        file.write_all(&bytes)
-            .and_then(|()| file.write_all(b"\n"))
-            .and_then(|()| file.sync_all())
-            .map_err(|_| memory_unavailable())?;
-        drop(file);
-        atomic_replace(&temporary, &target).map_err(|_| memory_unavailable())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    crate::conversation_sessions::with_store_write(
+        handle,
+        crate::conversation_sessions::StoreKind::Memory,
+        bytes.len() as u64 + 1,
+        || {
+            let target = ensure_memory_file_path(handle)?;
+            if let Ok(metadata) = fs::symlink_metadata(&target) {
+                if !metadata.is_file() || is_link_or_reparse(&metadata) {
+                    return Err(memory_boundary());
+                }
+            }
+            let parent = target.parent().ok_or_else(memory_boundary)?;
+            let temporary = parent.join(format!(".state-{}.tmp", Uuid::new_v4()));
+            let result = (|| {
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&temporary)
+                    .map_err(|_| memory_unavailable())?;
+                file.write_all(&bytes)
+                    .and_then(|()| file.write_all(b"\n"))
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| memory_unavailable())?;
+                drop(file);
+                atomic_replace(&temporary, &target).map_err(|_| memory_unavailable())
+            })();
+            if result.is_err() {
+                let _ = fs::remove_file(&temporary);
+            }
+            result
+        },
+    )
 }
 
 fn memory_file_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
+    if handle.session_binding().is_some() {
+        return crate::conversation_sessions::store_path(
+            handle,
+            crate::conversation_sessions::StoreKind::Memory,
+            false,
+        );
+    }
     let root = handle.root().join(STORE_DIRECTORY);
     let metadata = fs::symlink_metadata(&root).map_err(|_| memory_unavailable())?;
     if !metadata.is_dir() || is_link_or_reparse(&metadata) {
@@ -814,6 +839,13 @@ fn memory_file_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
 }
 
 fn ensure_memory_file_path(handle: &ProjectHandle) -> Result<PathBuf, AppError> {
+    if handle.session_binding().is_some() {
+        return crate::conversation_sessions::store_path(
+            handle,
+            crate::conversation_sessions::StoreKind::Memory,
+            true,
+        );
+    }
     let state_root = handle.root().join(".novelgainker");
     ensure_plain_directory(&state_root)?;
     let memory_root = handle.root().join(STORE_DIRECTORY);
@@ -1438,6 +1470,7 @@ mod tests {
                     },
                 ],
                 error_code: None,
+                retry_state: None,
             });
         }
         let segments = history_segments(&session, NR1_CONTEXT_PROFILE.segment_content_bytes);

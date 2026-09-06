@@ -25,6 +25,7 @@ fn session() -> ConversationSession {
             started_at_ms: 1,
             updated_at_ms: 1,
             error_code: None,
+            retry_state: None,
             messages: vec![
                 ConversationMessage {
                     message_id: id(),
@@ -444,6 +445,8 @@ fn durable_record_rejects_corrupt_hashes_unknown_payloads_and_identity_changes()
     let after = body(CanonEntityKind::Character, "character-one", "之后");
     let mut record = ChangeRecord {
         undo_revision: None,
+        chapter: None,
+        chapter_dependencies: Vec::new(),
         editor_revisions: BTreeMap::new(),
         schema_version: 1,
         project_id: session.project_id,
@@ -480,4 +483,70 @@ fn durable_record_rejects_corrupt_hashes_unknown_payloads_and_identity_changes()
     assert!(serde_json::from_value::<ChangeRecord>(value).is_err());
     record.receipt.files[0].after_hash = "0".repeat(64);
     assert_eq!(record.validate(), Err(ChangeError::RecoveryRequired));
+}
+
+#[test]
+fn nr504_budget_accepts_non_linear_seven_tools_and_reserves_eighth_reply_once() {
+    use crate::chapter_contract::{NR5_CONTINUATION_BYTES, NR5_REQUEST_BYTES};
+    use crate::protocol_profile::ToolProtocolProfile;
+    let mut budget = ChangeTurnBudget::for_protocol(ToolProtocolProfile::Nr5);
+    budget.consume_compactor().unwrap();
+    for step in 0..8 {
+        budget.consume_agent(4096).unwrap();
+        match step {
+            0 | 2 | 4 | 5 => budget.consume_read().unwrap(),
+            1 | 3 => budget
+                .consume_mutation(NR5_REQUEST_BYTES, NR5_CONTINUATION_BYTES)
+                .unwrap(),
+            6 => budget
+                .consume_publication(NR5_REQUEST_BYTES, NR5_CONTINUATION_BYTES)
+                .unwrap(),
+            _ => {
+                assert!(!budget.tool_available(PROPOSE_CHANGE_TOOL_NAME));
+                assert!(
+                    !budget.tool_available(crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME)
+                );
+                assert!(!budget.tool_available("novelist.publish"));
+            }
+        }
+    }
+    assert_eq!(budget.requested_tokens, 33792);
+    assert_eq!(budget.consume_compactor(), Err(ChangeError::BudgetExceeded));
+    assert_eq!(budget.consume_agent(1), Err(ChangeError::BudgetExceeded));
+    assert_eq!(
+        budget.consume_mutation(0, 0),
+        Err(ChangeError::BudgetExceeded)
+    );
+    assert_eq!(
+        budget.consume_publication(0, 0),
+        Err(ChangeError::BudgetExceeded)
+    );
+    assert_eq!(budget.consume_read(), Err(ChangeError::BudgetExceeded));
+    for publication in [false, true] {
+        for (body, native) in [(NR5_REQUEST_BYTES + 1, 0), (0, NR5_CONTINUATION_BYTES + 1)] {
+            let mut fresh = ChangeTurnBudget::for_protocol(ToolProtocolProfile::Nr5);
+            fresh.consume_agent(4096).unwrap();
+            assert_eq!(
+                if publication {
+                    fresh.consume_publication(body, native)
+                } else {
+                    fresh.consume_mutation(body, native)
+                },
+                Err(ChangeError::BudgetExceeded)
+            );
+            assert_eq!(fresh.mutation_rounds + fresh.publication_rounds, 0);
+        }
+        let mut exhausted = ChangeTurnBudget::for_protocol(ToolProtocolProfile::Nr5);
+        for _ in 0..8 {
+            exhausted.consume_agent(4096).unwrap();
+        }
+        assert_eq!(
+            if publication {
+                exhausted.consume_publication(0, 0)
+            } else {
+                exhausted.consume_mutation(0, 0)
+            },
+            Err(ChangeError::BudgetExceeded)
+        );
+    }
 }

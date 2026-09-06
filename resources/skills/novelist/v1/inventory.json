@@ -5,13 +5,13 @@
     "inventory.json"
   ],
   "fileCount": 37,
-  "totalBytes": 91215,
-  "packSha256": "d3cb171976129f0b92ed7de237a0d45ca94664ee2b0dafdbc88fe2860ce38929",
+  "totalBytes": 98566,
+  "packSha256": "319be9d883968cfd225974c20eb890f79bd5a836c9996c8f699f7aa0658e0d2e",
   "files": [
     {
       "path": "ATTRIBUTION.md",
-      "sha256": "bbc1678b8d57d2360f4d87e9bff3c614070252fdcba76dbf61ce0cd569a5b30a",
-      "bytes": 1287
+      "sha256": "a6b3cbea42e71882c5af4b4710aecc1d090283cb1949e873e35372b5680840ca",
+      "bytes": 2192
     },
     {
       "path": "LICENSE.upstream",
@@ -55,18 +55,18 @@
     },
     {
       "path": "instructions/analytical-review.md",
-      "sha256": "7fcac35879cb75ef1d401e7bdafcf40578d8b3e16db703797e1bc17d257dfd37",
-      "bytes": 1045
+      "sha256": "954c2a9df8f3dd4e75fc43bbf4f3e41425a421be5115dd4754e730018b1e4633",
+      "bytes": 1123
     },
     {
       "path": "instructions/create-character.md",
-      "sha256": "1463d927b79dc32cdfed63bcfdd7566a18334f3f42721b5d78fb510c8d7976a9",
-      "bytes": 1358
+      "sha256": "589f2c7e784435dad67321940a1e312192899017c705c7107e5ac8b1476a6a0e",
+      "bytes": 1749
     },
     {
       "path": "instructions/create-material.md",
-      "sha256": "c9df67ed41edd0562d5ee35fb211a845e0dd8e7f9f4cf448612177767463f7d0",
-      "bytes": 1194
+      "sha256": "10d290febdd289e51288d34aaa8c7b35efbe65095c9717f2149e9e712e1e931e",
+      "bytes": 1585
     },
     {
       "path": "instructions/create-novel-project.md",
@@ -75,13 +75,13 @@
     },
     {
       "path": "instructions/create-plot.md",
-      "sha256": "5e142940028838af609a356ad987f596cf5846859becbf46e89e2734336fbfbb",
-      "bytes": 1200
+      "sha256": "a61db92a7ecc6d19d583b70fc578d9f7319a8f5df8560453b10f16d941c97fd2",
+      "bytes": 1591
     },
     {
       "path": "instructions/create-setting.md",
-      "sha256": "6e1cd3c7d50dbedf9110fbf0073039bac3d4a5ed5fe977798cf1b0e813186200",
-      "bytes": 1208
+      "sha256": "e1841a6cc3a8591083dfd651001b792c8f46be35ffa7bb7871297f8f78ffc7af",
+      "bytes": 1599
     },
     {
       "path": "instructions/create-visual-asset.md",
@@ -90,13 +90,13 @@
     },
     {
       "path": "instructions/novel-story-telling.md",
-      "sha256": "048d33fd5081612adf56d94c13ed5c2ef3f16f04712b79852f596d8c57f8a209",
-      "bytes": 1861
+      "sha256": "f280894c18994785a7b3c9f5e7fc69d3dd00aa1c47a4d01e1fc14f7136faa902",
+      "bytes": 3065
     },
     {
       "path": "instructions/publish-novel.md",
-      "sha256": "947a6fafeb29eace3c93d5190c17f042a9dc9b0b8322fe280cbc44621a40f553",
-      "bytes": 882
+      "sha256": "23b062e0260c027ec6fa6dc2d11055d717f1d0230862d02fafc25a28df776b7c",
+      "bytes": 2851
     },
     {
       "path": "manifests/analytical-review.json",
@@ -105,13 +105,13 @@
     },
     {
       "path": "manifests/create-character.json",
-      "sha256": "9569ceeb6311e09b2400089f7c01119bf8b2802bbd45448ccd0272f8145620d5",
-      "bytes": 502
+      "sha256": "57e20bd304db365b170457fcb56903c9c91e670aea078ca2f3d7833ccf64dcb2",
+      "bytes": 518
     },
     {
       "path": "manifests/create-material.json",
-      "sha256": "8f12bcabb74bea1e5aed89cf0acfed874158b0287b6b1bbc584d2eb0e43a5fb5",
-      "bytes": 486
+      "sha256": "aa3577f6f1a6d1a0ea76ef564237fa7292735d0f00bd072a439309fed10bd916",
+      "bytes": 502
     },
     {
       "path": "manifests/create-novel-project.json",
@@ -125,8 +125,8 @@
     },
     {
       "path": "manifests/create-setting.json",
-      "sha256": "0103bcdc623b63008e73df8ea101c5a83468b74f3c12df90680fd249dbf14ac1",
-      "bytes": 499
+      "sha256": "cfe8a3ebacc086d018fab1fdb802b99800ace71198165918b25d079c9a2e78d4",
+      "bytes": 515
     },
     {
       "path": "manifests/create-visual-asset.json",
@@ -140,23 +140,23 @@
     },
     {
       "path": "manifests/publish-novel.json",
-      "sha256": "634df6e64e3ebef699673430b35cc130d52cdfcfb3bec0967dc484a6b2e8949c",
-      "bytes": 421
+      "sha256": "322adde03b89039a7d342680777f1883ffc91e8d432862ed6e98c518711f8a80",
+      "bytes": 442
     },
     {
       "path": "pack.json",
-      "sha256": "ae010acc32b5f14e912dd027a411a6c41f1154562c5df6adf37518062114a99c",
+      "sha256": "8fbe193e25494122a4432f30ba85d54250aa5c91125a54d7ba85899b0a7ecbcb",
       "bytes": 969
     },
     {
       "path": "provenance.lock.json",
-      "sha256": "9926c3272f1c6b3a313a775e447d2c07fcf8a2bae941dbca6ee0874dad03c512",
-      "bytes": 12847
+      "sha256": "77e6950ce7ea51e1cdb43c700dd9dbf1fe0e4451ad8296f4bbec87b23afe37bf",
+      "bytes": 13758
     },
     {
       "path": "references/analytical-review-method.zh-CN.md",
-      "sha256": "77b451615d47962c41a47809e4346dceb8bf7ba2213a73192c0e5e5775846c09",
-      "bytes": 1086
+      "sha256": "0c453c1d9dc8f3e7695d52560cf049233715ea7a5c7644d5cdbfee3c7768d318",
+      "bytes": 1737
     },
     {
       "path": "references/storytelling/drama.md",

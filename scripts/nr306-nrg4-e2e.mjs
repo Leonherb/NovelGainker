@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { stateSection, stateField, currentNr5Authorization } from "./nr-stage-state.mjs";
 import {
   discoverReleaseSurface,
   inspectIpcClosure,
@@ -13,10 +14,8 @@ const prepare = process.argv.includes("--prepare");
 const read = (relative) => readFileSync(path.join(root, relative), "utf8");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const parseJson = (relative) => JSON.parse(read(relative));
-const section = (status, name) =>
-  status.match(new RegExp(`^${name}:\\r?\\n(?:^[ \\t].*(?:\\r?\\n|$))+`, "gmu"))?.[0] ?? "";
-const hasField = (block, field, value) =>
-  new RegExp(`^  ${field}: ${value}\\r?$`, "mu").test(block);
+const section = stateSection;
+const hasField = stateField;
 const validCurrentBmadState = (status) => {
   const gate = section(status, "gate");
   const baseline = section(status, "nr3_packet");
@@ -26,7 +25,7 @@ const validCurrentBmadState = (status) => {
     !hasField(gate, "review_status", '"approved"') ||
     !hasField(gate, "nrG4Approved", "true") ||
     !hasField(baseline, "implementation_completed", "true") ||
-    status.includes("real_provider_live_smoke_executed: true")
+    hasField(baseline, "real_provider_live_smoke_executed", "true")
   )
     return false;
   if (hasField(gate, "nr_4_entered_or_packet_formed", "false")) {
@@ -341,13 +340,16 @@ const historicalProjection = {
 };
 if (
   nr4Entered &&
-  (currentProjection.projectionContentVersion !== "1.1.0" ||
+  (currentProjection.projectionContentVersion !==
+    (ipc.publicationCommands.length === 2 ? "1.4.0" : "1.3.0") ||
     currentProjection.resourceCount !== 37 ||
     !manifestIds
       .find((item) => item.id === "novel-story-telling")
       ?.templateResources.includes("fixtures/outline.template.md"))
 ) {
-  throw new Error("NR-4 authorized projection contract drift");
+  throw new Error(
+    "Current authorized NR-5 projection contract drift; historical NR-G4 remains separate",
+  );
 }
 const claimsProjection = nr4Entered ? historicalProjection : currentProjection;
 const claims = {
@@ -411,7 +413,7 @@ if (!prepare) {
   }
   for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"]) {
     const status = read(relative);
-    if (!validCurrentBmadState(status)) {
+    if (!validCurrentBmadState(status) || !currentNr5Authorization(status)) {
       throw new Error(`NR-G4 BMAD state drift: ${relative}`);
     }
     // Advancing a later authorized stage must not erase the approval boundary.

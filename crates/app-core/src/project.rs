@@ -201,6 +201,7 @@ impl ProjectInspection {
 
 #[derive(Debug, Clone)]
 pub struct ProjectHandle {
+    session_binding: Option<crate::conversation_sessions::SessionBinding>,
     root: PathBuf,
     metadata: ProjectMetadata,
     display_name: String,
@@ -208,6 +209,25 @@ pub struct ProjectHandle {
 }
 
 impl ProjectHandle {
+    pub(crate) fn session_binding(&self) -> Option<&crate::conversation_sessions::SessionBinding> {
+        self.session_binding.as_ref()
+    }
+    pub(crate) fn with_session_binding(
+        &self,
+        binding: crate::conversation_sessions::SessionBinding,
+    ) -> Self {
+        let mut handle = self.clone();
+        handle.session_binding = Some(binding);
+        handle
+    }
+    pub(crate) fn without_session_binding(&self) -> Self {
+        let mut handle = self.clone();
+        handle.session_binding = None;
+        handle
+    }
+    pub fn conversation_session_id(&self) -> Option<&str> {
+        self.session_binding.as_ref().map(|value| value.id.as_str())
+    }
     pub fn project_id(&self) -> &str {
         &self.metadata.project_id
     }
@@ -833,6 +853,7 @@ fn project_handle_from_inspection(
         .metadata
         .ok_or_else(AppError::project_invalid_metadata)?;
     Ok(ProjectHandle {
+        session_binding: None,
         root: inspection.root,
         metadata,
         display_name: inspection.preview.display_name,

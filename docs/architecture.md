@@ -6,4 +6,4 @@ NovelGainker is a Windows-first, local-first Tauri application with a persistent
 
 A write-enabled project registers two concrete tools: `novelist.read_context` and `novelist.propose_change`. Only characters/world/materials/plot/outlines can be changed. Conversation remains available without tool selection. Source intent is model-driven; Host validates provenance, hashes, permissions and transactions, not semantics.
 
-NR-401–406 have passed their individual complete quality gates. NR-G4 remains approved; NR-G5 is technically submitted and awaits explicit product approval. No NR-5 work or real Provider Live Smoke is authorized. Current state lives in [sprint-plan](sprint-plan.zh-CN.md), not the frozen historical Gate manifests.
+NR-401–406 have passed their individual complete quality gates and NR-G5 is product-approved. The remaining plan is NR-5–6 (12 Stories), ending at NR-G7; proposed contracts await product decisions. Cloud sync is not a user requirement and has been removed entirely, not deferred. No real Provider Live Smoke or cloud execution is authorized. Current state lives in [sprint-plan](sprint-plan.zh-CN.md), not the frozen historical Gate manifests.

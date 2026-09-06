@@ -249,7 +249,7 @@ NR-106 在冻结参数前至少回答：
 - AI 创建/更新 Markdown、Diff、冲突解决、确认或 Undo；
 - Anchor、Context Mark、Proposal、WritePlan、Control JSON 或关键词 Router；
 - History 分支、清空、搜索、导出、独立窗口或 Memory 编辑器；
-- 多 Conversation Session、跨工程 Memory、云同步；
+- 多 Conversation Session、跨工程 Memory；
 - Provider Cursor、断点续传、自动重试或真实 Provider Live Smoke；
 - NR-2～NR-6 的任何实现。
 

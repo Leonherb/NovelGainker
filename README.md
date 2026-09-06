@@ -4,7 +4,7 @@ Windows-first、Local-first、可切换 AI Provider 的简体中文小说创作�
 
 当前实现进入 NR-4：三栏左侧管理工程、文件与 Provider，中间承载完整自然对话和 Host 保存结果，右侧编辑真实 Markdown。应用自包含 Novelist 九能力、37 资源；AI 可按需读取 Canon，并受约束地维护人物、世界/设定、素材、剧情与大纲，支持 Diff、本地确认和可恢复 Undo。
 
-NR-401～406 已分别通过完整质量门；NR-G4 保持批准，[NR-G5 已完成技术提交](docs/reviews/novelist-agent-runtime-nr-g5-technical-submission.zh-CN.md)，等待产品批准。正式章节独立来源延至 NR-5。本次最小只读 Live Smoke 已明确放弃，真实 Provider 工具兼容性和语义质量未正式验证，NR-6 完整验证保留；不把模型的“已完成”当作实际保存证据。
+NR-401～406 已分别通过完整质量门，[NR-G5 已获产品批准](docs/reviews/novelist-agent-runtime-nr-g5-product-approval.zh-CN.md)。[NR-5～NR-6 联合 Story](docs/stories/novelist-agent-runtime-nr5-nr6-story-packet-draft-1.zh-CN.md) 已形成并自评，尚未实施；后续仅12项Story，止于NR-G7。云同步不是用户需求，已从整个计划移除。正式章节独立来源延至 NR-5。本次最小只读 Live Smoke 已明确放弃，真实 Provider 工具兼容性和语义质量未正式验证，NR-6 完整验证保留；不把模型的“已完成”当作实际保存证据。
 
 ## 开发入口
 

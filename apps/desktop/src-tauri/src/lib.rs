@@ -25,6 +25,8 @@ pub fn run() {
             "canon_change_detail",
             "canon_change_decide",
             "canon_editor_state",
+            "publication_list",
+            "publication_detail",
             "provider_status_load",
             "provider_key_save",
             "provider_key_delete",
@@ -42,7 +44,15 @@ pub fn run() {
             "project_save_file",
             "project_validate_draft",
             "project_search",
-            "project_close"
+            "project_close",
+            "conversation_session_list",
+            "conversation_session_create",
+            "conversation_session_rename",
+            "conversation_session_activate",
+            "conversation_session_manage",
+            "conversation_export_prepare",
+            "conversation_export_commit",
+            "conversation_turn_retry"
         ]
     );
 
@@ -66,6 +76,8 @@ pub fn run() {
             commands::canon_change_detail,
             commands::canon_change_decide,
             commands::canon_editor_state,
+            commands::publication_list,
+            commands::publication_detail,
             commands::provider_status_load,
             commands::provider_key_save,
             commands::provider_key_delete,
@@ -83,7 +95,15 @@ pub fn run() {
             commands::project_save_file,
             commands::project_validate_draft,
             commands::project_search,
-            commands::project_close
+            commands::project_close,
+            commands::conversation_session_list,
+            commands::conversation_session_create,
+            commands::conversation_session_rename,
+            commands::conversation_session_activate,
+            commands::conversation_session_manage,
+            commands::conversation_export_prepare,
+            commands::conversation_export_commit,
+            commands::conversation_turn_retry
         ])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {

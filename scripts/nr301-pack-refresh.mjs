@@ -34,7 +34,7 @@ const capabilities = [
     instructionResource: "instructions/create-setting.md",
     templateResources: ["fixtures/setting.template.md"],
     referenceResources: [],
-    readScopes: ["project", "characters", "materials", "plot", "style", "world"],
+    readScopes: ["project", "characters", "materials", "plot", "style", "world", "chapters"],
   },
   {
     id: "create-character",
@@ -43,7 +43,7 @@ const capabilities = [
     instructionResource: "instructions/create-character.md",
     templateResources: ["fixtures/character.template.md"],
     referenceResources: [],
-    readScopes: ["project", "characters", "materials", "plot", "style", "world"],
+    readScopes: ["project", "characters", "materials", "plot", "style", "world", "chapters"],
   },
   {
     id: "create-material",
@@ -52,7 +52,7 @@ const capabilities = [
     instructionResource: "instructions/create-material.md",
     templateResources: ["fixtures/material.template.md"],
     referenceResources: [],
-    readScopes: ["project", "characters", "materials", "macguffins", "plot", "world"],
+    readScopes: ["project", "characters", "materials", "macguffins", "plot", "world", "chapters"],
   },
   {
     id: "create-plot",
@@ -129,7 +129,7 @@ const capabilities = [
   },
   {
     id: "publish-novel",
-    description: "对出版元数据、章节状态、封面条件和连续性进行只读预检。",
+    description: "依据明确出版要求，读取方法后调用当前原生 Host 完成本地 EPUB 预检或构建。",
     usage: "仅在作者明确讨论出版、导出、构建或 EPUB 验证时采用。",
     instructionResource: "instructions/publish-novel.md",
     templateResources: [],
@@ -144,7 +144,7 @@ const pack = {
   projection: {
     id: "novelgainker.novelist",
     schemaVersion: 1,
-    contentVersion: "1.1.0",
+    contentVersion: "1.4.0",
   },
   provenanceResource: "provenance.lock.json",
   licenseResource: "LICENSE.upstream",

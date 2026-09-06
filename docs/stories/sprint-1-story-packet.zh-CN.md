@@ -67,7 +67,7 @@ G1 Review 应能按以下顺序复现：
 - 不保存、读取或测试真实 API Key；
 - 不实现 Vault、Provider Profile、Streaming、Token 用量或对话历史；
 - 不实现 AI 提案、Diff、确认 Apply、Workflow Pack 或 Manager；
-- 不实现 EPUB、图片生成、云同步、Git 管理或 Android；
+- 不实现 EPUB、图片生成、Git 管理或 Android；
 - 不自动保存，不在后台定时写手稿；
 - 不递归删除用户文件，不提供通用文件浏览器或任意路径 API；
 - 不加载 Novelist Plugin Cache，不打包 SKILL.md、Python 或通用 Shell；
@@ -171,7 +171,7 @@ NG-106 在上游计划中只列 NG-002 依赖；本 Packet 补充 NG-101 为有�
 
 ### 用户价值
 
-用户获得一个可移植、自解释、无需数据库或云服务也能读取的小说项目。
+用户获得一个可移植、自解释、无需数据库也能本地读取的小说项目。
 
 ### 实施范围
 
@@ -644,7 +644,7 @@ NG-107 只有在一台不配置 Provider、没有 Key、禁止外部网络的 Wi
 - 在项目中保存绝对路径、Key 或本机秘密；
 - 引入 Provider、网络请求、Vault 或真实 API Key；
 - 添加 Shell、Process、Python、Novelist Plugin Runtime；
-- 自动创建 Git 仓库、云同步或 Android；
+- 自动创建 Git 仓库或 Android；
 - 提前实现 Sprint 2 及以后的能力。
 
 ## 17. Story Packet Review Gate

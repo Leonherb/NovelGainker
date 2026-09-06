@@ -1,6 +1,7 @@
 use crate::canon_context::{novelist_read_context_definition, NovelistReadContextExecutorV1};
 use crate::capability_pack::ValidatedCapabilityPack;
 use crate::project::ProjectHandle;
+use crate::protocol_profile::ToolProtocolProfile;
 use crate::provider_core::CancellationToken;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -24,6 +25,9 @@ pub struct ToolDefinition {
 }
 
 impl ToolDefinition {
+    pub fn protocol_profile(&self) -> ToolProtocolProfile {
+        ToolProtocolProfile::for_definition(&self.name, self.version)
+    }
     pub fn validate(&self) -> Result<(), ToolContractError> {
         if !valid_tool_name(&self.name)
             || self.version == 0
@@ -45,7 +49,7 @@ impl ToolDefinition {
     pub fn validate_arguments(&self, arguments: &Value) -> Result<(), ToolContractError> {
         let bytes =
             serde_json::to_vec(arguments).map_err(|_| ToolContractError::ArgumentsInvalid)?;
-        if bytes.len() > MAX_TOOL_ARGUMENTS_BYTES || !arguments.is_object() {
+        if bytes.len() > self.protocol_profile().argument_bytes() || !arguments.is_object() {
             return Err(ToolContractError::ArgumentsInvalid);
         }
         validate_value(arguments, &self.input_schema)
@@ -61,9 +65,16 @@ pub struct ProviderToolCall {
 
 impl ProviderToolCall {
     pub fn validate_envelope(&self) -> Result<(), ToolContractError> {
+        self.validate_envelope_for(ToolProtocolProfile::Nr4)
+    }
+
+    pub fn validate_envelope_for(
+        &self,
+        profile: ToolProtocolProfile,
+    ) -> Result<(), ToolContractError> {
         if !valid_call_id(&self.call_id)
             || !valid_tool_name(&self.name)
-            || self.arguments_json.len() > MAX_TOOL_CONTINUATION_BYTES
+            || self.arguments_json.len() > profile.call_envelope_bytes()
         {
             return Err(ToolContractError::ArgumentsInvalid);
         }
@@ -71,7 +82,11 @@ impl ProviderToolCall {
     }
 
     pub fn arguments(&self) -> Result<Value, ToolContractError> {
-        self.validate_envelope()?;
+        self.arguments_for(ToolProtocolProfile::Nr4)
+    }
+
+    pub fn arguments_for(&self, profile: ToolProtocolProfile) -> Result<Value, ToolContractError> {
+        self.validate_envelope_for(profile)?;
         let value: Value = serde_json::from_str(&self.arguments_json)
             .map_err(|_| ToolContractError::ArgumentsInvalid)?;
         value
@@ -118,7 +133,8 @@ impl ToolResult {
                     || serde_json::to_vec(output)
                         .map_err(|_| ToolContractError::ResultInvalid)?
                         .len()
-                        > MAX_TOOL_RESULT_BYTES
+                        > ToolProtocolProfile::for_definition(&self.name, self.version)
+                            .result_bytes()
                 {
                     return Err(ToolContractError::ResultInvalid);
                 }
@@ -266,9 +282,11 @@ impl ToolRegistry {
         {
             return Err(ToolContractError::ExecutorUnqualified);
         }
-        let definition = novelist_read_context_definition();
+        let definition = crate::canon_context::novelist_read_context_definition_for(
+            coordinator.protocol_profile(),
+        );
         definition.validate()?;
-        Self {
+        let registry = Self {
             tools: vec![RegisteredTool {
                 definition,
                 executor: Arc::new(
@@ -283,8 +301,37 @@ impl ToolRegistry {
             }],
         }
         .with_canon_mutation(
-            crate::canon_change_store::NovelistProposeChangeExecutorV1::new(coordinator, evidence),
-        )
+            crate::canon_change_store::NovelistProposeChangeExecutorV1::new(
+                coordinator.clone(),
+                evidence.clone(),
+            ),
+        )?;
+        if coordinator.protocol_profile() == ToolProtocolProfile::Nr5 {
+            registry.with_publication(crate::publication::NovelistPublishExecutorV2::new(
+                coordinator,
+                evidence,
+            ))
+        } else {
+            Ok(registry)
+        }
+    }
+
+    fn with_publication(
+        mut self,
+        executor: crate::publication::NovelistPublishExecutorV2,
+    ) -> Result<Self, ToolContractError> {
+        if self.tools.len() != 2
+            || self.protocol_profile() != ToolProtocolProfile::Nr5
+            || self.tools[1].definition.name != crate::canon_change::PROPOSE_CHANGE_TOOL_NAME
+        {
+            return Err(ToolContractError::ExecutorUnqualified);
+        }
+        self.tools.push(RegisteredTool {
+            definition: executor.definition(),
+            executor: Arc::new(executor),
+        });
+        validate_definitions(&self.definitions())?;
+        Ok(self)
     }
 
     /// The only mutation registration path accepts the concrete qualified
@@ -300,7 +347,7 @@ impl ToolRegistry {
             return Err(ToolContractError::ExecutorUnqualified);
         }
         self.tools.push(RegisteredTool {
-            definition: crate::canon_change::propose_change_definition(),
+            definition: executor.definition(),
             executor: Arc::new(executor),
         });
         validate_definitions(&self.definitions())?;
@@ -309,6 +356,18 @@ impl ToolRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    pub fn protocol_profile(&self) -> ToolProtocolProfile {
+        if self
+            .tools
+            .iter()
+            .any(|tool| tool.definition.protocol_profile() == ToolProtocolProfile::Nr5)
+        {
+            ToolProtocolProfile::Nr5
+        } else {
+            ToolProtocolProfile::Nr4
+        }
     }
 
     pub fn resolve(
@@ -333,7 +392,7 @@ impl ToolRegistry {
         &self,
         call: &ProviderToolCall,
     ) -> Result<(&ToolDefinition, &dyn ToolExecutor), ToolContractError> {
-        call.validate_envelope()?;
+        call.validate_envelope_for(self.protocol_profile())?;
         let registered = self
             .tools
             .iter()
@@ -353,11 +412,11 @@ impl ToolRegistry {
     }
 
     pub fn parse_arguments(&self, call: &ProviderToolCall) -> Result<Value, ToolContractError> {
-        call.validate_envelope()?;
-        if call.arguments_json.len() > MAX_TOOL_ARGUMENTS_BYTES {
+        call.validate_envelope_for(self.protocol_profile())?;
+        if call.arguments_json.len() > self.protocol_profile().argument_bytes() {
             return Err(ToolContractError::ArgumentsTooLarge);
         }
-        call.arguments()
+        call.arguments_for(self.protocol_profile())
     }
 }
 
@@ -564,6 +623,29 @@ pub(crate) mod tests {
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// Budget-only publication stand-in; compiled out of production. Real
+    /// EPUB qualification and registration belong to NR-505.
+    pub(crate) fn with_nr504_publication_fixture(
+        mut registry: ToolRegistry,
+        executions: Arc<AtomicUsize>,
+    ) -> ToolRegistry {
+        // Historical budget-only fixture replaces (never duplicates) the NR-505 executor.
+        registry
+            .tools
+            .retain(|tool| tool.definition.name != "novelist.publish");
+        registry.tools.push(RegisteredTool {
+            definition: ToolDefinition {
+                name: "novelist.publish".to_owned(), version: 2,
+                description: "离线预算夹具，不生成出版物".to_owned(),
+                display_label: "验证发布配额（测试夹具）".to_owned(),
+                input_schema: serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+            },
+            executor: Arc::new(EchoExecutor { executions }),
+        });
+        validate_definitions(&registry.definitions()).unwrap();
+        registry
+    }
 
     #[derive(Clone, Copy)]
     enum QualifiedTestExecutor {

@@ -6,9 +6,56 @@ import type { ProviderId } from "./provider";
 export const CONVERSATION_SESSION_LOAD_COMMAND = "conversation_session_load";
 export const CONVERSATION_TURN_START_COMMAND = "conversation_turn_start";
 export const CONVERSATION_TURN_CANCEL_COMMAND = "conversation_turn_cancel";
+export const CONVERSATION_TURN_RETRY_COMMAND = "conversation_turn_retry";
 export const CONVERSATION_TURN_EVENT_CHANNEL = "conversation-turn-event";
 
 export type ConversationRole = "user" | "assistant";
+export type RetryState = {
+  attemptId: string;
+  attemptNumber: 1 | 2;
+  agentRequests: number;
+  compactorRequests: number;
+  requestedOutputTokens: number;
+  toolDispatched: boolean;
+  outcome: "running" | "eligible" | "blocked";
+};
+function parseRetryState(value: unknown): RetryState {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "attemptId",
+      "attemptNumber",
+      "agentRequests",
+      "compactorRequests",
+      "requestedOutputTokens",
+      "toolDispatched",
+      "outcome",
+    ]) ||
+    !isUuid(value.attemptId) ||
+    (value.attemptNumber !== 1 && value.attemptNumber !== 2) ||
+    !Number.isInteger(value.agentRequests) ||
+    Number(value.agentRequests) < 0 ||
+    Number(value.agentRequests) > 8 ||
+    !Number.isInteger(value.compactorRequests) ||
+    Number(value.compactorRequests) < 0 ||
+    Number(value.compactorRequests) > 1 ||
+    !Number.isInteger(value.requestedOutputTokens) ||
+    Number(value.requestedOutputTokens) <
+      Number(value.agentRequests) + Number(value.compactorRequests) ||
+    Number(value.requestedOutputTokens) >
+      Number(value.agentRequests) * 4096 + Number(value.compactorRequests) * 1024 ||
+    typeof value.toolDispatched !== "boolean" ||
+    !["running", "eligible", "blocked"].includes(String(value.outcome)) ||
+    (value.outcome === "eligible" &&
+      (value.attemptNumber !== 1 ||
+        value.toolDispatched ||
+        Number(value.agentRequests) < 1 ||
+        Number(value.agentRequests) >= 8))
+  ) {
+    throw new Error("Invalid bounded retry state");
+  }
+  return value as RetryState;
+}
 export type ConversationTurnStatus =
   "running" | "completed" | "cancelled" | "failed" | "not_generated";
 
@@ -20,6 +67,7 @@ export type ConversationMessage = {
 };
 
 export type ConversationTurn = {
+  retryState?: RetryState;
   turnId: string;
   providerId: ProviderId;
   model: string;
@@ -63,6 +111,8 @@ export type ConversationRuntimeView = {
 };
 
 export type ConversationTurnStarted = {
+  attemptId: string;
+  attemptNumber: 1 | 2;
   sessionId: string;
   conversationSessionId: string;
   turnId: string;
@@ -80,7 +130,10 @@ export type ProviderFinishReason =
   "stop" | "length" | "contentFilter" | "toolCall" | "resourceLimit" | "unknown";
 
 type ConversationEventBase = {
+  attemptId: string;
+  attemptNumber: 1 | 2;
   sessionId: string;
+  conversationSessionId: string;
   turnId: string;
   providerId: ProviderId;
   model: string;
@@ -156,8 +209,26 @@ const TASK_ACTIVITY_KEYS = [
   "taskRevision",
   "turnId",
 ] as const;
-const START_KEYS = ["conversationSessionId", "model", "providerId", "sessionId", "turnId"] as const;
-const EVENT_BASE_KEYS = ["kind", "model", "providerId", "sequence", "sessionId", "turnId"] as const;
+const START_KEYS = [
+  "attemptId",
+  "attemptNumber",
+  "conversationSessionId",
+  "model",
+  "providerId",
+  "sessionId",
+  "turnId",
+] as const;
+const EVENT_BASE_KEYS = [
+  "attemptId",
+  "attemptNumber",
+  "kind",
+  "model",
+  "providerId",
+  "sequence",
+  "sessionId",
+  "conversationSessionId",
+  "turnId",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -173,7 +244,10 @@ function hasTurnKeys(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
   return (
     TURN_REQUIRED_KEYS.every((key) => keys.includes(key)) &&
-    keys.every((key) => key === "errorCode" || TURN_REQUIRED_KEYS.includes(key as never))
+    keys.every(
+      (key) =>
+        key === "retryState" || key === "errorCode" || TURN_REQUIRED_KEYS.includes(key as never),
+    )
   );
 }
 
@@ -230,6 +304,20 @@ function parseTurn(value: unknown): ConversationTurn {
     throw new Error("Invalid Conversation turn contract");
   }
   const messages = value.messages.map(parseMessage);
+  const retryState = value.retryState === undefined ? undefined : parseRetryState(value.retryState);
+  if (
+    retryState &&
+    ((retryState.outcome === "running") !== (value.status === "running") ||
+      (retryState.outcome === "eligible" &&
+        (value.status !== "not_generated" ||
+          messages[1]?.content !== "本次回复未生成。" ||
+          !["provider.timeout", "provider.unreachable", "provider.rate_limited"].includes(
+            String(value.errorCode),
+          ) ||
+          retryState.requestedOutputTokens > 33792 - 4096)))
+  ) {
+    throw new Error("Invalid retry relationship");
+  }
   if (
     messages[0]?.role !== "user" ||
     (value.status === "running" && messages.length !== 1) ||
@@ -237,7 +325,7 @@ function parseTurn(value: unknown): ConversationTurn {
   ) {
     throw new Error("Invalid Conversation turn relationship");
   }
-  return { ...(value as ConversationTurn), messages };
+  return { ...(value as ConversationTurn), messages, ...(retryState ? { retryState } : {}) };
 }
 
 export function parseConversationSession(value: unknown): ConversationSession {
@@ -302,6 +390,8 @@ export function parseConversationTurnStarted(value: unknown): ConversationTurnSt
   if (
     !isRecord(value) ||
     !hasExactKeys(value, START_KEYS) ||
+    !isUuid(value.attemptId) ||
+    (value.attemptNumber !== 1 && value.attemptNumber !== 2) ||
     !isUuid(value.sessionId) ||
     !isUuid(value.conversationSessionId) ||
     !isUuid(value.turnId) ||
@@ -331,7 +421,10 @@ function parseUsage(value: unknown): ProviderUsage | null {
 export function parseConversationTurnEvent(value: unknown): ConversationTurnEvent {
   if (
     !isRecord(value) ||
+    !isUuid(value.attemptId) ||
+    (value.attemptNumber !== 1 && value.attemptNumber !== 2) ||
     !isUuid(value.sessionId) ||
+    !isUuid(value.conversationSessionId) ||
     !isUuid(value.turnId) ||
     !hasProviderIdentity(value) ||
     !isSafeSequence(value.sequence) ||
@@ -353,7 +446,10 @@ export function parseConversationTurnEvent(value: unknown): ConversationTurnEven
   }
   if (value.kind === "taskActivity" && hasExactKeys(value, [...EVENT_BASE_KEYS, "taskActivity"])) {
     const taskActivity = parseTaskActivity(value.taskActivity);
-    if (taskActivity.turnId === value.turnId) {
+    if (
+      taskActivity.turnId === value.turnId &&
+      taskActivity.sessionId === value.conversationSessionId
+    ) {
       return { ...(value as ConversationEventBase), kind: "taskActivity", taskActivity };
     }
   }
@@ -413,11 +509,12 @@ async function invokeConversation<T>(
 
 export function requestConversationSession(
   sessionId: string,
+  conversationSessionId: string | null = null,
   invokeCommand: InvokeCommand = invokeTauri,
 ): Promise<ConversationRuntimeView> {
   return invokeConversation(
     CONVERSATION_SESSION_LOAD_COMMAND,
-    { sessionId },
+    { sessionId, conversationSessionId },
     parseConversationRuntimeView,
     invokeCommand,
   );
@@ -426,11 +523,27 @@ export function requestConversationSession(
 export function requestConversationTurnStart(
   sessionId: string,
   message: string,
+  conversationSessionId: string | null = null,
   invokeCommand: InvokeCommand = invokeTauri,
 ): Promise<ConversationTurnStarted> {
   return invokeConversation(
     CONVERSATION_TURN_START_COMMAND,
-    { sessionId, message },
+    { sessionId, message, conversationSessionId },
+    parseConversationTurnStarted,
+    invokeCommand,
+  );
+}
+
+export function requestConversationTurnRetry(
+  projectSessionId: string,
+  conversationSessionId: string,
+  turnId: string,
+  expectedAttemptId: string,
+  invokeCommand: InvokeCommand = invokeTauri,
+): Promise<ConversationTurnStarted> {
+  return invokeConversation(
+    CONVERSATION_TURN_RETRY_COMMAND,
+    { request: { projectSessionId, conversationSessionId, turnId, expectedAttemptId } },
     parseConversationTurnStarted,
     invokeCommand,
   );
@@ -440,10 +553,12 @@ export function requestConversationTurnCancel(
   sessionId: string,
   turnId: string,
   invokeCommand: InvokeCommand = invokeTauri,
+  attemptId: string | null = null,
+  conversationSessionId: string | null = null,
 ): Promise<ConversationTurnCancelResult> {
   return invokeConversation(
     CONVERSATION_TURN_CANCEL_COMMAND,
-    { sessionId, turnId },
+    { sessionId, turnId, ...(attemptId ? { attemptId, conversationSessionId } : {}) },
     parseConversationTurnCancelResult,
     invokeCommand,
   );

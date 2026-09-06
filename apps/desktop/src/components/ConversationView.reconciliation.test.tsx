@@ -62,6 +62,8 @@ const runningSession: conversationApi.ConversationSession = {
 const startedTurn: conversationApi.ConversationTurnStarted = {
   sessionId: PROJECT_SESSION_ID,
   conversationSessionId: CONVERSATION_SESSION_ID,
+  attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  attemptNumber: 1,
   turnId: TURN_ID,
   providerId: "openai",
   model: "gpt-5.6-terra",
@@ -97,6 +99,104 @@ async function renderReadyConversation() {
   );
   await screen.findByText("从任何话题开始");
 }
+
+describe("NR-603 explicit retry UI", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const eligible = (): conversationApi.ConversationSession => ({
+    ...blankSession,
+    turns: [
+      {
+        ...runningSession.turns[0],
+        status: "not_generated",
+        updatedAtMs: 2,
+        errorCode: "provider.unreachable",
+        messages: [
+          ...runningSession.turns[0].messages,
+          {
+            messageId: ASSISTANT_MESSAGE_ID,
+            role: "assistant",
+            content: "本次回复未生成。",
+            createdAtMs: 2,
+          },
+        ],
+        retryState: {
+          attemptId: startedTurn.attemptId,
+          attemptNumber: 1,
+          agentRequests: 1,
+          compactorRequests: 0,
+          requestedOutputTokens: 4096,
+          toolDispatched: false,
+          outcome: "eligible",
+        },
+      },
+    ],
+  });
+  it("lost retry acknowledgement reconciles only and keeps the user draft", async () => {
+    let current = eligible();
+    vi.spyOn(conversationApi, "listenConversationTurnEvents").mockResolvedValue(() => undefined);
+    vi.spyOn(conversationApi, "requestConversationSession").mockImplementation(async () =>
+      runtimeView(current),
+    );
+    const send = vi.spyOn(conversationApi, "requestConversationTurnStart");
+    const retry = vi
+      .spyOn(conversationApi, "requestConversationTurnRetry")
+      .mockImplementation(async () => {
+        current = {
+          ...current,
+          turns: [
+            {
+              ...current.turns[0],
+              status: "running",
+              messages: current.turns[0].messages.slice(0, 1),
+              retryState: {
+                ...current.turns[0].retryState!,
+                attemptId: ASSISTANT_MESSAGE_ID,
+                attemptNumber: 2,
+                outcome: "running",
+              },
+            },
+          ],
+        };
+        throw { code: "contract.invalid_response", messageKey: "errors.invalidRuntimeResponse" };
+      });
+    render(
+      <ConversationView
+        projectSessionId={PROJECT_SESSION_ID}
+        providerState={configuredProvider}
+        initialDraft="保留我的下一轮草稿"
+      />,
+    );
+    const button = await screen.findByRole("button", { name: "用原消息重试一次" });
+    await userEvent.click(button);
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    expect(retry).toHaveBeenCalledWith(
+      PROJECT_SESSION_ID,
+      CONVERSATION_SESSION_ID,
+      TURN_ID,
+      startedTurn.attemptId,
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("保留我的下一轮草稿")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "用原消息重试一次" })).not.toBeInTheDocument();
+  });
+  it("non-replayable content can only prepare a new draft and never auto-sends", async () => {
+    const current = terminalSession("failed");
+    vi.spyOn(conversationApi, "listenConversationTurnEvents").mockResolvedValue(() => undefined);
+    vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(runtimeView(current));
+    const send = vi.spyOn(conversationApi, "requestConversationTurnStart");
+    const retry = vi.spyOn(conversationApi, "requestConversationTurnRetry");
+    render(
+      <ConversationView projectSessionId={PROJECT_SESSION_ID} providerState={configuredProvider} />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "准备新一轮（发送前可修改）" }),
+    );
+    expect(screen.getByText("Store 中的最终回复。")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("继续聊下去")).toBeInTheDocument();
+    expect(retry).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+});
 
 describe("NR-G1-R01 Conversation reconciliation", () => {
   afterEach(() => {
@@ -200,7 +300,13 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
 
     expect(screen.getByRole("button", { name: "正在停止" })).toBeDisabled();
     expect(await screen.findByText("已停止 · 未完成", {}, { timeout: 2_500 })).toBeInTheDocument();
-    expect(cancel).toHaveBeenCalledWith(PROJECT_SESSION_ID, TURN_ID);
+    expect(cancel).toHaveBeenCalledWith(
+      PROJECT_SESSION_ID,
+      TURN_ID,
+      undefined,
+      startedTurn.attemptId,
+      CONVERSATION_SESSION_ID,
+    );
   });
 
   it("shows an explicit synchronization failure and retries only the Store read", async () => {

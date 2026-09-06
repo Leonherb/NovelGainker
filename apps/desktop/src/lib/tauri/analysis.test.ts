@@ -55,6 +55,17 @@ describe("NG-105 validation and offline-search IPC contracts", () => {
     ).toThrow();
   });
 
+  it("does not treat a valid draft as authorized for publication", () => {
+    const valid = {
+      ...validation,
+      diagnostics: [],
+      eligibleForAiApply: true,
+      eligibleForFinal: true,
+    };
+    expect(parseValidationReport(valid).eligibleForEpub).toBe(false);
+    expect(() => parseValidationReport({ ...valid, eligibleForEpub: true })).toThrow();
+  });
+
   it("accepts only bounded relative-path search matches", () => {
     expect(parseSearchReport(searchReport)).toEqual(searchReport);
     expect(() =>

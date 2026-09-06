@@ -52,13 +52,18 @@ name = "app-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
+ "crc32fast",
  "novelgainker-domain",
  "novelgainker-validation",
+ "quick-xml",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "tauri",
+ "tauri-plugin-dialog",
  "tokio",
  "uuid",
  "windows-sys 0.61.2",

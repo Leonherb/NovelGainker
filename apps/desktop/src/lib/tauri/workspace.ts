@@ -50,6 +50,8 @@ export type ProjectFileSaveResult = {
   diagnosticsTriggered: true;
   diagnosticState: "ready";
   validation: ValidationReport;
+  savedContent?: string;
+  chapterFinalizationConfirmed?: boolean;
 };
 
 export type ProjectFileWatchStatus = {
@@ -228,7 +230,12 @@ export function parseProjectFileDocument(value: unknown): ProjectFileDocument {
 export function parseProjectFileSaveResult(value: unknown): ProjectFileSaveResult {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, SAVE_RESULT_KEYS) ||
+    !hasExactKeys(
+      value,
+      "savedContent" in value
+        ? [...SAVE_RESULT_KEYS, "savedContent", "chapterFinalizationConfirmed"]
+        : SAVE_RESULT_KEYS,
+    ) ||
     !isSafeRelativePath(value.relativePath) ||
     typeof value.contentHash !== "string" ||
     !HASH.test(value.contentHash) ||
@@ -242,6 +249,16 @@ export function parseProjectFileSaveResult(value: unknown): ProjectFileSaveResul
     throw new Error("Invalid project file save result contract");
   }
   const validation = parseValidationReport(value.validation);
+  if (
+    "savedContent" in value &&
+    (typeof value.savedContent !== "string" ||
+      typeof value.chapterFinalizationConfirmed !== "boolean" ||
+      !/^chapters\/[^/]+\.md$/u.test(String(value.relativePath)) ||
+      new TextEncoder().encode(value.savedContent).length > 32 * 1024 ||
+      value.sizeBytes !==
+        new TextEncoder().encode(value.savedContent).length + (value.bom === "utf8" ? 3 : 0))
+  )
+    throw new Error("Invalid saved chapter content");
   if (
     validation.relativePath !== value.relativePath ||
     validation.contentHash !== value.contentHash

@@ -40,7 +40,7 @@ describe("NG-105 source diagnostics UI", () => {
     expect(onNavigate).toHaveBeenCalledWith(6);
   });
 
-  it("marks all future actions available when the saved hash is valid", () => {
+  it("does not promote structural validity to publication readiness", () => {
     render(
       <SourceDiagnostics
         error={null}
@@ -52,12 +52,14 @@ describe("NG-105 source diagnostics UI", () => {
           diagnostics: [],
           eligibleForAiApply: true,
           eligibleForFinal: true,
-          eligibleForEpub: true,
+          eligibleForEpub: false,
         }}
       />,
     );
     expect(screen.getByText("结构检查通过")).toBeInTheDocument();
-    expect(screen.getAllByText(/· 可用$/u)).toHaveLength(3);
+    expect(screen.getAllByText(/· 可用$/u)).toHaveLength(2);
+    expect(screen.getByText(/EPUB · 暂停$/u)).toBeInTheDocument();
+    expect(screen.getByText(/仍需核对用户确认和当前版本/u)).toBeInTheDocument();
   });
 
   it("marks a previously valid report stale after content changes", () => {
@@ -72,7 +74,7 @@ describe("NG-105 source diagnostics UI", () => {
           diagnostics: [],
           eligibleForAiApply: true,
           eligibleForFinal: true,
-          eligibleForEpub: true,
+          eligibleForEpub: false,
         }}
       />,
     );

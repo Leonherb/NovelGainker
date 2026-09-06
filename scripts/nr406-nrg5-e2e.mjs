@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { historicalNr4Approval, currentNr5Authorization } from "./nr-stage-state.mjs";
 import {
   discoverReleaseSurface,
   inspectIpcClosure,
@@ -11,7 +11,6 @@ import {
 
 const root = process.cwd();
 const read = (relative) => readFileSync(path.join(root, relative), "utf8");
-const sha = (value) => createHash("sha256").update(value).digest("hex");
 const out = path.join(root, "target/qa/nr-406");
 mkdirSync(out, { recursive: true });
 const source = read("crates/app-core/src/canon_change.rs");
@@ -25,31 +24,42 @@ const number = (name) => {
   return expression.split("*").reduce((total, part) => total * Number(part), 1);
 };
 const ipc = inspectIpcClosure(root);
-if (ipc.manifest.length !== 28 || ipc.nr4Commands.length !== 4)
+if (
+  ipc.manifest.length - ipc.publicationCommands.length - ipc.sessionCommands.length !== 28 ||
+  ipc.nr4Commands.length !== 4
+)
   throw new Error("NR-406 IPC closure drift");
 for (const relative of ["bmad/workflow-status.yaml", "bmad/sprint-status.yaml"]) {
   const state = read(relative);
   if (
     !hasApprovedNr4Ipc(state) ||
-    !state.includes("nrG4Approved: true") ||
-    !state.includes("nrG5Approved: false") ||
-    state.includes("real_provider_live_smoke_executed: true")
+    !historicalNr4Approval(state) ||
+    !currentNr5Authorization(state)
   ) {
     throw new Error(`NR-406 approval boundary drift: ${relative}`);
   }
 }
 const pack = JSON.parse(read("resources/skills/novelist/v1/pack.json"));
 const inventory = JSON.parse(read("resources/skills/novelist/v1/inventory.json"));
+if (
+  pack.projection.contentVersion !== (ipc.publicationCommands.length === 2 ? "1.4.0" : "1.3.0") ||
+  inventory.fileCount !== 37
+)
+  throw new Error("NR-502 current projection drift");
+// Frozen submission facts are not the current executable Pack. Current Pack
+// identity is reported separately for regressions against the NR-4 tool profile.
+const historicalProjectionVersion = "1.1.0";
 const claims = {
   status: "NR-G5-technical-submission",
   nrG5Approved: false,
   nrG4Approved: true,
-  productionCommandCount: ipc.manifest.length,
+  productionCommandCount:
+    ipc.manifest.length - ipc.publicationCommands.length - ipc.sessionCommands.length,
   conversationCommandCount: ipc.conversation.length,
   productionTools: ["novelist.read_context", "novelist.propose_change"],
   capabilityCount: pack.capabilityManifests.length,
   resourceCount: inventory.fileCount,
-  projectionVersion: pack.projection.contentVersion,
+  projectionVersion: historicalProjectionVersion,
   canonDirectories: ["characters", "world", "materials", "plot", "outlines"],
   maximumAgentAttempts: number("MAX_NR4_AGENT_ATTEMPTS"),
   maximumCompactorAttempts: 1,
@@ -99,30 +109,9 @@ try {
 if (!negativeRejected) throw new Error("NR-G5 approval drift negative fixture accepted");
 
 if (process.argv.includes("--submit")) {
-  const validation = JSON.parse(read("target/qa/nr-406/validation.json"));
-  const quality = JSON.parse(read("target/qa/nr-406/quality.json"));
-  if (
-    quality.result !== "pass" ||
-    quality.releaseScopeSha256 !== releaseHash ||
-    validation.releaseScopeSha256 !== releaseHash ||
-    quality.startedAt > validation.completedAt ||
-    quality.completedAt < validation.completedAt ||
-    !quality.steps.every((step) => step.exitCode === 0)
-  ) {
-    throw new Error("NR-G5 requires a current complete quality run containing NR-406 validation");
-  }
-  checkClaims(validation.claims);
-  const manifest = {
-    ...validation,
-    evidenceScope: "technical-submission",
-    quality,
-    qualitySha256: sha(read("target/qa/nr-406/quality.json")),
-    nrG5Approved: false,
-  };
-  manifest.payloadSha256 = sha(JSON.stringify(manifest));
-  writeFileSync(path.join(out, "nr-g5-manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
-  console.log("[nr-406] NR-G5 technical submission ready; product approval false");
-} else {
+  throw new Error("NR-G5 is frozen and approved; use separate later-stage regression evidence");
+}
+{
   const environment = { ...process.env, CARGO_NET_OFFLINE: "true" };
   for (const key of Object.keys(environment)) {
     if (/(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|openai|deepseek)/iu.test(key))
@@ -131,7 +120,8 @@ if (process.argv.includes("--submit")) {
   const runs = [];
   let measured = "";
   for (const filter of [
-    "canon_change",
+    "canon_change::tests::",
+    "canon_change_store::tests::",
     "conversation_runtime::tests::nr403::",
     "provider_core::tests::nr403",
     "canon_apply::tests",
@@ -214,24 +204,27 @@ if (process.argv.includes("--submit")) {
   const validation = {
     schemaVersion: 1,
     gateId: "NR-G5",
-    evidenceScope: "validation-not-gate-approval",
+    evidenceScope: "historical-nr4-contract-regression",
     result: "pass",
     completedAt: new Date().toISOString(),
     claims,
     runs,
     loops,
     packSha256: inventory.packSha256,
+    currentProjectionVersion: pack.projection.contentVersion,
+    currentProductionCommandCount: ipc.manifest.length,
     releaseScopeSha256: releaseHash,
     negativeReportDriftRejected: true,
     limitations: [
       "Scripted providers, not real model intent/compatibility validation",
       "Composite interruption tests include durable-state reconstruction; lower kernel also uses terminated subprocesses",
-      "Independent chapter source deferred to NR-5; no NR-5 implementation",
+      "NR-4 contract regression only; later-stage implementation and approvals are separate",
+      "NR-4 tool profile is exercised with the current Pack; this is not a reproduction of the frozen NR-4 Pack bytes",
     ],
   };
   writeFileSync(path.join(out, "validation.json"), JSON.stringify(validation, null, 2) + "\n");
   writeFileSync(path.join(out, "nr-g5-claims.json"), JSON.stringify(claims, null, 2) + "\n");
   console.log(
-    `[nr-406] PASS ${runs.reduce((n, run) => n + run.passed, 0)} focused checks / five directories / two actual 4+1 chains / Gate approval false`,
+    `[nr-406] PASS ${runs.reduce((n, run) => n + run.passed, 0)} focused checks / five directories / two actual 4+1 chains / historical submission regression`,
   );
 }

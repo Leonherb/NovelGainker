@@ -6,19 +6,36 @@ pub mod canon_change_read;
 pub mod canon_change_store;
 pub mod canon_context;
 pub mod capability_pack;
+pub mod chapter_contract;
+pub mod continuity;
 pub mod conversation;
 pub mod conversation_runtime;
+pub mod conversation_sessions;
 pub mod coordination;
 pub mod credential_vault;
 pub mod memory;
 pub mod project;
+pub mod protocol_profile;
 pub mod provider_core;
 pub mod provider_state;
+pub mod publication;
 pub mod recovery;
 pub mod search;
 pub mod task_store;
 pub mod tool_runtime;
 pub mod workspace;
+
+// Compile the actual desktop command implementation into this test-only bridge,
+// so its worker uses our loopback-only client without exporting test endpoints.
+#[cfg(test)]
+mod nr506_desktop {
+    use crate as app_core;
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../apps/desktop/src-tauri/src/commands_current.rs"
+    ));
+    include!("nr506_desktop_tests.rs");
+}
 
 use serde::{Deserialize, Serialize};
 

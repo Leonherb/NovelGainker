@@ -177,6 +177,28 @@ fn validate_source_with_hash(
     build_report(relative_path, content_hash, diagnostics)
 }
 
+/// Parsed scalars only after the existing bounded source grammar/markup passes.
+/// This is structural evidence, never a finalization or publication authorization.
+pub fn validated_frontmatter(
+    relative_path: &str,
+    content: &str,
+) -> Option<BTreeMap<String, String>> {
+    if !validate_source(relative_path, content)
+        .diagnostics
+        .is_empty()
+    {
+        return None;
+    }
+    let parsed = parse_frontmatter(relative_path, content, &mut Vec::new())?;
+    Some(
+        parsed
+            .top_level
+            .into_iter()
+            .map(|(key, (value, _))| (key, value))
+            .collect(),
+    )
+}
+
 fn parse_frontmatter(
     relative_path: &str,
     content: &str,
@@ -453,7 +475,8 @@ fn build_report(
         diagnostics,
         eligible_for_ai_apply: eligible,
         eligible_for_final: eligible,
-        eligible_for_epub: eligible,
+        // Structural validation has no author approval or book snapshot evidence.
+        eligible_for_epub: false,
     }
 }
 
@@ -492,7 +515,7 @@ mod tests {
         assert!(chapter_report.diagnostics.is_empty());
         assert!(chapter_report.eligible_for_ai_apply);
         assert!(chapter_report.eligible_for_final);
-        assert!(chapter_report.eligible_for_epub);
+        assert!(!chapter_report.eligible_for_epub);
     }
 
     #[test]

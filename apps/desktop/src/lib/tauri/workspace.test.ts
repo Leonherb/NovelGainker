@@ -95,9 +95,30 @@ const saveResult = {
     diagnostics: [],
     eligibleForAiApply: true,
     eligibleForFinal: true,
-    eligibleForEpub: true,
+    eligibleForEpub: false,
   },
 } as const;
+
+it("NR-502 accepts actual bounded chapter content only with its Host finalization state", () => {
+  const savedContent = "---\nstatus: draft\n---\n正文。\n";
+  const response = {
+    ...saveResult,
+    savedContent,
+    chapterFinalizationConfirmed: false,
+    sizeBytes: new TextEncoder().encode(savedContent).length,
+  };
+  expect(parseProjectFileSaveResult(response)).toEqual(response);
+  for (const invalid of [
+    { ...response, savedContent: null },
+    { ...response, chapterFinalizationConfirmed: "yes" },
+    { ...response, sizeBytes: 0 },
+    { ...response, relativePath: "characters/a.md" },
+  ])
+    expect(() => parseProjectFileSaveResult(invalid)).toThrow();
+  const omitted: Record<string, unknown> = { ...response };
+  delete omitted.chapterFinalizationConfirmed;
+  expect(() => parseProjectFileSaveResult(omitted)).toThrow();
+});
 describe("NG-105 workspace IPC contract", () => {
   it("accepts the bounded recursive index and controlled metadata", () => {
     expect(parseProjectFileIndex(index)).toEqual(index);

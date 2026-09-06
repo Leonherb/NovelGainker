@@ -11,23 +11,30 @@ export function CanonChangeView({
   sessionId,
   activity,
   onChanged,
+  confirmationDisabled = false,
 }: {
   sessionId: string;
   activity: ChangeActivity;
   onChanged: () => void;
+  confirmationDisabled?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<ChangeDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const receipt = activity.receipt;
+  const chapter = receipt.files.some((file) => file.relativePath.startsWith("chapters/"));
   const label =
     receipt.status === "committed"
-      ? `已保存 ${receipt.files.length} 项资料`
+      ? chapter
+        ? "章节已保存"
+        : `已保存 ${receipt.files.length} 项资料`
       : receipt.status === "pending_confirmation"
         ? "待你确认，尚未保存"
         : receipt.status === "no_change"
-          ? "资料没有变化，无需保存"
+          ? chapter
+            ? "章节没有变化，无需重复保存"
+            : "资料没有变化，无需保存"
           : receipt.status === "recovery_required"
             ? "部分写入待恢复，请先核对"
             : receipt.status === "undone"
@@ -44,7 +51,14 @@ export function CanonChangeView({
     setBusy(true);
     setError(null);
     try {
-      setDetail(await requestCanonChangeDetail(sessionId, receipt.changeId));
+      setDetail(
+        await requestCanonChangeDetail(
+          sessionId,
+          receipt.changeId,
+          undefined,
+          activity.conversationSessionId,
+        ),
+      );
     } catch (failure: unknown) {
       setError(normalizeAppError(failure).code);
     } finally {
@@ -56,7 +70,13 @@ export function CanonChangeView({
     setBusy(true);
     setError(null);
     try {
-      await requestCanonChangeDecision(sessionId, receipt, decision);
+      await requestCanonChangeDecision(
+        sessionId,
+        receipt,
+        decision,
+        undefined,
+        activity.conversationSessionId,
+      );
       setExpanded(false);
       setDetail(null);
     } catch (failure: unknown) {
@@ -69,8 +89,18 @@ export function CanonChangeView({
     }
   };
   return (
-    <section className="canon-change" aria-label="资料保存结果">
+    <section className="canon-change" aria-label={chapter ? "章节保存结果" : "资料保存结果"}>
       <p className="canon-change-status">{label}</p>
+      {activity.chapterSourceState === "stale" ? (
+        <p role="status">引用的章节版本已过期，资料需复核；已保存的资料不会自动改写或撤销。</p>
+      ) : activity.chapterSourceState === "unavailable" ? (
+        <p role="status">暂时无法核对章节来源，请保留资料并稍后核对；这不改变已有保存记录。</p>
+      ) : activity.chapterSourceState === "current" ? (
+        <p>已核对所引用的章节版本；来源有效不等于推断或内容已被自动判定正确。</p>
+      ) : null}
+      {chapter && receipt.status === "committed" ? (
+        <p>本条只证明该版本曾经保存。定稿及出版须另核对当前版本与确认记录，修改后需要重新确认。</p>
+      ) : null}
       <div className="canon-change-actions">
         <button
           type="button"
@@ -82,7 +112,16 @@ export function CanonChangeView({
         </button>
         {receipt.status === "pending_confirmation" ? (
           <>
-            <button type="button" disabled={busy} onClick={() => void decide("confirm")}>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                confirmationDisabled ||
+                activity.chapterSourceState === "stale" ||
+                activity.chapterSourceState === "unavailable"
+              }
+              onClick={() => void decide("confirm")}
+            >
               确认保存
             </button>
             <button type="button" disabled={busy} onClick={() => void decide("discard")}>

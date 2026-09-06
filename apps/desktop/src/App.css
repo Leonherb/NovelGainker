@@ -6,6 +6,16 @@
   background: var(--surface-raised);
   color: var(--text);
 }
+.publication-result {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.publication-result ul {
+  padding-inline-start: 20px;
+}
+.publication-result li + li {
+  margin-top: 8px;
+}
 .canon-change-actions {
   display: flex;
   flex-wrap: wrap;
@@ -271,6 +281,58 @@ textarea:focus-visible {
   min-width: 0;
   min-height: 0;
   grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.session-conversation {
+  display: grid;
+  grid-row: 1 / -1;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.session-conversation > .conversation-runtime {
+  grid-row: 2;
+}
+.session-toolbar {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-strong);
+  max-height: 40vh;
+  overflow: auto;
+}
+.session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.session-controls + .session-controls {
+  margin-top: 8px;
+}
+.session-controls select,
+.session-controls input {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 100%;
+}
+.session-toolbar button,
+.session-controls select,
+.session-controls input {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-soft);
+  font: inherit;
+}
+.session-toolbar button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.session-toolbar p,
+.session-toolbar small {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .conversation-runtime .message-canvas {

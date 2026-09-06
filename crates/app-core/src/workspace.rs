@@ -100,6 +100,12 @@ pub struct ProjectFileSaveResult {
     pub diagnostics_triggered: bool,
     pub diagnostic_state: DiagnosticState,
     pub validation: ValidationReport,
+    /// NR-5 formal manual chapter saves return the actual editor text after
+    /// version-bound status normalization. Ordinary editor saves omit this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chapter_finalization_confirmed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -440,6 +446,8 @@ where
             diagnostics_triggered: true,
             diagnostic_state: DiagnosticState::Ready,
             validation,
+            saved_content: None,
+            chapter_finalization_confirmed: None,
         })
     })();
 

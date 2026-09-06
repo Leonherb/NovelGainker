@@ -3,6 +3,8 @@ import {
   parseChangeActivities,
   parseChangeDetail,
   parseChangeReceipt,
+  parseChangePage,
+  requestCanonChangesPage,
   requestCanonChangeDecision,
   requestEditorState,
   type ChangeActivity,
@@ -27,7 +29,13 @@ describe("NR-404 closed local change contracts", () => {
     expect(() => parseChangeReceipt({ ...activity.receipt, rawResult: "secret" })).toThrow();
     expect(() => parseChangeReceipt({ ...activity.receipt, status: "saved" })).toThrow();
     expect(() => parseChangeReceipt({ ...activity.receipt, revision: 0 })).toThrow();
-    for (const relativePath of ["../x.md", "chapters/x.md", "characters/../x.md", "C:/x.md"]) {
+    for (const relativePath of [
+      "../x.md",
+      "chapters/nested/x.md",
+      "chapters/CON.md",
+      "characters/../x.md",
+      "C:/x.md",
+    ]) {
       expect(() =>
         parseChangeReceipt({
           ...activity.receipt,
@@ -52,6 +60,29 @@ describe("NR-404 closed local change contracts", () => {
         files: [{ ...detail.files[0], lines: [{ kind: "added", text: "文".repeat(24000) }] }],
       }),
     ).toThrow();
+  });
+  it("NR-502 reads bounded chapter pages with closed nullable selectors", async () => {
+    const chapter = {
+      ...activity,
+      receipt: {
+        ...activity.receipt,
+        files: [{ ...activity.receipt.files[0], relativePath: "chapters/第一章.md" }],
+      },
+    };
+    const page = { schemaVersion: 1, items: [chapter], nextCursor: "opaque_next" };
+    expect(parseChangePage(page)).toEqual(page);
+    for (const invalid of [
+      { ...page, nextCursor: "../bad" },
+      { ...page, extra: true },
+      { ...page, items: [] },
+      { ...page, items: Array.from({ length: 101 }, () => chapter) },
+    ])
+      expect(() => parseChangePage(invalid)).toThrow();
+    const call = vi.fn().mockResolvedValue(page);
+    await expect(requestCanonChangesPage(id, null, null, call)).resolves.toEqual(page);
+    expect(call).toHaveBeenCalledExactlyOnceWith("canon_change_list", {
+      request: { projectSessionId: id, turnId: null, cursor: null, limit: 100 },
+    });
   });
   it("sends only opaque identifiers and a CAS decision, not candidate bytes", async () => {
     const call = vi.fn().mockResolvedValue(activity.receipt);

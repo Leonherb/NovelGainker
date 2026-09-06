@@ -1,12 +1,16 @@
-# NovelGainker 当前交付状态 — NR-4
+# NovelGainker 当前交付状态 — NR-G5 已批准，NR-5～NR-6 联合评审
 
 更新日期：2026-09-05。
 
 ## 授权与停止点
 
-用户已批准 NR-4-D1 / R01～R04，按 NR-401 → NR-406 顺序实施，每 Story 通过 `pnpm quality`，在 NR-G5 技术提交停止等待产品批准。本次最小只读 Live Smoke 明确放弃、兼容性风险接受；NR-6 完整验证保留。正式章节独立来源延至 NR-5。
+用户已批准NR-G5，NR-401→406已实施并分别通过质量门。用户明确“将云同步从整个plan中去除，我并没有这个需求”；因此总路线与后续交付仅至NR-6 / NR-G7，不保留云阶段、条件路线或云服务待办。后续12项Story已自评，R01～R05仍按各自授权边界处理。
 
-NR-G1～NR-G4 已批准；NR-G4 不重开，不恢复 Pre-NR-4。NR-5～NR-7 尚未形成或实施。本文件描述现行事实；历史 Story/Gate 的“当时未实施”属于冻结快照。
+NR-G1～NR-G5 已批准，不重开旧Gate，不恢复 Pre-NR-4。R04前三项产品行为已接受，R05真实验证方式已确定为多用户直接试用，见[测试方案](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md)。尚未发放或测试，参与者/费用/覆盖安排须发放前落实；不授权助手自动Live。R01～R03及NR-6未确认工程边界保留待决定。本次最小只读Live放弃与风险接受保留；正式章节来源仍待NR-5实现。历史Story/Gate属于当时冻结快照。
+
+补漏裁决：用户已接受NG-F01～NG-F05，现已纳入原Story和测试单：版本绑定定稿、完整创作链、内联工具证据、32个非归档会话、安装升级及最终版本复验。归档仍受总容量/目录约束；不重问已批准名额，剩余工程边界与R01～R03整包决定仍待落实。测试单31项含开发者检查，不要求每人全跑；尚未实施/测试。
+
+最新实施授权：用户已同意[NR-5～NR-6连续实施](reviews/novelist-agent-runtime-nr5-nr6-implementation-approval.zh-CN.md)，不再等待R01～R03。当前NR-501实施中，完成数仍0；每项完整quality，NR-G6技术通过后直接进入NR-6。多用户试用及最终NR-G7仍待实际证据/用户参与，不自动Live。
 
 ## NR-4 状态
 
@@ -19,7 +23,18 @@ NR-G1～NR-G4 已批准；NR-G4 不重开，不恢复 Pre-NR-4。NR-5～NR-7 尚
 | NR-405 | completed | CAS Undo、逆事务恢复、冲突/配额与外部修改保护 |
 | NR-406 | completed | 五目录事务、最大调用链、失败保文、最终质量与 NR-G5 证据 |
 
-NR-401～406 已分别通过完整质量门。最终 `pnpm quality` 于 2026-09-05 06:27 +08:00 完成，25 步全部 exit 0；NR-G5 已技术提交，产品尚未批准。
+NR-401～406 已分别通过完整质量门。最终 `pnpm quality` 于 2026-09-05 06:27 +08:00 完成，25 步全部 exit 0；NR-G5 后续产品批准见[独立批准记录](reviews/novelist-agent-runtime-nr-g5-product-approval.zh-CN.md)。
+
+## 后续12项Story的联合评审
+
+| 阶段 | Story | 当前状态 | 实施依赖 / 退出Gate |
+| --- | --- | --- | --- |
+| NR-5-D1 | NR-501～506 | 设计已自评，可提交产品决定 | R01～R03 / NR-G6 |
+| NR-6-D1 | NR-601～606 | R04产品行为已接受，R05改多用户测试；未实施 | NR-G6及剩余工程边界；604/605多用户覆盖与证据 / NR-G7 |
+
+入口：[联合Story Packet](stories/novelist-agent-runtime-nr5-nr6-story-packet-draft-1.zh-CN.md)；[逐项评审与发现](reviews/novelist-agent-runtime-nr5-nr6-story-packet-draft-1-review.zh-CN.md)。此次仅文档/状态更新，未重新运行完整质量门，不把NR-G5历史结果冒称后续阶段验收。
+
+当前产品裁决读 BMAD `current_gate`，后续范围读 `successor_packet`。旧 `gate`/`nr4_packet` 是显式标注的历史检查兼容快照，NR-501 将检查器改为分层读取；不能把旧 `nrG5Approved=false` 当当前未批准。
 
 ## 当前生产边界
 
@@ -49,9 +64,9 @@ NR-0～3 及 NR-G1～G3 Remediation 已完成，NR-301～306 在 NR-G4 获产品
 
 ## BMAD Routing Brief
 
-- Scope：brownfield-resume-packet；Windows desktop；Level 4；Codex；证据置信度高。
-- Current phase：NR-4 implementation 完成，NR-G5 产品评审边界。
-- Recommended next move：review gate，等待用户决定是否批准 NR-G5。
-- Why：范围已批准，401～406 已通过逐项质量门，技术报告与同次质量证据已匹配；剩余决定是产品 Gate 批准，而非继续实施。
-- Route-outs：BMAD 管阶段；ui-ux-pro-max 指导内联结果与保护交互；neat-freak 同步现行文档；无新增独立任务。
-- What not to do：不批准 NR-G5，不进入 NR-5，不执行真实 Live Smoke，不恢复 Pre-NR-4。
+- Scope：review-gate-packet；Windows desktop；Level 4；Codex；范围与代码事实高置信。
+- Current phase：NR-G5产品已批准，NR-5～6共12项Story评审完成。
+- Recommended next move：裁决R01～R03以释放NR-501→506；后续落实多用户测试批次。
+- Why：R04产品行为已接受，R05多用户方式已确定；新预算/出版与剩余工程边界、测试安排仍须确认，无云同步。
+- Route-outs：BMAD协调阶段；专用plannotator不可用，本轮主代理自评，不声称独立评审。
+- What not to do：不代批NR-G6/G7，不把规划标为已实现，不执行真实Live/云端上传，不恢复Pre-NR-4。
