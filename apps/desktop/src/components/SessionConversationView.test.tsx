@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionConversationView } from "./SessionConversationView";
@@ -67,6 +67,38 @@ beforeEach(() => {
   });
 });
 describe("NR-601 session conversation view", () => {
+  it("侧栏会话管理独立挂载，折叠后保留命名输入和聊天草稿", async () => {
+    const user = userEvent.setup();
+    const host = document.createElement("aside");
+    document.body.append(host);
+    const view = render(
+      <SessionConversationView
+        projectSessionId={project}
+        providerState={providerState}
+        managementHost={host}
+      />,
+    );
+    try {
+      const toolbar = await within(host).findByRole("region", { name: "会话管理" });
+      expect(within(view.container).queryByRole("region", { name: "会话管理" })).toBeNull();
+      const draft = await screen.findByRole("textbox", { name: "对话输入" });
+      await waitFor(() => expect(draft).toBeEnabled());
+      await user.type(draft, "保留的小说构思");
+      await user.click(within(toolbar).getByRole("button", { name: "新建会话" }));
+      const name = within(host).getByRole("textbox", { name: "会话名称" });
+      expect(name).toHaveFocus();
+      await user.type(name, "另一条剧情");
+      host.hidden = true;
+      expect(draft).toHaveValue("保留的小说构思");
+      host.hidden = false;
+      expect(within(host).getByRole("textbox", { name: "会话名称" })).toHaveValue("另一条剧情");
+      expect(within(host).getByRole("region", { name: "会话管理" })).toBe(toolbar);
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
   it("NR-602 keeps the original clear request after a lost acknowledgement changes active session", async () => {
     const user = userEvent.setup();
     const manage = vi

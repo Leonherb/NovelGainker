@@ -14,6 +14,8 @@ export const ZH_CN = {
     expandFiles: "展开右侧文件与修改栏",
     collapseFiles: "收起右侧文件与修改栏",
     collapseFilePreview: "收起文件与修改栏",
+    resizeProjects: "调整左侧项目与会话栏宽度",
+    resizeProjectsTitle: "拖动或使用方向键调整宽度；双击或按 Home 恢复默认宽度",
     resizeFiles: "调整右侧文件与修改栏宽度",
     resizeFilesTitle: "拖动或使用方向键调整宽度；双击或按 Home 恢复默认宽度",
     closeDrawer: "关闭已打开的侧栏",

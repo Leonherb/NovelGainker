@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ConversationView, type ConversationViewProps } from "./ConversationView";
 import { requestConversationTurnCancel } from "../lib/tauri/conversation";
 import { normalizeAppError } from "../lib/tauri/health";
@@ -39,7 +40,14 @@ const sessionError = (failure: unknown) => {
 
 // The parent keys this component by project. The child is keyed by conversation,
 // so a late load/event from an old view cannot replace the selected conversation.
-export function SessionConversationView(props: ConversationViewProps) {
+export function SessionConversationView({
+  managementHost,
+  onManagementRequested,
+  ...props
+}: ConversationViewProps & {
+  managementHost?: HTMLElement | null;
+  onManagementRequested?: () => void;
+}) {
   const { projectSessionId, onRunActiveChange } = props;
   const [page, setPage] = useState<SessionPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +69,14 @@ export function SessionConversationView(props: ConversationViewProps) {
   const creation = useRef<{ id: string; name: string } | null>(null);
   const currentPage = useRef<SessionPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    }
+  }, [editing, managementHost]);
 
   useEffect(() => {
     alive.current = true;
@@ -265,261 +281,268 @@ export function SessionConversationView(props: ConversationViewProps) {
   };
 
   if (!projectSessionId) return <ConversationView {...props} />;
-  return (
-    <div className="session-conversation">
-      <section className="session-toolbar" aria-label="会话管理" aria-busy={busy}>
-        <div className="session-controls">
-          <label htmlFor="current-conversation">当前会话</label>
-          <select
-            id="current-conversation"
-            value={selected ?? ""}
-            disabled={busy || !page || editing !== null}
-            onChange={(event) => {
-              const id = event.target.value;
-              if (!canMutate) {
+  const management = (
+    <section className="session-toolbar" aria-label="会话管理" aria-busy={busy}>
+      <header className="session-heading">
+        <h2>对话会话</h2>
+        {page ? <span>{page.nonArchivedCount}/32</span> : null}
+      </header>
+      <div className="session-controls">
+        <label htmlFor="current-conversation">当前会话</label>
+        <select
+          id="current-conversation"
+          value={selected ?? ""}
+          disabled={busy || !page || editing !== null}
+          onChange={(event) => {
+            const id = event.target.value;
+            if (!canMutate) {
+              setViewed(id);
+              return;
+            }
+            if (page && id)
+              void mutate(async () => {
+                const result = await requestSessionActivate(projectSessionId, id, page.revision);
                 setViewed(id);
-                return;
-              }
-              if (page && id)
-                void mutate(async () => {
-                  const result = await requestSessionActivate(projectSessionId, id, page.revision);
-                  setViewed(id);
-                  return result;
-                }, "已切换会话。");
-            }}
-          >
-            {!selected ? (
-              <option value="">{page ? "没有非归档会话" : "正在读取会话…"}</option>
-            ) : null}
-            {archived && selectedEntry ? (
-              <option value={selectedEntry.sessionId}>{selectedEntry.name}（归档只读）</option>
-            ) : null}
-            {selectionUncertain ? (
-              <option value={selected!}>原会话（状态待核对，只读）</option>
-            ) : null}
-            {page?.items.map((item) => (
-              <option value={item.sessionId} key={item.sessionId}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={busy || !canMutate || !page || page.nonArchivedCount >= 32}
-            onClick={() => {
-              setEditing("create");
-              setName("");
-              setError(null);
-            }}
-          >
-            新建会话
+                return result;
+              }, "已切换会话。");
+          }}
+        >
+          {!selected ? <option value="">{page ? "没有非归档会话" : "正在读取会话…"}</option> : null}
+          {archived && selectedEntry ? (
+            <option value={selectedEntry.sessionId}>{selectedEntry.name}（归档只读）</option>
+          ) : null}
+          {selectionUncertain ? (
+            <option value={selected!}>原会话（状态待核对，只读）</option>
+          ) : null}
+          {page?.items.map((item) => (
+            <option value={item.sessionId} key={item.sessionId}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={busy || !canMutate || !page || page.nonArchivedCount >= 32}
+          onClick={() => {
+            setEditing("create");
+            setName("");
+            setError(null);
+          }}
+        >
+          新建会话
+        </button>
+        <button
+          type="button"
+          disabled={busy || !canMutate || !selectedEntry || archived}
+          onClick={() => {
+            setEditing("rename");
+            setName(selectedEntry?.name ?? "");
+            setError(null);
+          }}
+        >
+          重命名
+        </button>
+      </div>
+      {editing ? (
+        <form
+          className="session-controls"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveName();
+          }}
+        >
+          <label htmlFor="conversation-name">会话名称</label>
+          <input
+            id="conversation-name"
+            ref={nameInputRef}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            disabled={busy}
+            aria-describedby="session-name-help session-feedback"
+          />
+          <button type="submit" disabled={busy}>
+            {busy
+              ? "正在保存…"
+              : editing === "clear"
+                ? "归档旧聊天并清空"
+                : editing === "branch"
+                  ? "创建分支"
+                  : "保存名称"}
+          </button>
+          <button type="button" disabled={busy} onClick={() => setEditing(null)}>
+            取消
+          </button>
+          <small id="session-name-help">1–60 个字符；各会话独立聊天，共享当前工程资料。</small>
+          {editing === "clear" ? (
+            <p>清空会归档旧会话并打开一个空会话；旧聊天可以恢复，不删除或回滚小说资料。</p>
+          ) : null}
+          {editing === "branch" ? (
+            <p>只复制截至所选轮次的可见文本，不复制旧工具权限，也不会回滚共享资料。</p>
+          ) : null}
+        </form>
+      ) : null}
+      {!canMutate && page ? (
+        <p role="status">
+          当前实例只读，可查看及导出聊天；关闭其他写入实例后重新打开工程，才能继续发送或管理会话。
+        </p>
+      ) : null}
+      {archived ? (
+        <p role="status">归档会话只读；恢复后才能发送及确认旧待保存操作。共享资料仍是当前版本。</p>
+      ) : null}
+      {selectionUncertain ? (
+        <p role="status">
+          原会话状态待核对，暂时只读。可重试原操作，或切换到列表中的会话继续聊天。
+        </p>
+      ) : null}
+      <details className="session-more">
+        <summary>更多会话操作</summary>
+        <div className="session-controls">
+          <button type="button" disabled={busy || !page} onClick={() => void loadArchives()}>
+            查看归档
           </button>
           <button
             type="button"
-            disabled={busy || !canMutate || !selectedEntry || archived}
+            disabled={busy || !canMutate || !selected || archived || runActive}
             onClick={() => {
-              setEditing("rename");
-              setName(selectedEntry?.name ?? "");
+              setEditing("clear");
+              setViewed(selected);
+              setName("新的会话");
+              setBoundary(null);
               setError(null);
             }}
           >
-            重命名
+            清空当前聊天…
           </button>
-        </div>
-        {editing ? (
-          <form
-            className="session-controls"
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveName();
+          <button
+            type="button"
+            disabled={busy || !canMutate || !selected || archived || runActive}
+            onClick={() => {
+              if (page && selected)
+                void manage({
+                  action: "archive",
+                  conversationSessionId: selected,
+                  expectedRevision: page.revision,
+                });
             }}
           >
-            <label htmlFor="conversation-name">会话名称</label>
-            <input
-              id="conversation-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              disabled={busy}
-              aria-describedby="session-name-help session-feedback"
-            />
-            <button type="submit" disabled={busy}>
-              {busy
-                ? "正在保存…"
-                : editing === "clear"
-                  ? "归档旧聊天并清空"
-                  : editing === "branch"
-                    ? "创建分支"
-                    : "保存名称"}
-            </button>
-            <button type="button" disabled={busy} onClick={() => setEditing(null)}>
-              取消
-            </button>
-            <small id="session-name-help">1–60 个字符；各会话独立聊天，共享当前工程资料。</small>
-            {editing === "clear" ? (
-              <p>清空会归档旧会话并打开一个空会话；旧聊天可以恢复，不删除或回滚小说资料。</p>
-            ) : null}
-            {editing === "branch" ? (
-              <p>只复制截至所选轮次的可见文本，不复制旧工具权限，也不会回滚共享资料。</p>
-            ) : null}
-          </form>
-        ) : null}
-        {!canMutate && page ? (
-          <p role="status">
-            当前实例只读，可查看及导出聊天；关闭其他写入实例后重新打开工程，才能继续发送或管理会话。
-          </p>
-        ) : null}
-        {archived ? (
-          <p role="status">
-            归档会话只读；恢复后才能发送及确认旧待保存操作。共享资料仍是当前版本。
-          </p>
-        ) : null}
-        {selectionUncertain ? (
-          <p role="status">
-            原会话状态待核对，暂时只读。可重试原操作，或切换到列表中的会话继续聊天。
-          </p>
-        ) : null}
-        <details>
-          <summary>更多会话操作</summary>
-          <div className="session-controls">
-            <button type="button" disabled={busy || !page} onClick={() => void loadArchives()}>
-              查看归档
-            </button>
+            归档当前会话
+          </button>
+          {archived ? (
             <button
               type="button"
-              disabled={busy || !canMutate || !selected || archived || runActive}
-              onClick={() => {
-                setEditing("clear");
-                setViewed(selected);
-                setName("新的会话");
-                setBoundary(null);
-                setError(null);
-              }}
-            >
-              清空当前聊天…
-            </button>
-            <button
-              type="button"
-              disabled={busy || !canMutate || !selected || archived || runActive}
+              disabled={busy || !canMutate || runActive || !page || page.nonArchivedCount >= 32}
               onClick={() => {
                 if (page && selected)
                   void manage({
-                    action: "archive",
+                    action: "restore",
                     conversationSessionId: selected,
                     expectedRevision: page.revision,
                   });
               }}
             >
-              归档当前会话
+              恢复此会话
             </button>
-            {archived ? (
-              <button
-                type="button"
-                disabled={busy || !canMutate || runActive || !page || page.nonArchivedCount >= 32}
-                onClick={() => {
-                  if (page && selected)
-                    void manage({
-                      action: "restore",
-                      conversationSessionId: selected,
-                      expectedRevision: page.revision,
-                    });
-                }}
-              >
-                恢复此会话
+          ) : null}
+        </div>
+        {showArchives ? (
+          <div>
+            <p>
+              归档只释放会话名额，仍占用本地存储；共 {page?.nonArchivedCount ?? 0}/32 个非归档会话。
+            </p>
+            {archives.length === 0 ? (
+              <p>暂无归档会话。</p>
+            ) : (
+              <ul>
+                {archives.map((entry) => (
+                  <li key={entry.sessionId}>
+                    <button
+                      type="button"
+                      disabled={busy || editing !== null}
+                      onClick={() => setViewed(entry.sessionId)}
+                    >
+                      {entry.name}（只读查看）
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {archiveCursor ? (
+              <button type="button" disabled={busy} onClick={() => void loadArchives(true)}>
+                更多归档
               </button>
             ) : null}
           </div>
-          {showArchives ? (
-            <div>
-              <p>
-                归档只释放会话名额，仍占用本地存储；共 {page?.nonArchivedCount ?? 0}/32
-                个非归档会话。
-              </p>
-              {archives.length === 0 ? (
-                <p>暂无归档会话。</p>
-              ) : (
-                <ul>
-                  {archives.map((entry) => (
-                    <li key={entry.sessionId}>
-                      <button
-                        type="button"
-                        disabled={busy || editing !== null}
-                        onClick={() => setViewed(entry.sessionId)}
-                      >
-                        {entry.name}（只读查看）
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {archiveCursor ? (
-                <button type="button" disabled={busy} onClick={() => void loadArchives(true)}>
-                  更多归档
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="session-controls">
-            <label htmlFor="conversation-export-format">导出格式</label>
-            <select
-              id="conversation-export-format"
-              value={format}
+        ) : null}
+        <div className="session-controls">
+          <label htmlFor="conversation-export-format">导出格式</label>
+          <select
+            id="conversation-export-format"
+            value={format}
+            disabled={busy}
+            onChange={(event) => setFormat(event.target.value as ExportFormat)}
+          >
+            <option value="markdown">Markdown</option>
+            <option value="json">JSON</option>
+          </select>
+          <button
+            type="button"
+            disabled={busy || !selected || runActive}
+            onClick={() => void exportVisible()}
+          >
+            导出可见聊天…
+          </button>
+          <p>
+            仅导出可见文本。请先检查自己在聊天中输入的隐私内容；不包含隐藏提示或工具原始数据，不覆盖已有文件。
+          </p>
+        </div>
+      </details>
+      {otherRun ? (
+        <div className="session-controls">
+          <span role="status">另一会话正在回复，可切换查看；结束后才能发送新消息。</span>
+          <button
+            type="button"
+            disabled={busy || !canMutate || !otherRun.turnId}
+            onClick={() => {
+              const turnId = otherRun.turnId;
+              if (!turnId) return;
+              void mutate(async () => {
+                await requestConversationTurnCancel(projectSessionId, turnId);
+                return requestSessions(projectSessionId);
+              }, "已请求停止原会话的回复，已生成内容会保留。");
+            }}
+          >
+            停止原会话回复
+          </button>
+        </div>
+      ) : null}
+      <div id="session-feedback">
+        {error ? (
+          <p role="alert">
+            {error}{" "}
+            <button
+              type="button"
               disabled={busy}
-              onChange={(event) => setFormat(event.target.value as ExportFormat)}
-            >
-              <option value="markdown">Markdown</option>
-              <option value="json">JSON</option>
-            </select>
-            <button
-              type="button"
-              disabled={busy || !selected || runActive}
-              onClick={() => void exportVisible()}
-            >
-              导出可见聊天…
-            </button>
-            <p>
-              仅导出可见文本。请先检查自己在聊天中输入的隐私内容；不包含隐藏提示或工具原始数据，不覆盖已有文件。
-            </p>
-          </div>
-        </details>
-        {otherRun ? (
-          <div className="session-controls">
-            <span role="status">另一会话正在回复，可切换查看；结束后才能发送新消息。</span>
-            <button
-              type="button"
-              disabled={busy || !canMutate || !otherRun.turnId}
               onClick={() => {
-                const turnId = otherRun.turnId;
-                if (!turnId) return;
-                void mutate(async () => {
-                  await requestConversationTurnCancel(projectSessionId, turnId);
-                  return requestSessions(projectSessionId);
-                }, "已请求停止原会话的回复，已生成内容会保留。");
+                setError(null);
+                void refresh();
               }}
             >
-              停止原会话回复
+              重新读取会话
             </button>
-          </div>
+          </p>
+        ) : notice ? (
+          <p role="status">{notice}</p>
         ) : null}
-        <div id="session-feedback">
-          {error ? (
-            <p role="alert">
-              {error}{" "}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setError(null);
-                  void refresh();
-                }}
-              >
-                重新读取会话
-              </button>
-            </p>
-          ) : notice ? (
-            <p role="status">{notice}</p>
-          ) : null}
-        </div>
-      </section>
+      </div>
+    </section>
+  );
+  return (
+    <div className="session-conversation" data-management-in-sidebar={managementHost !== undefined}>
+      {managementHost
+        ? createPortal(management, managementHost)
+        : managementHost === undefined
+          ? management
+          : null}
       {selected ? (
         <ConversationView
           {...props}
@@ -530,6 +553,7 @@ export function SessionConversationView(props: ConversationViewProps) {
           onBranch={
             canMutate && !selectionUncertain && !busy && !runActive
               ? (turnId) => {
+                  onManagementRequested?.();
                   setBoundary(turnId);
                   setViewed(selected);
                   setEditing("branch");

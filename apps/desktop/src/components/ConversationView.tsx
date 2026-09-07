@@ -656,6 +656,7 @@ export function ConversationView({
                   <button
                     type="button"
                     disabled={runActive || otherTurnActive}
+                    className="conversation-branch"
                     onClick={() => onBranch(turn.turnId)}
                   >
                     从此轮分支

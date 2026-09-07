@@ -123,8 +123,8 @@ textarea:focus-visible {
 }
 
 .app-shell {
-  --left-column: minmax(260px, 294px);
-  --right-column: minmax(300px, var(--right-panel-width, 350px));
+  --left-column: minmax(245px, var(--left-panel-width, 294px));
+  --right-column: minmax(278px, var(--right-panel-width, 350px));
   display: grid;
   grid-template-rows: 58px minmax(0, 1fr) 28px;
   width: 100%;
@@ -296,8 +296,7 @@ textarea:focus-visible {
 .session-toolbar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-strong);
-  max-height: 40vh;
-  overflow: auto;
+  min-width: 0;
 }
 .session-controls {
   display: flex;
@@ -315,6 +314,7 @@ textarea:focus-visible {
   max-width: 100%;
 }
 .session-toolbar button,
+.conversation-branch,
 .session-controls select,
 .session-controls input {
   min-height: 44px;
@@ -325,7 +325,8 @@ textarea:focus-visible {
   background: var(--surface-soft);
   font: inherit;
 }
-.session-toolbar button:disabled {
+.session-toolbar button:disabled,
+.conversation-branch:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -423,12 +424,14 @@ textarea:focus-visible {
 
 .panel-resize-handle:hover::after,
 .panel-resize-handle:focus-visible::after,
-.app-shell[data-right-resizing="true"] .panel-resize-handle::after {
+.app-shell[data-left-resizing="true"] .left-resize-handle::after,
+.app-shell[data-right-resizing="true"] .right-panel .panel-resize-handle::after {
   width: 3px;
   background: var(--accent-bright);
   box-shadow: 0 0 12px rgba(170, 180, 255, 0.5);
 }
 
+.app-shell[data-left-resizing="true"],
 .app-shell[data-right-resizing="true"] {
   cursor: col-resize;
   user-select: none;
@@ -1809,7 +1812,7 @@ textarea:focus-visible {
 
 @media (max-width: 1120px) {
   .app-shell {
-    --left-column: minmax(245px, 264px);
+    --left-column: minmax(245px, var(--left-panel-width, 264px));
     --right-column: minmax(278px, var(--right-panel-width, 304px));
   }
 
@@ -2678,4 +2681,119 @@ textarea:focus-visible {
     max-height: calc(100vh - 24px);
     padding: 20px;
   }
+}
+
+/* Conversation management shares the project sidebar while its state stays with chat. */
+.session-conversation[data-management-in-sidebar="true"] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.session-conversation[data-management-in-sidebar="true"] > .conversation-runtime {
+  grid-row: 1;
+}
+.session-management-host:not(:empty) {
+  margin-bottom: 20px;
+}
+.session-management-host .session-toolbar {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.session-heading h2 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.session-heading span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.session-management-host .session-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.session-management-host .session-controls > :is(label, select, input, p, small, span) {
+  grid-column: 1 / -1;
+}
+.session-management-host .session-controls > label {
+  color: var(--muted);
+}
+.session-management-host :is(select, input, button) {
+  width: 100%;
+  min-width: 0;
+}
+.session-management-host button {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.session-toolbar button:hover:not(:disabled),
+.conversation-branch:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.session-toolbar :is(select, summary):focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+.session-more {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.session-more summary {
+  padding: 8px 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.session-more .session-controls + .session-controls {
+  margin-top: 12px;
+}
+.session-toolbar :is(p, small) {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+.session-toolbar [role="alert"] {
+  color: var(--danger);
+}
+.session-toolbar ul {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.session-management-host .session-more .session-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+.left-panel .panel-scroll {
+  margin-right: 9px;
+  padding-right: 7px;
+}
+.left-resize-handle {
+  right: 0;
+  left: auto;
+}
+.left-resize-handle::after {
+  right: 0;
+  left: auto;
+}
+.side-panel[hidden] {
+  display: none;
+}
+.conversation-branch {
+  justify-self: start;
+  margin-top: 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
 }

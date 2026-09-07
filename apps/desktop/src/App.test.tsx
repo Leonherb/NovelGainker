@@ -112,6 +112,53 @@ describe("NovelGainker Sprint 0 工作台", () => {
     expect(setItem).not.toHaveBeenCalled();
   });
 
+  it("左栏支持拖拽和键盘，保护聊天宽度并在折叠后保持挂载", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
+    const user = userEvent.setup();
+    render(<App />);
+    const shell = document.querySelector<HTMLElement>(".app-shell")!;
+    const left = document.querySelector<HTMLElement>("#provider-sidebar")!;
+    let separator = screen.getByRole("separator", { name: ZH_CN.panels.resizeProjects });
+    fireEvent.pointerDown(separator, { button: 2, clientX: 500, pointerId: 2 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("");
+    fireEvent.pointerDown(separator, { button: 0, clientX: 420, pointerId: 7 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("420px");
+    fireEvent.pointerMove(separator, { clientX: 600, pointerId: 8 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("420px");
+    fireEvent.pointerMove(separator, { clientX: 4000, pointerId: 7 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("640px");
+    fireEvent.pointerCancel(separator, { pointerId: 7 });
+    expect(shell).toHaveAttribute("data-left-resizing", "false");
+    fireEvent.pointerMove(separator, { clientX: 300, pointerId: 7 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("640px");
+    separator.focus();
+    await user.keyboard("{Home}{ArrowRight}");
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("326px");
+    await user.keyboard("{ArrowLeft}");
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("294px");
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.collapseApi }));
+    expect(left).toHaveAttribute("hidden");
+    await user.click(screen.getByRole("button", { name: ZH_CN.panels.expandApi }));
+    expect(document.querySelector("#provider-sidebar")).toBe(left);
+    expect(left).not.toHaveAttribute("hidden");
+    separator = screen.getByRole("separator", { name: ZH_CN.panels.resizeProjects });
+    const rightSeparator = screen.getByRole("separator", { name: ZH_CN.panels.resizeFiles });
+    fireEvent.pointerDown(rightSeparator, { button: 0, clientX: 0, pointerId: 1 });
+    fireEvent.pointerUp(rightSeparator, { pointerId: 1 });
+    expect(shell.style.getPropertyValue("--right-panel-width")).toBe("706px");
+    fireEvent.pointerDown(separator, { button: 0, clientX: 1000, pointerId: 3 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("294px");
+    fireEvent.pointerMove(separator, { clientX: 10, pointerId: 3 });
+    expect(shell.style.getPropertyValue("--left-panel-width")).toBe("245px");
+    fireEvent.pointerUp(separator, { pointerId: 3 });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 940 });
+    fireEvent(window, new Event("resize"));
+    expect(
+      Number.parseInt(shell.style.getPropertyValue("--left-panel-width")) +
+        Number.parseInt(shell.style.getPropertyValue("--right-panel-width")),
+    ).toBeLessThanOrEqual(580);
+  });
+
   it("右侧文件栏可拖动或用键盘放大，并可恢复默认宽度", async () => {
     const user = userEvent.setup();
     render(<App />);

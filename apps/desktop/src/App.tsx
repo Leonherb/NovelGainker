@@ -25,10 +25,14 @@ import { isTauriRuntime, normalizeAppError, requestHealthStatus } from "./lib/ta
 
 const NARROW_LAYOUT_QUERY = "(max-width: 900px)";
 const COMPACT_WIDE_QUERY = "(max-width: 1120px)";
+const DEFAULT_LEFT_PANEL_WIDTH = 294;
+const COMPACT_LEFT_PANEL_WIDTH = 264;
+const MIN_LEFT_PANEL_WIDTH = 245;
+const MAX_LEFT_PANEL_WIDTH = 640;
 const DEFAULT_RIGHT_PANEL_WIDTH = 350;
 const COMPACT_RIGHT_PANEL_WIDTH = 304;
 const MIN_RIGHT_PANEL_WIDTH = 278;
-const RIGHT_PANEL_RESIZE_STEP = 32;
+const PANEL_RESIZE_STEP = 32;
 
 function useNarrowLayout() {
   const [isNarrow, setIsNarrow] = useState(() =>
@@ -62,6 +66,8 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   const isNarrow = useNarrowLayout();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number | null>(null);
+  const [leftPanelResizing, setLeftPanelResizing] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState<number | null>(null);
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const [narrowPanel, setNarrowPanel] = useState<"left" | "right" | null>(null);
@@ -76,11 +82,13 @@ function App({ diagnosticsEnabled = false }: AppProps) {
   const [providerState, setProviderState] = useState(DEFAULT_PROVIDER_STATE);
   const [conversationRunActive, setConversationRunActive] = useState(false);
   const [projectNavigatorHost, setProjectNavigatorHost] = useState<HTMLElement | null>(null);
+  const [sessionManagementHost, setSessionManagementHost] = useState<HTMLElement | null>(null);
   const [startupNavigatorHost, setStartupNavigatorHost] = useState<HTMLElement | null>(null);
   const healthCheckStarted = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLElement>(null);
   const rightPanelRef = useRef<HTMLElement>(null);
+  const leftResizePointerRef = useRef<number | null>(null);
   const rightResizePointerRef = useRef<number | null>(null);
   const [projectSessionId, setProjectSessionId] = useState<string | null>(null);
   const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0);
@@ -191,12 +199,104 @@ function App({ diagnosticsEnabled = false }: AppProps) {
     setRightCollapsed((current) => !current);
   };
 
+  const revealSessionManagement = useCallback(() => {
+    setLeftCollapsed(false);
+    if (isNarrow) setNarrowPanel("left");
+  }, [isNarrow]);
+
   const revealFileReview = useCallback(() => {
     setRightCollapsed(false);
     if (isNarrow) {
       setNarrowPanel("right");
     }
   }, [isNarrow]);
+
+  const clampLeftPanelWidth = useCallback(
+    (requestedWidth: number) => {
+      const compactWide =
+        window.innerWidth <= 1_120 ||
+        (typeof window.matchMedia === "function" && window.matchMedia(COMPACT_WIDE_QUERY).matches);
+      const workspaceWidth =
+        workspaceRef.current?.getBoundingClientRect().width || window.innerWidth;
+      const measuredRightWidth = rightPanelOpen
+        ? rightPanelRef.current?.getBoundingClientRect().width
+        : 0;
+      const rightWidth = rightPanelOpen
+        ? (rightPanelWidth ??
+          (measuredRightWidth ||
+            (compactWide ? COMPACT_RIGHT_PANEL_WIDTH : DEFAULT_RIGHT_PANEL_WIDTH)))
+        : 0;
+      const minimumConversationWidth = compactWide ? 360 : 400;
+      const maximumWidth = Math.min(
+        MAX_LEFT_PANEL_WIDTH,
+        Math.max(MIN_LEFT_PANEL_WIDTH, workspaceWidth - rightWidth - minimumConversationWidth),
+      );
+      return Math.round(Math.min(maximumWidth, Math.max(MIN_LEFT_PANEL_WIDTH, requestedWidth)));
+    },
+    [rightPanelOpen, rightPanelWidth],
+  );
+
+  const currentLeftPanelWidth = () => {
+    const measured = leftPanelRef.current?.getBoundingClientRect().width;
+    if (measured) {
+      return measured;
+    }
+    if (leftPanelWidth !== null) {
+      return leftPanelWidth;
+    }
+    const compactWide =
+      window.innerWidth <= 1_120 ||
+      (typeof window.matchMedia === "function" && window.matchMedia(COMPACT_WIDE_QUERY).matches);
+    return compactWide ? COMPACT_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
+  };
+
+  const resizeLeftPanelFromClientX = (clientX: number) => {
+    const workspaceLeft = workspaceRef.current?.getBoundingClientRect().left ?? 0;
+    setLeftPanelWidth(clampLeftPanelWidth(clientX - workspaceLeft));
+  };
+
+  const handleLeftResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    leftResizePointerRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setLeftPanelResizing(true);
+    resizeLeftPanelFromClientX(event.clientX);
+  };
+
+  const handleLeftResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (leftResizePointerRef.current !== event.pointerId) {
+      return;
+    }
+    resizeLeftPanelFromClientX(event.clientX);
+  };
+
+  const stopLeftResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (leftResizePointerRef.current !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    leftResizePointerRef.current = null;
+    setLeftPanelResizing(false);
+  };
+
+  const handleLeftResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Home") {
+      event.preventDefault();
+      setLeftPanelWidth(null);
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    setLeftPanelWidth(clampLeftPanelWidth(currentLeftPanelWidth() + direction * PANEL_RESIZE_STEP));
+  };
 
   const clampRightPanelWidth = useCallback(
     (requestedWidth: number) => {
@@ -208,15 +308,19 @@ function App({ diagnosticsEnabled = false }: AppProps) {
       const measuredLeftWidth = leftPanelOpen
         ? leftPanelRef.current?.getBoundingClientRect().width
         : 0;
-      const leftWidth = leftPanelOpen ? measuredLeftWidth || (compactWide ? 245 : 294) : 0;
+      const leftWidth = leftPanelOpen
+        ? (leftPanelWidth ??
+          (measuredLeftWidth ||
+            (compactWide ? COMPACT_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH)))
+        : 0;
       const minimumConversationWidth = compactWide ? 360 : 400;
       const maximumWidth = Math.min(
         1_600,
         Math.max(MIN_RIGHT_PANEL_WIDTH, workspaceWidth - leftWidth - minimumConversationWidth),
       );
-      return Math.min(maximumWidth, Math.max(MIN_RIGHT_PANEL_WIDTH, requestedWidth));
+      return Math.round(Math.min(maximumWidth, Math.max(MIN_RIGHT_PANEL_WIDTH, requestedWidth)));
     },
-    [leftPanelOpen],
+    [leftPanelOpen, leftPanelWidth],
   );
 
   const currentRightPanelWidth = () => {
@@ -279,7 +383,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
     event.preventDefault();
     const direction = event.key === "ArrowLeft" ? 1 : -1;
     setRightPanelWidth(
-      clampRightPanelWidth(currentRightPanelWidth() + direction * RIGHT_PANEL_RESIZE_STEP),
+      clampRightPanelWidth(currentRightPanelWidth() + direction * PANEL_RESIZE_STEP),
     );
   };
 
@@ -288,17 +392,18 @@ function App({ diagnosticsEnabled = false }: AppProps) {
       return undefined;
     }
     const keepWidthInBounds = () => {
+      setLeftPanelWidth((current) => (current === null ? null : clampLeftPanelWidth(current)));
       setRightPanelWidth((current) => (current === null ? null : clampRightPanelWidth(current)));
     };
     window.addEventListener("resize", keepWidthInBounds);
     keepWidthInBounds();
     return () => window.removeEventListener("resize", keepWidthInBounds);
-  }, [clampRightPanelWidth, isNarrow]);
+  }, [clampLeftPanelWidth, clampRightPanelWidth, isNarrow]);
 
-  const shellStyle =
-    rightPanelWidth === null
-      ? undefined
-      : ({ "--right-panel-width": `${rightPanelWidth}px` } as CSSProperties);
+  const shellStyle = {
+    ...(leftPanelWidth === null ? {} : { "--left-panel-width": `${leftPanelWidth}px` }),
+    ...(rightPanelWidth === null ? {} : { "--right-panel-width": `${rightPanelWidth}px` }),
+  } as CSSProperties;
 
   return (
     <div
@@ -306,6 +411,7 @@ function App({ diagnosticsEnabled = false }: AppProps) {
       data-layout={isNarrow ? "narrow" : "wide"}
       data-left-collapsed={!leftPanelOpen}
       data-right-collapsed={!rightPanelOpen}
+      data-left-resizing={leftPanelResizing}
       data-right-resizing={rightPanelResizing}
       style={shellStyle}
     >
@@ -358,53 +464,82 @@ function App({ diagnosticsEnabled = false }: AppProps) {
           />
         ) : null}
 
-        {leftPanelOpen ? (
-          <aside
-            aria-label={ZH_CN.providers.ariaLabel}
-            className="side-panel left-panel"
-            id="provider-sidebar"
-            ref={leftPanelRef}
-          >
-            <header className="panel-heading">
-              <div>
-                <p className="section-kicker">{ZH_CN.providers.kicker}</p>
-                <h1>{ZH_CN.providers.heading}</h1>
-              </div>
-              <button
-                aria-label={ZH_CN.panels.collapseApiSettings}
-                className="icon-button"
-                onClick={toggleLeftPanel}
-                title={ZH_CN.panels.collapseApiSettings}
-                type="button"
-              >
-                ‹
-              </button>
-            </header>
-
-            <div className="panel-scroll">
-              <div className="project-navigator-host" ref={setProjectNavigatorHost} />
-
-              <ProviderSettings
-                desktopRuntime={desktopRuntime}
-                expanded={apiCardExpanded}
-                onExpandedChange={setApiCardExpanded}
-                onStateChange={setProviderState}
-                runActive={conversationRunActive}
-              />
-
-              <HealthStatusCard
-                desktopRuntime={desktopRuntime}
-                diagnosticsEnabled={diagnosticsEnabled}
-                onCheck={() => void runHealthCheck()}
-                state={healthState}
-              />
+        <aside
+          aria-label={ZH_CN.providers.ariaLabel}
+          className="side-panel left-panel"
+          id="provider-sidebar"
+          hidden={!leftPanelOpen}
+          ref={leftPanelRef}
+        >
+          {!isNarrow && leftPanelOpen ? (
+            <div
+              aria-label={ZH_CN.panels.resizeProjects}
+              aria-orientation="vertical"
+              aria-valuemax={MAX_LEFT_PANEL_WIDTH}
+              aria-valuemin={MIN_LEFT_PANEL_WIDTH}
+              aria-valuenow={Math.round(
+                leftPanelWidth ??
+                  (window.innerWidth <= 1_120
+                    ? COMPACT_LEFT_PANEL_WIDTH
+                    : DEFAULT_LEFT_PANEL_WIDTH),
+              )}
+              className="panel-resize-handle left-resize-handle"
+              onDoubleClick={() => setLeftPanelWidth(null)}
+              onKeyDown={handleLeftResizeKeyDown}
+              onPointerCancel={stopLeftResize}
+              onPointerDown={handleLeftResizePointerDown}
+              onPointerMove={handleLeftResizePointerMove}
+              onPointerUp={stopLeftResize}
+              onLostPointerCapture={stopLeftResize}
+              aria-controls="provider-sidebar"
+              role="separator"
+              tabIndex={0}
+              title={ZH_CN.panels.resizeProjectsTitle}
+            />
+          ) : null}
+          <header className="panel-heading">
+            <div>
+              <p className="section-kicker">{ZH_CN.providers.kicker}</p>
+              <h1>{ZH_CN.providers.heading}</h1>
             </div>
-          </aside>
-        ) : null}
+            <button
+              aria-label={ZH_CN.panels.collapseApiSettings}
+              className="icon-button"
+              onClick={toggleLeftPanel}
+              title={ZH_CN.panels.collapseApiSettings}
+              type="button"
+            >
+              ‹
+            </button>
+          </header>
+
+          <div className="panel-scroll">
+            <div className="project-navigator-host" ref={setProjectNavigatorHost} />
+
+            <div className="session-management-host" ref={setSessionManagementHost} />
+
+            <ProviderSettings
+              desktopRuntime={desktopRuntime}
+              expanded={apiCardExpanded}
+              onExpandedChange={setApiCardExpanded}
+              onStateChange={setProviderState}
+              runActive={conversationRunActive}
+            />
+
+            <HealthStatusCard
+              desktopRuntime={desktopRuntime}
+              diagnosticsEnabled={diagnosticsEnabled}
+              onCheck={() => void runHealthCheck()}
+              state={healthState}
+            />
+          </div>
+        </aside>
 
         <main aria-label={ZH_CN.conversation.ariaLabel} className="conversation-panel">
           <SessionConversationView
             key={projectSessionId ?? "no-project"}
+            managementHost={sessionManagementHost}
+            onManagementRequested={revealSessionManagement}
             onRunActiveChange={setConversationRunActive}
             onCanonChanged={() => setWorkspaceRefreshToken((value) => value + 1)}
             changeRefreshToken={changeRefreshToken}
@@ -435,6 +570,8 @@ function App({ diagnosticsEnabled = false }: AppProps) {
               className="panel-resize-handle"
               onDoubleClick={() => setRightPanelWidth(null)}
               onKeyDown={handleRightResizeKeyDown}
+              onLostPointerCapture={stopRightResize}
+              aria-controls="file-sidebar"
               onPointerCancel={stopRightResize}
               onPointerDown={handleRightResizePointerDown}
               onPointerMove={handleRightResizePointerMove}
