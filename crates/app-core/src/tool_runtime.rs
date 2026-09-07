@@ -7,6 +7,9 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+mod feedback;
+pub use feedback::ArgumentIssue;
+
 pub const MAX_TOOL_DEFINITIONS: usize = 16;
 pub const MAX_TOOL_DESCRIPTION_BYTES: usize = 2 * 1024;
 pub const MAX_TOOL_SCHEMA_BYTES: usize = 8 * 1024;
@@ -105,6 +108,7 @@ pub enum ToolResultStatus {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ToolResult {
+    pub argument_issues: Vec<ArgumentIssue>,
     pub call_id: String,
     pub name: String,
     pub version: u32,
@@ -115,6 +119,17 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn validate(&self) -> Result<(), ToolContractError> {
+        if !self.argument_issues.is_empty()
+            && (self.status != ToolResultStatus::Failed
+                || self.error_code.as_deref() != Some("agent.tool_arguments_invalid")
+                || self.argument_issues.len() > 4
+                || serde_json::to_vec(&self.argument_issues)
+                    .map_err(|_| ToolContractError::ResultInvalid)?
+                    .len()
+                    > 2048)
+        {
+            return Err(ToolContractError::ResultInvalid);
+        }
         if !valid_call_id(&self.call_id)
             || !valid_tool_name(&self.name)
             || self.version == 0
@@ -153,9 +168,18 @@ impl ToolResult {
             ToolResultStatus::Succeeded => serde_json::json!({
                 "status": "succeeded", "output": self.output_json
             }),
-            ToolResultStatus::Failed => serde_json::json!({
-                "status": "failed", "errorCode": self.error_code
-            }),
+            ToolResultStatus::Failed => {
+                let mut payload = serde_json::json!({
+                    "status": "failed", "errorCode": self.error_code
+                });
+                if !self.argument_issues.is_empty() {
+                    payload["argumentIssues"] = serde_json::json!(self.argument_issues);
+                }
+                if let Some(guidance) = feedback::failure_guidance(self.error_code.as_deref()) {
+                    payload["guidance"] = Value::String(guidance.to_owned());
+                }
+                payload
+            }
             ToolResultStatus::Cancelled => serde_json::json!({
                 "status": "cancelled", "errorCode": self.error_code
             }),

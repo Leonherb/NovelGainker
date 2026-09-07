@@ -9,7 +9,7 @@ mod nr504 {
     use crate::recovery::RecoveryStore;
     use serde_json::{json, Value};
 
-    fn read_arguments(capability: &str, path: Option<&str>) -> Value {
+    pub(super) fn read_arguments(capability: &str, path: Option<&str>) -> Value {
         let operation = path.map_or_else(|| json!({"kind":"list","scopes":[if capability == "create-character" {"characters"} else {"chapters"}],"limit":64}),
             |path| json!({"kind":"read","relativePath":path,"startLine":1,"maxBytes":32768}));
         crate::canon_context::normalize_deepseek_novelist_read_context_arguments(json!({"capabilityId":capability,"canonOperations":[operation]})).unwrap()
@@ -56,7 +56,7 @@ mod nr504 {
                     budget.consume_read().unwrap();
                     let call = ProviderToolCall {call_id:format!("history_{index}"),name:crate::canon_context::NOVELIST_READ_CONTEXT_TOOL_NAME.to_owned(),
                         arguments_json:json!({"quoted":"\"".repeat(if oversized {16*1024}else{1})}).to_string()};
-                    let result = ToolResult {call_id:call.call_id.clone(),name:call.name.clone(),version:2,status:ToolResultStatus::Succeeded,
+                    let result = ToolResult { argument_issues: Vec::new(),call_id:call.call_id.clone(),name:call.name.clone(),version:2,status:ToolResultStatus::Succeeded,
                         output_json:Some(json!({"quoted":"\"".repeat(if oversized {28*1024}else{1})})),error_code:None};
                     request = request.continue_after_tool(native_continuation(provider,call),result,4096).unwrap().with_tool_definitions(registry.definitions()).unwrap();
                 }
@@ -64,7 +64,7 @@ mod nr504 {
                 let call = ProviderToolCall {call_id:if oversized {"blocked_native"}else{"safe_native"}.to_owned(),name:PROPOSE_CHANGE_TOOL_NAME.to_owned(),arguments_json:args.to_string()};
                 let (definition,executor) = registry.lookup(&call).unwrap();
                 let continuation = native_continuation(provider,call.clone());
-                let placeholder = ToolResult {call_id:call.call_id.clone(),name:call.name.clone(),version:2,status:ToolResultStatus::Failed,output_json:None,error_code:Some("canon.change_budget_exceeded".to_owned())};
+                let placeholder = ToolResult { argument_issues: Vec::new(),call_id:call.call_id.clone(),name:call.name.clone(),version:2,status:ToolResultStatus::Failed,output_json:None,error_code:Some("canon.change_budget_exceeded".to_owned())};
                 let exact = request.continue_after_tool(continuation.clone(),placeholder,4096).unwrap().serialized_request_bytes(provider).unwrap();
                 let reserved = exact + 2 * crate::chapter_contract::NR5_TOOL_RESULT_BYTES + 2048;
                 assert_eq!(reserved > crate::chapter_contract::NR5_REQUEST_BYTES,oversized);
@@ -82,7 +82,7 @@ mod nr504 {
         }
     }
 
-    fn change_arguments(chapter: bool, source: &Value, method: &Value, from_chapter: bool, mode: u8) -> Value {
+    pub(super) fn change_arguments(chapter: bool, source: &Value, method: &Value, from_chapter: bool, mode: u8) -> Value {
         let markdown = if chapter {
             "---\nid: new\ntitle: 第一章\nkind: chapter\nschemaVersion: 1\nwritingLanguage: zh-CN\nchapterNumber: 1\nstatus: draft\n---\n\n# 第一章\n\n## Draft\n\n林溪喜欢观察。\n"
         } else {

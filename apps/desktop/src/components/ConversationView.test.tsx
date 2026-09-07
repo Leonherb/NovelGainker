@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationView } from "./ConversationView";
@@ -73,6 +73,115 @@ describe("NR-005 ConversationView", () => {
       },
     );
   });
+
+  it("restores every Host tool record after reopening without generating an API reply", async () => {
+    const tasks: conversationApi.TaskActivity[] = [
+      {
+        taskId: "70000000-0000-4000-8000-000000000007",
+        sessionId: CONVERSATION_SESSION_ID,
+        turnId: TURN_ID,
+        status: "succeeded",
+        displayLabel: "读取工程资料",
+        taskRevision: 7,
+        toolName: "novelist.read_context",
+        toolVersion: 2,
+        startedAtMs: 1,
+        updatedAtMs: 2,
+        errorCode: null,
+      },
+      {
+        taskId: "80000000-0000-4000-8000-000000000008",
+        sessionId: CONVERSATION_SESSION_ID,
+        turnId: TURN_ID,
+        status: "failed",
+        displayLabel: "保存章节或维护资料",
+        taskRevision: 2,
+        toolName: "novelist.propose_change",
+        toolVersion: 2,
+        startedAtMs: 3,
+        updatedAtMs: 4,
+        errorCode: "canon.change_method_not_read",
+      },
+    ];
+    vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue({
+      ...runtimeView({
+        ...runningSession,
+        turns: [{ ...runningSession.turns[0], status: "not_generated" }],
+      }),
+      taskActivities: tasks,
+    });
+    const start = vi.spyOn(conversationApi, "requestConversationTurnStart");
+    const props = {
+      projectSessionId: PROJECT_SESSION_ID,
+      providerState: configuredProvider,
+      readOnly: true,
+    };
+    const first = render(<ConversationView {...props} />);
+    await screen.findByText("Gainker 工具记录");
+    expect(
+      screen.getAllByText(/读取工程资料|保存章节或维护资料/).map((element) => element.textContent),
+    ).toEqual(["读取工程资料", "保存章节或维护资料"]);
+    await userEvent.click(screen.getByText("保存章节或维护资料"));
+    expect(screen.getByText("canon.change_method_not_read")).toBeVisible();
+    expect(screen.getByText("novelist.propose_change")).toBeVisible();
+    expect(screen.getByText(/缺少本轮有效的方法读取回执/)).toBeVisible();
+    first.unmount();
+    render(<ConversationView {...props} />);
+    await screen.findByText("Gainker 工具记录");
+    expect(screen.getByText("执行完成")).toBeInTheDocument();
+    expect(screen.getByText("执行失败")).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true, undefined])(
+    "only asserts no tools when Host has a definite false dispatch fact (%s)",
+    async (toolDispatched) => {
+      vi.spyOn(conversationApi, "requestConversationSession").mockResolvedValue(
+        runtimeView({
+          ...runningSession,
+          turns: [
+            {
+              ...runningSession.turns[0],
+              status: "completed",
+              retryState:
+                toolDispatched === undefined
+                  ? undefined
+                  : {
+                      attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      attemptNumber: 1,
+                      agentRequests: 1,
+                      compactorRequests: 0,
+                      requestedOutputTokens: 4096,
+                      toolDispatched,
+                      outcome: "blocked",
+                    },
+              messages: [
+                ...runningSession.turns[0].messages,
+                {
+                  messageId: ASSISTANT_MESSAGE_ID,
+                  role: "assistant",
+                  content: "已提交，等待 Host 回执。",
+                  createdAtMs: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      const start = vi.spyOn(conversationApi, "requestConversationTurnStart");
+      render(
+        <ConversationView
+          projectSessionId={PROJECT_SESSION_ID}
+          providerState={configuredProvider}
+        />,
+      );
+      await screen.findByText("已提交，等待 Host 回执。");
+      expect(Boolean(screen.queryByText(/Gainker 核对：本轮未执行工具/))).toBe(
+        toolDispatched === false,
+      );
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
 
   it("NR-505 keeps partial reply and independently committed EPUB fact while publication queries never start a turn", async () => {
     const text = "已经说明的非空正文。\n\n本次内容未生成完成。";
@@ -210,13 +319,18 @@ describe("NR-005 ConversationView", () => {
           sessionId: CONVERSATION_SESSION_ID,
           turnId: TURN_ID,
           status: "running",
-          displayLabel: "不会直接显示的技术标签",
+          toolName: "novelist.read_context",
+          toolVersion: 2,
+          startedAtMs: 1,
+          updatedAtMs: 2,
+          errorCode: null,
+          displayLabel: "读取工程资料",
           taskRevision: 2,
         },
       });
     });
-    expect(screen.getByText("正在处理……")).toBeInTheDocument();
-    expect(screen.queryByText("不会直接显示的技术标签")).not.toBeInTheDocument();
+    expect(screen.getByText("正在执行")).toBeInTheDocument();
+    expect(screen.getByText("读取工程资料")).toBeInTheDocument();
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
@@ -233,12 +347,17 @@ describe("NR-005 ConversationView", () => {
           sessionId: CONVERSATION_SESSION_ID,
           turnId: TURN_ID,
           status: "succeeded",
-          displayLabel: "不会直接显示的技术标签",
+          toolName: "novelist.read_context",
+          toolVersion: 2,
+          startedAtMs: 1,
+          updatedAtMs: 2,
+          errorCode: null,
+          displayLabel: "读取工程资料",
           taskRevision: 3,
         },
       });
     });
-    expect(screen.getByText("已完成相关操作。")).toBeInTheDocument();
+    expect(screen.getByText("执行完成")).toBeInTheDocument();
     act(() => {
       emit?.({
         sessionId: PROJECT_SESSION_ID,
@@ -255,6 +374,112 @@ describe("NR-005 ConversationView", () => {
     });
     await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
     expect(await screen.findByText("已完成")).toBeInTheDocument();
+  });
+
+  it("preserves reading position during streaming and completion, and follows again at the bottom", async () => {
+    const streamingSession: conversationApi.ConversationSession = {
+      ...runningSession,
+      turns: [
+        {
+          ...runningSession.turns[0],
+          retryState: {
+            attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            attemptNumber: 1,
+            agentRequests: 1,
+            compactorRequests: 0,
+            requestedOutputTokens: 4096,
+            toolDispatched: false,
+            outcome: "running",
+          },
+        },
+      ],
+    };
+    const load = vi
+      .spyOn(conversationApi, "requestConversationSession")
+      .mockResolvedValue(runtimeView(streamingSession));
+    const { container } = render(
+      <ConversationView projectSessionId={PROJECT_SESSION_ID} providerState={configuredProvider} />,
+    );
+    await screen.findByText("今天天气怎么样？");
+    const canvas = container.querySelector<HTMLDivElement>(".message-canvas")!;
+    let height = 1000;
+    let top = 600;
+    // jsdom has no layout; emulate the browser's bounded scroll position.
+    Object.defineProperties(canvas, {
+      clientHeight: { get: () => 400 },
+      scrollHeight: { get: () => height },
+      scrollTop: {
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height - 400));
+        },
+      },
+    });
+    const delta = (sequence: number, text: string) =>
+      act(() => {
+        height += 200;
+        emit?.({
+          sessionId: PROJECT_SESSION_ID,
+          conversationSessionId: CONVERSATION_SESSION_ID,
+          attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          attemptNumber: 1,
+          turnId: TURN_ID,
+          providerId: "openai",
+          model: "gpt-5.6-terra",
+          sequence,
+          kind: "textDelta",
+          delta: text,
+        });
+      });
+    delta(1, "第一段。");
+    expect(canvas.scrollTop).toBe(800);
+    canvas.scrollTop = 300;
+    fireEvent.scroll(canvas);
+    delta(2, "第二段。");
+    expect(canvas.scrollTop).toBe(300);
+    canvas.scrollTop = height - 400;
+    fireEvent.scroll(canvas);
+    delta(3, "第三段。");
+    expect(canvas.scrollTop).toBe(1200);
+    canvas.scrollTop = 300;
+    fireEvent.scroll(canvas);
+    load.mockResolvedValue(
+      runtimeView({
+        ...runningSession,
+        turns: [
+          {
+            ...runningSession.turns[0],
+            status: "completed",
+            updatedAtMs: 2,
+            messages: [
+              ...runningSession.turns[0].messages,
+              {
+                messageId: ASSISTANT_MESSAGE_ID,
+                role: "assistant",
+                content: "第一段。第二段。第三段。",
+                createdAtMs: 2,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    act(() =>
+      emit?.({
+        sessionId: PROJECT_SESSION_ID,
+        conversationSessionId: CONVERSATION_SESSION_ID,
+        attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        attemptNumber: 1,
+        turnId: TURN_ID,
+        providerId: "openai",
+        model: "gpt-5.6-terra",
+        sequence: 4,
+        kind: "completed",
+        finishReason: "stop",
+      }),
+    );
+    await screen.findByText("已完成");
+    expect(canvas.scrollTop).toBe(300);
   });
 
   it.each([
@@ -284,7 +509,12 @@ describe("NR-005 ConversationView", () => {
           sessionId: CONVERSATION_SESSION_ID,
           turnId: TURN_ID,
           status: "failed",
-          displayLabel: "内部工具标签",
+          toolName: "novelist.read_context",
+          toolVersion: 2,
+          startedAtMs: 1,
+          updatedAtMs: 2,
+          errorCode: "agent.tool_arguments_invalid",
+          displayLabel: "读取小说上下文",
           taskRevision: 3,
         },
       ];
@@ -302,7 +532,8 @@ describe("NR-005 ConversationView", () => {
       expect(input).toHaveValue("继续讨论");
       expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
       expect(start).not.toHaveBeenCalled();
-      expect(screen.queryByText("内部工具标签")).not.toBeInTheDocument();
+      expect(screen.getByText("读取小说上下文")).toBeInTheDocument();
+      expect(screen.getByText("执行失败")).toBeInTheDocument();
     },
   );
 

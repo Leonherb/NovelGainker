@@ -134,6 +134,11 @@ pub struct TaskActivity {
     pub status: TaskStatus,
     pub display_label: String,
     pub task_revision: u64,
+    pub tool_name: String,
+    pub tool_version: u32,
+    pub started_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -300,6 +305,11 @@ impl From<&TaskRecord> for TaskActivity {
             status: task.status,
             display_label: task.display_label.clone(),
             task_revision: task.task_revision,
+            tool_name: task.tool_name.clone(),
+            tool_version: task.tool_version,
+            started_at_ms: task.started_at_ms,
+            updated_at_ms: task.updated_at_ms,
+            error_code: task.error_code.clone(),
         }
     }
 }
@@ -410,6 +420,46 @@ pub fn find_turn_tasks(handle: &ProjectHandle, turn_id: &str) -> Result<Vec<Task
         .into_iter()
         .filter(|task| task.turn_id == turn_id)
         .collect())
+}
+
+/// Bounded Host facts for the next turn; assistant prose is never execution evidence.
+pub(crate) fn recent_tool_facts(
+    handle: &ProjectHandle,
+    conversation: &ConversationSession,
+) -> Result<serde_json::Value, AppError> {
+    let coordination = store_coordination(handle)?;
+    let _guard = coordination
+        .lock()
+        .map_err(|_| task_error("task.store_unavailable"))?;
+    let stored = read_or_new(handle)?;
+    let turns =
+        conversation
+            .turns
+            .iter()
+            .rev()
+            .filter(|turn| turn.status != crate::conversation::ConversationTurnStatus::Running)
+            .take(8)
+            .map(|turn| {
+                let matching: Vec<_> = stored
+                    .tasks
+                    .iter()
+                    .filter(|task| {
+                        task.conversation_session_id == conversation.session_id
+                            && task.turn_id == turn.turn_id
+                    })
+                    .collect();
+                let calls: Vec<_> = matching.iter().take(7).map(|task| serde_json::json!({
+                "tool": task.tool_name, "status": task.status, "errorCode": task.error_code
+            })).collect();
+                serde_json::json!({
+                    "turnId": turn.turn_id,
+                    "toolDispatched": turn.retry_state.as_ref().map(|state| state.tool_dispatched),
+                    "recordedCalls": calls,
+                    "truncated": matching.len() > 7
+                })
+            })
+            .collect::<Vec<_>>();
+    Ok(serde_json::json!({"status":"available","turns":turns}))
 }
 
 fn valid_transition(current: TaskStatus, next: TaskStatus) -> bool {
@@ -722,6 +772,85 @@ mod tests {
     }
 
     #[test]
+    fn recent_facts_are_bounded_and_do_not_trust_assistant_prose_or_other_sessions() {
+        use crate::conversation::{
+            finish_conversation_turn, initialize_attempt, read_conversation,
+            start_conversation_turn, ConversationTerminalKind,
+        };
+        let fixture = Fixture::new();
+        for timestamp in 1..=10 {
+            let started = start_conversation_turn(
+                &fixture.handle,
+                crate::credential_vault::ProviderId::Deepseek,
+                "synthetic",
+                "保存测试资料",
+                timestamp,
+            )
+            .unwrap();
+            if timestamp != 9 {
+                initialize_attempt(&fixture.handle, &started.turn_id).unwrap();
+            }
+            finish_conversation_turn(
+                &fixture.handle,
+                &started.turn_id,
+                "已提交，等待 Host 回执。",
+                ConversationTerminalKind::Completed,
+                None,
+                timestamp,
+            )
+            .unwrap();
+        }
+        let conversation = read_conversation(&fixture.handle).unwrap();
+        let turn_id = &conversation.turns.last().unwrap().turn_id;
+        let foreign_session = Uuid::new_v4().to_string();
+        for index in 0..9 {
+            create_queued_task(
+                &fixture.handle,
+                if index == 0 {
+                    &foreign_session
+                } else {
+                    &conversation.session_id
+                },
+                turn_id,
+                &ProviderToolCall {
+                    call_id: format!("call_{index}"),
+                    name: "test.echo".into(),
+                    arguments_json: r#"{"text":"private-argument-canary"}"#.into(),
+                },
+                &definition(),
+                11,
+            )
+            .unwrap();
+        }
+        let before = fs::read(store_path(&fixture.handle).unwrap()).unwrap();
+        let facts = recent_tool_facts(&fixture.handle, &conversation).unwrap();
+        let turns = facts["turns"].as_array().unwrap();
+        assert_eq!(turns.len(), 8);
+        assert_eq!(turns[0]["turnId"], *turn_id);
+        assert_eq!(turns[0]["recordedCalls"].as_array().unwrap().len(), 7);
+        assert_eq!(turns[0]["truncated"], true);
+        assert!(turns[1]["toolDispatched"].is_null());
+        assert_eq!(turns[2]["toolDispatched"], false);
+        assert_eq!(turns[2]["recordedCalls"], serde_json::json!([]));
+        assert!(!facts.to_string().contains("private-argument-canary"));
+        assert_eq!(
+            before,
+            fs::read(store_path(&fixture.handle).unwrap()).unwrap()
+        );
+        let foreign = ConversationSession {
+            session_id: foreign_session,
+            ..conversation
+        };
+        assert_eq!(
+            recent_tool_facts(&fixture.handle, &foreign).unwrap()["turns"][0]["recordedCalls"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn interrupted_tasks_cancel_once_and_terminal_never_regresses() {
         let fixture = Fixture::new();
         let conversation = crate::conversation::load_conversation(&fixture.handle, 1).unwrap();
@@ -745,6 +874,17 @@ mod tests {
         let view = runtime_view(&fixture.handle, conversation, 3, true).unwrap();
         assert_eq!(view.task_activities[0].status, TaskStatus::Cancelled);
         assert_eq!(view.task_activities[0].task_revision, 2);
+        let activity = &view.task_activities[0];
+        assert_eq!(activity.tool_name, "test.echo");
+        assert_eq!(activity.tool_version, 1);
+        assert_eq!(activity.started_at_ms, 2);
+        assert_eq!(activity.updated_at_ms, 3);
+        assert_eq!(activity.error_code.as_deref(), Some("runtime.interrupted"));
+        let projection = serde_json::to_value(activity).unwrap();
+        assert_eq!(projection.as_object().unwrap().len(), 11);
+        assert!(projection.get("arguments_json").is_none());
+        assert!(projection.get("argumentsSha256").is_none());
+        assert!(projection.get("projectId").is_none());
         assert!(transition_task(
             &fixture.handle,
             &queued.task_id,
@@ -757,6 +897,7 @@ mod tests {
         .is_err());
         let second = runtime_view(&fixture.handle, view.conversation, 5, true).unwrap();
         assert_eq!(second.task_activities[0].task_revision, 2);
+        assert_eq!(second.task_activities[0], *activity);
     }
 
     #[test]
@@ -837,6 +978,7 @@ mod tests {
                 )
                 .unwrap();
                 let result = ToolResult {
+                    argument_issues: Vec::new(),
                     call_id: call.call_id,
                     name: "test.echo".into(),
                     version: 1,
@@ -887,6 +1029,7 @@ mod tests {
         assert_eq!(queued.arguments_sha256, sha256(raw.as_bytes()));
 
         let result = ToolResult {
+            argument_issues: Vec::new(),
             call_id: call.call_id,
             name: call.name,
             version: 1,
@@ -946,6 +1089,7 @@ mod tests {
         .unwrap();
         let before = fs::read(store_path(&fixture.handle).unwrap()).unwrap();
         let success = ToolResult {
+            argument_issues: Vec::new(),
             call_id: call.call_id.clone(),
             name: call.name.clone(),
             version: 1,
@@ -994,6 +1138,7 @@ mod tests {
         .is_err());
 
         let failed = ToolResult {
+            argument_issues: Vec::new(),
             call_id: call.call_id.clone(),
             name: call.name.clone(),
             version: 1,

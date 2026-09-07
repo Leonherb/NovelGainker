@@ -559,7 +559,37 @@ describe("NG-105 project workspace", () => {
     expect(screen.queryByText("磁盘文件已在外部变化")).not.toBeInTheDocument();
   });
 
-  it("opens a second instance as read-only without transferring the writer lock", async () => {
+  it.each(["project.window_activated", "project.already_open"])(
+    "handles an already-open project without creating a read-only session (%s)",
+    async (code) => {
+      const harness = createWindowCloseHarness();
+      vi.spyOn(projectApi, "requestProjectOpenRecent").mockRejectedValue({
+        code,
+        messageKey:
+          code === "project.window_activated"
+            ? "errors.projectWindowActivated"
+            : "errors.projectAlreadyOpen",
+      });
+      const load = vi.spyOn(workspaceApi, "requestProjectFileIndex");
+      render(
+        <ProjectWorkspace
+          desktopRuntime
+          windowClosePort={harness.port}
+          recentProjects={[{ projectId: session.projectId, displayName: "重复打开测试" }]}
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /重复打开测试/u }));
+      await screen.findByText(
+        code === "project.window_activated"
+          ? "已切换到此工程的已有窗口，可在那里继续编辑和对话。"
+          : "此工程已经打开",
+      );
+      expect(screen.queryByText("第二实例 · 只读会话")).not.toBeInTheDocument();
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps legacy read-only projections non-editable without transferring the writer lock", async () => {
     const user = userEvent.setup();
     const harness = createWindowCloseHarness();
     vi.mocked(projectApi.requestProjectCreate).mockResolvedValue({

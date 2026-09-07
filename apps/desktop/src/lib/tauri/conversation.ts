@@ -94,6 +94,11 @@ export type TaskActivity = {
   status: TaskStatus;
   displayLabel: string;
   taskRevision: number;
+  toolName: string;
+  toolVersion: number;
+  startedAtMs: number;
+  updatedAtMs: number;
+  errorCode: string | null;
 };
 
 export function mergeTaskActivity(current: TaskActivity[], incoming: TaskActivity): TaskActivity[] {
@@ -202,6 +207,11 @@ const TURN_REQUIRED_KEYS = [
 const SESSION_KEYS = ["projectId", "schemaVersion", "sessionId", "turns"] as const;
 const RUNTIME_VIEW_KEYS = ["conversation", "schemaVersion", "taskActivities"] as const;
 const TASK_ACTIVITY_KEYS = [
+  "toolName",
+  "toolVersion",
+  "startedAtMs",
+  "updatedAtMs",
+  "errorCode",
   "displayLabel",
   "sessionId",
   "status",
@@ -355,7 +365,19 @@ export function parseTaskActivity(value: unknown): TaskActivity {
     value.displayLabel.trim().length === 0 ||
     value.displayLabel.length > 160 ||
     /[\0\r\n]/u.test(value.displayLabel) ||
-    !isSafeSequence(value.taskRevision)
+    !isSafeSequence(value.taskRevision) ||
+    typeof value.toolName !== "string" ||
+    !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u.test(value.toolName) ||
+    value.toolName.length > 96 ||
+    !isSafeSequence(value.toolVersion) ||
+    value.toolVersion === 0 ||
+    !isSafeSequence(value.startedAtMs) ||
+    !isSafeSequence(value.updatedAtMs) ||
+    value.updatedAtMs < value.startedAtMs ||
+    (value.errorCode !== null &&
+      (typeof value.errorCode !== "string" || !SAFE_ERROR_CODE.test(value.errorCode))) ||
+    (["queued", "running", "succeeded"].includes(value.status) && value.errorCode !== null) ||
+    (["failed", "cancelled"].includes(value.status) && value.errorCode === null)
   ) {
     throw new Error("Invalid Task activity contract");
   }

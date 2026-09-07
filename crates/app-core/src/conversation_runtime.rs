@@ -253,26 +253,34 @@ where
 
     let session = read_conversation(handle)?;
     let refreshed_memory = load_valid_memory(handle, &session, profile).or(active_memory);
-    let request = if registry
-        .definitions()
-        .iter()
-        .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME)
-    {
-        crate::memory::assemble_change_main_request(
-            &session,
-            refreshed_memory.as_ref(),
-            profile,
-            system_addendum,
-        )?
-    } else {
-        assemble_main_request_with_addendum(
-            &session,
-            refreshed_memory.as_ref(),
-            profile,
-            system_addendum,
-            request_reserve_bytes,
-        )?
-    };
+    let request =
+        if registry.protocol_profile() == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+            crate::memory::assemble_nr5_main_request(
+                &session,
+                refreshed_memory.as_ref(),
+                profile,
+                system_addendum,
+            )?
+        } else if registry
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == crate::canon_change::PROPOSE_CHANGE_TOOL_NAME)
+        {
+            crate::memory::assemble_change_main_request(
+                &session,
+                refreshed_memory.as_ref(),
+                profile,
+                system_addendum,
+            )?
+        } else {
+            assemble_main_request_with_addendum(
+                &session,
+                refreshed_memory.as_ref(),
+                profile,
+                system_addendum,
+                request_reserve_bytes,
+            )?
+        };
     execute_agent_turn(
         client,
         handle,
@@ -494,6 +502,7 @@ where
         timestamp_ms,
     )?;
     on_event(AgentRuntimeEvent::Task(TaskActivity::from(&queued)));
+    let mut argument_issues = Vec::new();
     let arguments = preflight_error.map_or(Ok(()), Err).and_then(|_| {
         registry
             .parse_arguments(call)
@@ -503,16 +512,18 @@ where
                     .map_err(|error| error.code())
             })
             .and_then(|arguments| {
-                definition
-                    .validate_arguments(&arguments)
-                    .map(|_| arguments)
-                    .map_err(|error| error.code())
+                if definition.validate_arguments(&arguments).is_err() {
+                    argument_issues = definition.argument_issues(&arguments);
+                    return Err("agent.tool_arguments_invalid");
+                }
+                Ok(arguments)
             })
             .and_then(|arguments| executor.validate_arguments(&arguments).map(|_| arguments))
     });
     let result = match arguments {
         Err(error_code) => {
             let result = ToolResult {
+                argument_issues,
                 call_id: call.call_id.clone(),
                 name: definition.name.clone(),
                 version: definition.version,
@@ -552,6 +563,7 @@ where
             };
             let output = execute_bounded_tool(executor, &context, &arguments, cancellation);
             let mut result = ToolResult {
+                argument_issues: Vec::new(),
                 call_id: call.call_id.clone(),
                 name: definition.name.clone(),
                 version: definition.version,
@@ -561,6 +573,7 @@ where
             };
             if result.validate().is_err() {
                 result = ToolResult {
+                    argument_issues: Vec::new(),
                     call_id: result.call_id,
                     name: result.name,
                     version: result.version,
@@ -782,6 +795,7 @@ mod tests {
     include!("conversation_nr502_tests.rs");
     include!("conversation_nr503_tests.rs");
     include!("conversation_nr504_tests.rs");
+    include!("conversation_tool_feedback_tests.rs");
     include!("conversation_nr505_tests.rs");
     use super::{
         bind_novelist_runtime, execute_agent_turn, execute_with_profile,

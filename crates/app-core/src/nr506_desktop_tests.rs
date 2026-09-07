@@ -309,10 +309,78 @@ mod tests {
     }
 
     #[test]
+    fn repeated_project_open_does_not_create_a_read_only_session() {
+        let f = Fixture::new(ProviderId::Deepseek);
+        let candidate = f.register_candidate(ProjectScanMode::Open);
+        let before = f
+            .app
+            .state::<ProjectRegistry>()
+            .inner
+            .lock()
+            .unwrap()
+            .sessions
+            .len();
+        let result = tauri::test::get_ipc_response(
+            &f.window,
+            tauri::webview::InvokeRequest {
+                cmd: "project_open".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(
+                    json!({"candidateId":candidate,"confirmMetadata":false}),
+                ),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(result["code"], "project.already_open");
+        assert_eq!(
+            f.app
+                .state::<ProjectRegistry>()
+                .inner
+                .lock()
+                .unwrap()
+                .sessions
+                .len(),
+            before
+        );
+        f.ipc("project_close", json!({"sessionId":f.session}));
+        let opened = f.ipc(
+            "project_open",
+            json!({"candidateId":candidate,"confirmMetadata":false}),
+        );
+        assert_eq!(opened["accessMode"], "writer");
+        assert_eq!(opened["capabilities"]["canWrite"], true);
+    }
+
+    #[test]
     fn nr506_desktop_ipc_creates_project_and_runs_actual_worker_without_real_vault() {
         for provider in ProviderId::ALL {
             let f = Fixture::new(provider);
             let before = f.snapshot();
+            // The UI queries these before the first Provider turn. A blank
+            // project must already have a usable Canon coordinator and page.
+            let initial = f.ipc("conversation_session_load", json!({"sessionId":f.session}));
+            assert!(initial["conversation"]["turns"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            assert!(f.changes().is_empty());
+            assert!(f.ipc(
+                "publication_list",
+                json!({"sessionId":f.session,"cursor":null})
+            )["items"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            let registry = f.app.state::<ProjectRegistry>();
+            let coordinator = changes_for_session(&registry, &f.session).unwrap();
+            assert_eq!(
+                coordinator.protocol_profile(),
+                app_core::protocol_profile::ToolProtocolProfile::Nr5
+            );
             let terminal = f.turn("只讨论十二章小说，不要保存任何资料。", wire::Plan::Chat);
             assert_eq!(terminal["conversation"]["turns"][0]["status"], "completed");
             assert_eq!(f.snapshot(), before);

@@ -30,6 +30,8 @@ const TEST_REQUEST_TIMEOUT_MILLIS: u64 = 250;
 pub const CONVERSATION_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。仅当当前请求提供工具且确有必要时才可调用；没有工具时继续正常回复。不得声称已经修改或保存文件。";
 pub const CANON_CHANGE_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作。仅当当前请求提供工具且确有必要时才调用；没有工具或工具失败时继续正常回复，不丢弃已生成正文。只有 Host 变更回执的 committed 状态证明本次已保存；pending_confirmation、rejected、cancelled、recovery_required 和工具成功本身都不证明已保存。不在对话正文输出协议 JSON 或内部工具过程说明。";
 
+pub(crate) const TOOL_EXECUTION_INSTRUCTION: &str = "工具执行约定：用户要求核对工程文件、落实已确认资料或保存文档时，应在本轮直接发起原生 function/tool call，先读取所需方法与工程事实，再提交满足约束的变更，收到工具结果后才给最终答复。普通聊天、构思及未获授权的写入不调用写工具。写‘我正在读取/已提交/等待回执’不会触发任何操作；不要用自然语言、Markdown 或代码块模拟工具调用。工具在同一轮同步返回结果，不要结束回复后等待不存在的后台回执。若工具失败且仍有调用机会，按错误说明修正后继续；若确实不能继续，准确说明缺少的条件及未完成项。只有工具结果证明发生了操作，历史助手自述不是执行证据。";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderProtocol {
@@ -2011,6 +2013,14 @@ impl ProviderHttpClient {
         let adapter = adapter_for_request(provider, request);
         let body = serde_json::to_vec(&adapter.streaming_body(request))
             .map_err(|_| ProviderError::protocol())?;
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "gainker provider request: provider={provider:?} profile={:?} tools={:?} messages={} bytes={}",
+            request.protocol_profile,
+            request.tool_definitions.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
+            request.messages.len(),
+            body.len()
+        );
         let response = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::cancelled()),
             response = self.send_async(provider, key, &body, "text/event-stream", request.body_limit()) => response?,
@@ -2018,7 +2028,18 @@ impl ProviderHttpClient {
         if !response.status().is_success() {
             return Err(map_http_status(response.status()));
         }
-        consume_stream_cancellable(response, provider, adapter, cancellation, sink).await
+        let result =
+            consume_stream_cancellable(response, provider, adapter, cancellation, sink).await;
+        #[cfg(debug_assertions)]
+        if let Ok(response) = &result {
+            eprintln!(
+                "gainker provider response: finish={:?} tool={} text_bytes={}",
+                response.finish_reason,
+                response.tool_call.is_some(),
+                response.text.len()
+            );
+        }
+        result
     }
 
     pub fn stream_once_cancellable_blocking<F>(
@@ -2662,6 +2683,7 @@ mod tests {
                 .unwrap();
             assert_eq!(parsed.tool_call.as_ref().unwrap().arguments_json, raw);
             let result = ToolResult {
+                argument_issues: Vec::new(),
                 call_id: "chapter_call".to_owned(),
                 name: crate::canon_change::PROPOSE_CHANGE_TOOL_NAME.to_owned(),
                 version: 2,
@@ -2920,6 +2942,7 @@ mod tests {
         );
 
         let result = ToolResult {
+            argument_issues: Vec::new(),
             call_id: "call_1".to_owned(),
             name: "novelist.read_context".to_owned(),
             version: 1,
@@ -3109,6 +3132,7 @@ mod tests {
             },
         };
         let result = ToolResult {
+            argument_issues: Vec::new(),
             call_id: call.call_id,
             name: call.name,
             version: 1,
@@ -3363,6 +3387,7 @@ mod tests {
             arguments_json: r#"{"capabilityId":"novel-story-telling","capabilityResources":[],"canonOperations":[]}"#.to_owned(),
         };
         let result = ToolResult {
+            argument_issues: Vec::new(),
             call_id: call.call_id.clone(),
             name: call.name.clone(),
             version: 1,
@@ -3607,6 +3632,7 @@ mod tests {
     fn continuation_bounds_and_provider_identity_reject_before_outbound() {
         let initial = NormalizedRequest::user_text("执行测试操作".to_owned(), 512).unwrap();
         let result = ToolResult {
+            argument_issues: Vec::new(),
             call_id: "call_1".to_owned(),
             name: "test.echo".to_owned(),
             version: 1,

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -23,6 +24,7 @@ import {
 } from "../lib/tauri/conversation";
 import { normalizeAppError, type AppError } from "../lib/tauri/health";
 import { PROVIDER_PRESENTATION } from "./provider-settings-model";
+import { ToolActivityList } from "./ToolActivityList";
 import { CanonChangeView } from "./CanonChangeView";
 import {
   requestCanonChangesPage,
@@ -60,6 +62,7 @@ type ActiveTurn = {
 type ListenerState = "idle" | "pending" | "ready" | "failed";
 
 const SESSION_RECONCILIATION_INTERVAL_MS = 1_000;
+const BOTTOM_FOLLOW_THRESHOLD_PX = 24;
 
 const STATUS_LABELS: Record<ConversationTurnStatus, string> = {
   running: "正在回复",
@@ -67,14 +70,6 @@ const STATUS_LABELS: Record<ConversationTurnStatus, string> = {
   cancelled: "已停止 · 未完成",
   failed: "未完成",
   not_generated: "未生成",
-};
-
-const TASK_STATUS_LABELS: Record<TaskActivity["status"], string> = {
-  queued: "正在处理……",
-  running: "正在处理……",
-  succeeded: "已完成相关操作。",
-  failed: "相关操作未完成。",
-  cancelled: "相关操作未完成。",
 };
 
 export function ConversationView({
@@ -206,6 +201,7 @@ export function ConversationView({
   const [synchronizationFailure, setSynchronizationFailure] = useState<AppError | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const messageCanvasRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
   const trackedTurnIdRef = useRef<string | null>(null);
   const eventCursorRef = useRef(new ConversationEventCursor());
   const retryBusyRef = useRef(false);
@@ -434,10 +430,14 @@ export function ConversationView({
     };
   }, [listenerState, projectSessionId, reconcileTurn, synchronizationFailure, trackedTurnId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    followLatestRef.current = true;
+  }, [projectSessionId, conversationSessionId]);
+
+  useLayoutEffect(() => {
     const canvas = messageCanvasRef.current;
-    if (canvas) canvas.scrollTop = canvas.scrollHeight;
-  }, [activeTurn?.text, session]);
+    if (canvas && followLatestRef.current) canvas.scrollTop = canvas.scrollHeight;
+  }, [activeTurn?.text, session, taskActivities, projectSessionId, conversationSessionId]);
 
   const send = async () => {
     if (
@@ -618,14 +618,18 @@ export function ConversationView({
                   ? "AI 正在回复。"
                   : "Enter 发送，Shift + Enter 换行";
 
-  const taskForTurn = (turnId: string) =>
-    taskActivities
-      .filter((activity) => activity.turnId === turnId)
-      .sort((left, right) => right.taskRevision - left.taskRevision)[0];
-
   return (
     <section className="conversation-runtime" aria-label="小说创作对话消息">
-      <div className="message-canvas" ref={messageCanvasRef}>
+      <div
+        className="message-canvas"
+        ref={messageCanvasRef}
+        onScroll={(event) => {
+          const canvas = event.currentTarget;
+          followLatestRef.current =
+            canvas.scrollHeight - canvas.clientHeight - canvas.scrollTop <=
+            BOTTOM_FOLLOW_THRESHOLD_PX;
+        }}
+      >
         <div className="conversation-message-list" aria-live="polite">
           {!projectSessionId ? (
             <div className="conversation-empty-state">
@@ -638,125 +642,136 @@ export function ConversationView({
             </div>
           ) : null}
 
-          {session?.turns.flatMap((turn) =>
-            turn.messages.map((message, index) => (
-              <article
-                className="conversation-message"
-                data-role={message.role}
-                key={message.messageId}
-              >
-                <header>
-                  <strong>
-                    {message.role === "user" ? "你" : PROVIDER_PRESENTATION[turn.providerId].name}
-                  </strong>
-                  <span>{message.role === "user" ? "已保存" : turn.model}</span>
-                </header>
-                <p>{message.content}</p>
-                {onBranch && turn.status !== "running" && index === turn.messages.length - 1 ? (
-                  <button
-                    type="button"
-                    disabled={runActive || otherTurnActive}
-                    className="conversation-branch"
-                    onClick={() => onBranch(turn.turnId)}
-                  >
-                    从此轮分支
-                  </button>
-                ) : null}
-                {message.role === "assistant" && index === turn.messages.length - 1 ? (
-                  <>
-                    {projectSessionId
-                      ? chapterCandidates
-                          .filter((candidate) => candidate.turnId === turn.turnId)
-                          .map((candidate) => (
-                            <ChapterCandidateView
-                              key={candidate.candidateId}
-                              sessionId={projectSessionId}
-                              candidate={candidate}
-                              conversationSessionId={session.sessionId}
-                              onChanged={() => void loadChanges()}
-                            />
-                          ))
-                      : null}
-                    {projectSessionId
-                      ? changes
-                          .filter(
-                            (entry) =>
-                              entry.turnId === turn.turnId &&
-                              entry.conversationSessionId === session.sessionId,
-                          )
-                          .map((activity) => (
-                            <CanonChangeView
-                              key={activity.receipt.changeId}
-                              sessionId={projectSessionId}
-                              activity={activity}
-                              confirmationDisabled={readOnly}
-                              onChanged={() => void loadChanges()}
-                            />
-                          ))
-                      : null}
-                    {taskForTurn(turn.turnId) ? (
-                      <div className="conversation-task-activity">
-                        {TASK_STATUS_LABELS[taskForTurn(turn.turnId).status]}
-                      </div>
-                    ) : null}
-                    {projectSessionId
-                      ? publications.items
-                          .filter(
-                            (item) =>
-                              item.sessionId === session.sessionId && item.turnId === turn.turnId,
-                          )
-                          .map((receipt) => (
-                            <PublicationView
-                              key={`${receipt.artifactId}:${receipt.status}`}
-                              projectSessionId={projectSessionId}
-                              receipt={receipt}
-                            />
-                          ))
-                      : null}
-                    <footer>{STATUS_LABELS[turn.status]}</footer>
-                    {turn.turnId === lastStoredTurn?.turnId &&
-                    ["failed", "not_generated", "cancelled"].includes(turn.status) ? (
-                      <div className="conversation-task-activity">
-                        {turn.retryState?.outcome === "eligible" ? (
-                          <>
+          {session?.turns.map((turn) => (
+            <div className="conversation-turn" key={turn.turnId}>
+              {turn.messages.map((message, index) => (
+                <article
+                  className="conversation-message"
+                  data-role={message.role}
+                  key={message.messageId}
+                >
+                  <header>
+                    <strong>
+                      {message.role === "user" ? "你" : PROVIDER_PRESENTATION[turn.providerId].name}
+                    </strong>
+                    <span>{message.role === "user" ? "已保存" : turn.model}</span>
+                  </header>
+                  <p>{message.content}</p>
+                  {onBranch && turn.status !== "running" && index === turn.messages.length - 1 ? (
+                    <button
+                      type="button"
+                      disabled={runActive || otherTurnActive}
+                      className="conversation-branch"
+                      onClick={() => onBranch(turn.turnId)}
+                    >
+                      从此轮分支
+                    </button>
+                  ) : null}
+                  {message.role === "assistant" && index === turn.messages.length - 1 ? (
+                    <>
+                      {projectSessionId
+                        ? chapterCandidates
+                            .filter((candidate) => candidate.turnId === turn.turnId)
+                            .map((candidate) => (
+                              <ChapterCandidateView
+                                key={candidate.candidateId}
+                                sessionId={projectSessionId}
+                                candidate={candidate}
+                                conversationSessionId={session.sessionId}
+                                onChanged={() => void loadChanges()}
+                              />
+                            ))
+                        : null}
+                      {projectSessionId
+                        ? changes
+                            .filter(
+                              (entry) =>
+                                entry.turnId === turn.turnId &&
+                                entry.conversationSessionId === session.sessionId,
+                            )
+                            .map((activity) => (
+                              <CanonChangeView
+                                key={activity.receipt.changeId}
+                                sessionId={projectSessionId}
+                                activity={activity}
+                                confirmationDisabled={readOnly}
+                                onChanged={() => void loadChanges()}
+                              />
+                            ))
+                        : null}
+                      {projectSessionId
+                        ? publications.items
+                            .filter(
+                              (item) =>
+                                item.sessionId === session.sessionId && item.turnId === turn.turnId,
+                            )
+                            .map((receipt) => (
+                              <PublicationView
+                                key={`${receipt.artifactId}:${receipt.status}`}
+                                projectSessionId={projectSessionId}
+                                receipt={receipt}
+                              />
+                            ))
+                        : null}
+                      <footer>{STATUS_LABELS[turn.status]}</footer>
+                      {turn.turnId === lastStoredTurn?.turnId &&
+                      ["failed", "not_generated", "cancelled"].includes(turn.status) ? (
+                        <div className="conversation-task-activity">
+                          {turn.retryState?.outcome === "eligible" ? (
+                            <>
+                              <p>
+                                本轮没有生成正文或执行工具。可用原消息重试一次，会重新请求模型并计入原轮次预算；不是断点续传。
+                              </p>
+                              <button
+                                type="button"
+                                disabled={
+                                  readOnly ||
+                                  runActive ||
+                                  otherTurnActive ||
+                                  synchronizationBlocked ||
+                                  !providerState.providers.some(
+                                    (p) => p.providerId === turn.providerId && p.configured,
+                                  )
+                                }
+                                onClick={() => void retryTurn(turn)}
+                              >
+                                用原消息重试一次
+                              </button>
+                            </>
+                          ) : (
                             <p>
-                              本轮没有生成正文或执行工具。可用原消息重试一次，会重新请求模型并计入原轮次预算；不是断点续传。
+                              本轮不能整轮重放。原内容及已保存结果会保留；如需继续，请确认后发送新的一轮。
                             </p>
-                            <button
-                              type="button"
-                              disabled={
-                                readOnly ||
-                                runActive ||
-                                otherTurnActive ||
-                                synchronizationBlocked ||
-                                !providerState.providers.some(
-                                  (p) => p.providerId === turn.providerId && p.configured,
-                                )
-                              }
-                              onClick={() => void retryTurn(turn)}
-                            >
-                              用原消息重试一次
-                            </button>
-                          </>
-                        ) : (
-                          <p>
-                            本轮不能整轮重放。原内容及已保存结果会保留；如需继续，请确认后发送新的一轮。
-                          </p>
-                        )}
-                        <button
-                          type="button"
-                          disabled={readOnly || runActive || otherTurnActive || draft.length > 0}
-                          onClick={() => setDraft(turn.messages[0].content)}
-                        >
-                          准备新一轮（发送前可修改）
-                        </button>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-              </article>
-            )),
-          )}
+                          )}
+                          <button
+                            type="button"
+                            disabled={readOnly || runActive || otherTurnActive || draft.length > 0}
+                            onClick={() => setDraft(turn.messages[0].content)}
+                          >
+                            准备新一轮（发送前可修改）
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </article>
+              ))}
+              <ToolActivityList
+                tasks={taskActivities.filter(
+                  (task) => task.turnId === turn.turnId && task.sessionId === session.sessionId,
+                )}
+              />
+              {turn.status !== "running" &&
+              turn.retryState?.toolDispatched === false &&
+              !taskActivities.some(
+                (task) => task.turnId === turn.turnId && task.sessionId === session.sessionId,
+              ) ? (
+                <p className="conversation-task-activity">
+                  Gainker 核对：本轮未执行工具，回复文字不会保存文件。
+                </p>
+              ) : null}
+            </div>
+          ))}
 
           {activeTurn && !synchronizationFailure ? (
             <article className="conversation-message" data-role="assistant" data-streaming="true">
@@ -784,17 +799,12 @@ export function ConversationView({
                       />
                     ))
                 : null}
-              {taskForTurn(activeTurn.turnId) ? (
-                <div
-                  className="conversation-task-activity"
-                  aria-atomic="true"
-                  aria-live="polite"
-                  role="status"
-                >
-                  {TASK_STATUS_LABELS[taskForTurn(activeTurn.turnId).status]}
-                </div>
-              ) : null}
             </article>
+          ) : null}
+          {activeTurn && !session?.turns.some((turn) => turn.turnId === activeTurn.turnId) ? (
+            <ToolActivityList
+              tasks={taskActivities.filter((task) => task.turnId === activeTurn.turnId)}
+            />
           ) : null}
           {projectSessionId && session
             ? changes

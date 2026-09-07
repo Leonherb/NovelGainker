@@ -2516,6 +2516,102 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.conversation-turn {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.tool-activity-list {
+  width: min(100%, 680px);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.tool-activity-list > header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.tool-activity-list ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool-activity + .tool-activity,
+.tool-activity-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.tool-activity summary {
+  min-height: 44px;
+  padding: 10px 6px;
+  cursor: pointer;
+}
+
+.tool-activity summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.tool-activity-label {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tool-activity-status {
+  display: inline-block;
+  margin-left: 12px;
+}
+
+.tool-activity[data-status="running"] .tool-activity-status {
+  color: var(--accent-bright);
+}
+
+.tool-activity[data-status="failed"] .tool-activity-status,
+.tool-activity-error {
+  color: var(--danger);
+}
+
+.tool-activity-detail {
+  padding: 0 6px 10px;
+  overflow-wrap: anywhere;
+}
+
+.tool-activity-detail dl {
+  margin: 0;
+}
+
+.tool-activity-detail dl > div {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr);
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.tool-activity-detail dd {
+  margin: 0;
+}
+
+.tool-activity-detail p {
+  margin: 8px 0 0;
+}
+
+.tool-activity-error code {
+  display: block;
+  margin-top: 4px;
+}
+
 .conversation-message > footer {
   padding-top: 7px;
   border-top: 1px solid var(--border);

@@ -16,6 +16,8 @@ export const APP_ERROR_CODES = {
   projectSessionNotFound: "project.session_not_found",
   projectLockUnavailable: "project.lock_unavailable",
   projectWriterRequired: "project.writer_required",
+  projectWindowActivated: "project.window_activated",
+  projectAlreadyOpen: "project.already_open",
   projectRecoveryRequired: "project.recovery_required",
   fileInvalidPath: "file.invalid_path",
   fileNotFound: "file.not_found",
@@ -63,6 +65,8 @@ export const APP_ERROR_MESSAGE_KEYS = {
   projectSessionNotFound: "errors.projectSessionNotFound",
   projectLockUnavailable: "errors.projectLockUnavailable",
   projectWriterRequired: "errors.projectWriterRequired",
+  projectWindowActivated: "errors.projectWindowActivated",
+  projectAlreadyOpen: "errors.projectAlreadyOpen",
   projectRecoveryRequired: "errors.projectRecoveryRequired",
   fileInvalidPath: "errors.fileInvalidPath",
   fileNotFound: "errors.fileNotFound",
@@ -159,6 +163,14 @@ const KNOWN_ERRORS: Record<string, { code: string; copy: ErrorCopy }> = {
   [APP_ERROR_MESSAGE_KEYS.projectWriterRequired]: {
     code: APP_ERROR_CODES.projectWriterRequired,
     copy: ZH_CN.errors.projectWriterRequired,
+  },
+  [APP_ERROR_MESSAGE_KEYS.projectWindowActivated]: {
+    code: APP_ERROR_CODES.projectWindowActivated,
+    copy: ZH_CN.errors.projectWindowActivated,
+  },
+  [APP_ERROR_MESSAGE_KEYS.projectAlreadyOpen]: {
+    code: APP_ERROR_CODES.projectAlreadyOpen,
+    copy: ZH_CN.errors.projectAlreadyOpen,
   },
   [APP_ERROR_MESSAGE_KEYS.projectRecoveryRequired]: {
     code: APP_ERROR_CODES.projectRecoveryRequired,

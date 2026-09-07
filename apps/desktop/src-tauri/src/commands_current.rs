@@ -49,6 +49,7 @@ include!("commands_session_management.rs");
 include!("commands_retry.rs");
 
 pub struct ProjectRegistry {
+    pub writer_window: Option<isize>,
     inner: Mutex<ProjectRegistryInner>,
     recovery_store: RecoveryStore,
     app_state: AppStateRepository,
@@ -75,6 +76,7 @@ struct RegisteredProjectCandidate {
 }
 
 struct RegisteredProjectSession {
+    _window_registration: Option<app_core::coordination::ProjectWindowRegistration>,
     handle: ProjectHandle,
     write_lease: Option<Arc<ProjectWriteLease>>,
     recovery: RecoveryReport,
@@ -104,6 +106,7 @@ struct ActiveProviderRun {
 impl ProjectRegistry {
     pub fn new(app_state_root: PathBuf) -> Result<Self, AppError> {
         Ok(Self {
+            writer_window: None,
             inner: Mutex::new(ProjectRegistryInner::default()),
             recovery_store: RecoveryStore::new(app_state_root.clone())?,
             app_state: AppStateRepository::open(&app_state_root),
@@ -715,10 +718,8 @@ pub async fn project_open(
 ) -> Result<ProjectSession, AppError> {
     let inspection = candidate_inspection(&state, &candidate_id)?;
     let write_lease = try_acquire_project_write_lease(&inspection.coordination_key())?;
-    let requires_write =
-        inspection.preview().requires_metadata_confirmation || inspection.requires_clean_slate();
-    if write_lease.is_none() && requires_write {
-        return Err(AppError::project_writer_required());
+    if write_lease.is_none() {
+        return Err(existing_project_window(&inspection.coordination_key()));
     }
     let allow_metadata_write =
         write_lease.is_some() && (confirm_metadata || inspection.requires_clean_slate());
@@ -744,8 +745,8 @@ pub async fn project_open_recent(
         return Err(AppError::project_confirmation_required());
     }
     let write_lease = try_acquire_project_write_lease(&inspection.coordination_key())?;
-    if write_lease.is_none() && inspection.requires_clean_slate() {
-        return Err(AppError::project_writer_required());
+    if write_lease.is_none() {
+        return Err(existing_project_window(&inspection.coordination_key()));
     }
     let handle = open_project(
         &inspection,
@@ -905,6 +906,22 @@ fn changes_for_session(
 ) -> Result<Arc<CanonChangeCoordinator>, AppError> {
     let handle = selected_session_handle(state, session_id, None)?;
     changes_for_handle(state, session_id, handle)
+}
+
+fn existing_project_window(key: &str) -> AppError {
+    if app_core::coordination::activate_project_window(key) {
+        AppError {
+            code: "project.window_activated".into(),
+            message_key: "errors.projectWindowActivated".into(),
+            diagnostic: None,
+        }
+    } else {
+        AppError {
+            code: "project.already_open".into(),
+            message_key: "errors.projectAlreadyOpen".into(),
+            diagnostic: None,
+        }
+    }
 }
 fn changes_for_handle(
     state: &ProjectRegistry,
@@ -1177,12 +1194,19 @@ fn register_session(
         },
     };
     let mut registry = lock_registry(state)?;
+    let window_registration = match (write_lease.as_ref(), state.writer_window) {
+        (Some(lease), Some(hwnd)) => Some(
+            app_core::coordination::ProjectWindowRegistration::attach(lease, hwnd)?,
+        ),
+        _ => None,
+    };
     if let Some(candidate_id) = candidate_id {
         registry.candidates.remove(&candidate_id);
     }
     registry.sessions.insert(
         session_id,
         RegisteredProjectSession {
+            _window_registration: window_registration,
             handle,
             write_lease,
             recovery,

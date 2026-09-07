@@ -9,6 +9,7 @@ import {
   parseConversationSession,
   parseConversationTurnEvent,
   parseConversationTurnStarted,
+  parseTaskActivity,
   requestConversationSession,
   requestConversationTurnCancel,
   requestConversationTurnStart,
@@ -18,6 +19,35 @@ const PROJECT_SESSION_ID = "10000000-0000-4000-8000-000000000001";
 const CONVERSATION_SESSION_ID = "20000000-0000-4000-8000-000000000002";
 const PROJECT_ID = "30000000-0000-4000-8000-000000000003";
 const TURN_ID = "40000000-0000-4000-8000-000000000004";
+
+it("requires bounded Host tool evidence and rejects raw payloads and inconsistent states", () => {
+  const task = {
+    taskId: "70000000-0000-4000-8000-000000000007",
+    sessionId: CONVERSATION_SESSION_ID,
+    turnId: TURN_ID,
+    status: "failed",
+    displayLabel: "维护小说资料",
+    taskRevision: 2,
+    toolName: "novelist.propose_change",
+    toolVersion: 2,
+    startedAtMs: 1,
+    updatedAtMs: 2,
+    errorCode: "agent.tool_arguments_invalid",
+  };
+  expect(parseTaskActivity(task)).toEqual(task);
+  for (const patch of [
+    { arguments: "private manuscript" },
+    { errorCode: null },
+    { updatedAtMs: 0 },
+    { toolName: "C:/private" },
+    { status: "succeeded" },
+    { toolVersion: 0 },
+  ])
+    expect(() => parseTaskActivity({ ...task, ...patch })).toThrow();
+  const missing = { ...task } as Record<string, unknown>;
+  delete missing.toolName;
+  expect(() => parseTaskActivity(missing)).toThrow();
+});
 const MESSAGE_ID = "50000000-0000-4000-8000-000000000005";
 const IDENTITY = {
   sessionId: PROJECT_SESSION_ID,
@@ -116,6 +146,11 @@ describe("Conversation IPC contract", () => {
           sessionId: CONVERSATION_SESSION_ID,
           turnId: TURN_ID,
           status: "running",
+          toolName: "novelist.read_context",
+          toolVersion: 2,
+          startedAtMs: 1,
+          updatedAtMs: 2,
+          errorCode: null,
           displayLabel: "处理相关内容",
           taskRevision: 2,
         },

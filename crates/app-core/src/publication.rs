@@ -45,6 +45,7 @@ pub(crate) fn task_recovery_result(
     }
     let issue = record.receipt.issue;
     Ok(ToolResult {
+        argument_issues: Vec::new(),
         call_id: record.call_id,
         name: "novelist.publish".to_owned(),
         version: 2,

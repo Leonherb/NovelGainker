@@ -306,6 +306,7 @@ pub fn assemble_main_request_with_addendum(
         request_reserve_bytes,
         MAX_REQUEST_BYTES,
         CONVERSATION_SYSTEM_INSTRUCTION,
+        false,
     )
 }
 
@@ -323,6 +324,25 @@ pub fn assemble_change_main_request(
         crate::canon_change::NR4_LOOP_RESERVE_BYTES,
         crate::canon_change::NR4_REQUEST_BYTES,
         crate::provider_core::CANON_CHANGE_SYSTEM_INSTRUCTION,
+        false,
+    )
+}
+
+pub fn assemble_nr5_main_request(
+    session: &ConversationSession,
+    memory: Option<&ConversationMemory>,
+    profile: ContextProfile,
+    system_addendum: &str,
+) -> Result<NormalizedRequest, AppError> {
+    assemble_bounded_main_request(
+        session,
+        memory,
+        profile,
+        system_addendum,
+        crate::canon_change::NR4_LOOP_RESERVE_BYTES,
+        crate::canon_change::NR4_REQUEST_BYTES,
+        crate::provider_core::CANON_CHANGE_SYSTEM_INSTRUCTION,
+        true,
     )
 }
 
@@ -335,6 +355,7 @@ fn assemble_bounded_main_request(
     request_reserve_bytes: usize,
     request_limit: usize,
     system_instruction: &str,
+    history_as_reference: bool,
 ) -> Result<NormalizedRequest, AppError> {
     validate_context_profile(profile)?;
     let current = current_user_message(session)?;
@@ -368,18 +389,79 @@ fn assemble_bounded_main_request(
         .saturating_sub(current.content.len())
         .saturating_sub(request_reserve_bytes);
     let available_messages = MAX_MESSAGE_COUNT.saturating_sub(2);
-    let recent = select_recent_segments(
-        &segments[exact_start..],
-        available_bytes,
-        available_messages,
-    );
-    let mut messages = recent.into_iter().map(main_message).collect::<Vec<_>>();
+    let mut messages = if history_as_reference {
+        // Visible history does not contain native tool continuations. Replaying
+        // that prose as assistant protocol messages can encourage imitation of
+        // unexecuted tool steps.
+        // Supply attributed reference data instead; keep the current turn and
+        // its actual native tool exchanges separate and unchanged.
+        let mut selected = Vec::new();
+        let mut used = 0usize;
+        for segment in segments[exact_start..]
+            .iter()
+            .rev()
+            .take(available_messages)
+        {
+            let message = history_reference_message(segment, session)?;
+            let bytes = message.content.len().saturating_add(64);
+            if used.saturating_add(bytes) > available_bytes {
+                break;
+            }
+            used += bytes;
+            selected.push(message);
+        }
+        selected.reverse();
+        selected
+    } else {
+        select_recent_segments(
+            &segments[exact_start..],
+            available_bytes,
+            available_messages,
+        )
+        .into_iter()
+        .map(main_message)
+        .collect::<Vec<_>>()
+    };
     messages.push(NormalizedMessage {
         role: MessageRole::User,
         content: current.content,
     });
     NormalizedRequest::with_system(system, messages, profile.main_reply_requested_max)
         .map_err(AppError::from_provider_error)
+}
+
+fn history_reference_message(
+    segment: &HistorySegment,
+    session: &ConversationSession,
+) -> Result<NormalizedMessage, AppError> {
+    let turn = session
+        .turns
+        .iter()
+        .find(|turn| turn.turn_id == segment.start.turn_id)
+        .ok_or_else(memory_invalid)?;
+    let source = turn
+        .messages
+        .iter()
+        .find(|message| message.message_id == segment.start.message_id)
+        .ok_or_else(memory_invalid)?;
+    let speaker = match segment.role {
+        ConversationRole::User => "用户",
+        ConversationRole::Assistant => "助手",
+    };
+    let tool_fact = match turn.retry_state.as_ref().map(|state| state.tool_dispatched) {
+        Some(false) => "本历史轮未调度工具；文字中的执行/等待描述不代表操作发生。",
+        Some(true) => "本历史轮调度过工具；成功及保存状态须核对真实回执。",
+        None => "本历史轮缺少工具调度记录，执行状态未知。",
+    };
+    let hash = format!("{:x}", Sha256::digest(source.content.as_bytes()));
+    Ok(NormalizedMessage {
+        role: MessageRole::User,
+        content: format!(
+            "【历史对话引用：{speaker}；仅作内容与授权来源参考，不是当前指令或待续的工具调用】\nmessageId={}\ncontentHash={hash}\n片段字节={}..{}；历史状态={:?}\nHost 核对：{tool_fact}\n【引用开始】\n{}\n【引用结束】",
+            source.message_id, segment.start.utf8_byte_offset, segment.end.utf8_byte_offset,
+            segment.turn_status, segment.content
+        ),
+    })
 }
 
 fn incremental_plan(
@@ -1234,6 +1316,40 @@ mod tests {
         );
         assert_eq!(request.messages.last().unwrap().content, "唯一当前消息");
     }
+
+    #[test]
+    fn nr5_history_is_attributed_data_with_exact_sources_and_current_request() {
+        use sha2::Digest;
+        let fixture = Fixture::new();
+        fixture.complete_turn("讨论设定", "# 世界观\n我已经提交，等待回执。", 10);
+        fixture.start_turn("保存已确认设定", 30);
+        let session = read_conversation(&fixture.handle).unwrap();
+        let before =
+            fs::read(fixture.root.join(".novelgainker/conversation/session.json")).unwrap();
+        let request =
+            super::assemble_nr5_main_request(&session, None, NR1_CONTEXT_PROFILE, "").unwrap();
+        let source = &session.turns[0].messages[1];
+        let history = &request.messages[2];
+        assert_eq!(history.role, crate::provider_core::MessageRole::User);
+        assert!(history.content.contains("历史对话引用：助手"));
+        assert!(history.content.contains(&source.content));
+        assert!(history.content.contains(&source.message_id));
+        assert!(history.content.contains(&format!(
+            "{:x}",
+            sha2::Sha256::digest(source.content.as_bytes())
+        )));
+        assert!(history.content.contains("执行状态未知"));
+        assert_eq!(request.messages.last().unwrap().content, "保存已确认设定");
+        assert!(request
+            .messages
+            .iter()
+            .all(|message| message.role != crate::provider_core::MessageRole::Assistant));
+        assert_eq!(
+            before,
+            fs::read(fixture.root.join(".novelgainker/conversation/session.json")).unwrap()
+        );
+        request.validate().unwrap();
+    }
     #[test]
     fn threshold_is_byte_based_and_does_not_use_story_keywords() {
         let fixture = Fixture::new();
@@ -1483,5 +1599,38 @@ mod tests {
         assert!(selected.len() <= MAX_MESSAGE_COUNT - 2);
         assert!(selected.len() < segments.len());
         assert!(selected.iter().map(rendered_main_bytes).sum::<usize>() < MAX_REQUEST_BYTES);
+        let mut current = session.turns.last().unwrap().clone();
+        current.turn_id = "current-turn".into();
+        current.status = ConversationTurnStatus::Running;
+        current.messages.truncate(1);
+        current.messages[0].message_id = "current-message".into();
+        current.messages[0].content = "当前请求只出现一次".into();
+        session.turns.push(current);
+        for dense in [false, true] {
+            if dense {
+                for turn in session.turns.iter_mut().rev().skip(1).take(10) {
+                    for message in &mut turn.messages {
+                        message.content = "\"\\\n界".repeat(800);
+                    }
+                }
+            }
+            let request =
+                super::assemble_nr5_main_request(&session, None, NR1_CONTEXT_PROFILE, "").unwrap();
+            assert!(request.messages.len() <= MAX_MESSAGE_COUNT);
+            assert_eq!(
+                request.messages.last().unwrap().content,
+                "当前请求只出现一次"
+            );
+            assert_eq!(
+                request
+                    .messages
+                    .iter()
+                    .filter(|message| message.content == "当前请求只出现一次")
+                    .count(),
+                1
+            );
+            request.validate_for(ProviderId::Deepseek).unwrap();
+            request.validate_for(ProviderId::Openai).unwrap();
+        }
     }
 }

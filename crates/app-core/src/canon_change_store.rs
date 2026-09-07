@@ -58,7 +58,7 @@ impl crate::tool_runtime::ToolExecutor for NovelistProposeChangeExecutorV1 {
         if self.coordinator.nr5 {
             chapter::tool::decode(&evidence, arguments, &self.coordinator)
                 .map(|_| ())
-                .map_err(|_| "agent.tool_arguments_invalid")
+                .map_err(|error| error.code())
         } else {
             evidence
                 .validate_request(arguments)
@@ -256,7 +256,11 @@ impl CanonChangeCoordinator {
         } else {
             evidence.validate_request(value)?
         };
-        let fresh = ChangeEvidence::from_conversation(&session, &turn.turn_id)?;
+        let fresh = ChangeEvidence::from_conversation_for(
+            &session,
+            &turn.turn_id,
+            self.protocol_profile(),
+        )?;
         let fresh_sources = fresh.source_references();
         if validated
             .request
@@ -1101,6 +1105,7 @@ pub fn task_recovery_result_for(
             _ => return Err(ChangeError::RecoveryRequired),
         };
         found = Some(ToolResult {
+            argument_issues: Vec::new(),
             call_id: record.call_id,
             name: PROPOSE_CHANGE_TOOL_NAME.to_owned(),
             version: tool_version,

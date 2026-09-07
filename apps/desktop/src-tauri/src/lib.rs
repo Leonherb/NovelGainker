@@ -60,8 +60,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_state_root = app.path().app_data_dir()?;
-            let registry = commands::ProjectRegistry::new(app_state_root)
+            let mut registry = commands::ProjectRegistry::new(app_state_root)
                 .map_err(|_| std::io::Error::other("project registry initialization failed"))?;
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                registry.writer_window = Some(window.hwnd()?.0 as isize);
+            }
             app.manage(registry);
             Ok(())
         })

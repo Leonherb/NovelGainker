@@ -303,7 +303,11 @@ impl CanonChangeCoordinator {
                 ensure_recovered(&self.records()?)?;
                 let session =
                     read_conversation(&self.handle).map_err(|_| ChangeError::SourceInvalid)?;
-                let fresh = ChangeEvidence::from_conversation(&session, &record.turn_id)?;
+                let fresh = ChangeEvidence::from_conversation_for(
+                    &session,
+                    &record.turn_id,
+                    self.protocol_profile(),
+                )?;
                 if record
                     .sources
                     .iter()

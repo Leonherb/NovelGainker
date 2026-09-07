@@ -103,6 +103,64 @@ fn error(evidence: &ChangeEvidence, request: &Value) -> ChangeError {
 }
 
 #[test]
+fn nr5_history_sources_extend_lookup_but_keep_change_and_catalog_bounds() {
+    use crate::protocol_profile::ToolProtocolProfile;
+    let mut session = session();
+    let old = session.turns[0].messages[0].clone();
+    for _ in 0..12 {
+        let mut turn = session.turns[0].clone();
+        turn.turn_id = id();
+        for message in &mut turn.messages {
+            message.message_id = id();
+        }
+        session.turns.push(turn);
+    }
+    let current = &session.turns.last().unwrap().turn_id;
+    let nr4 = ChangeEvidence::from_conversation(&session, current).unwrap();
+    assert!(!nr4.sources.contains_key(&old.message_id));
+    let nr5 =
+        ChangeEvidence::from_conversation_for(&session, current, ToolProtocolProfile::Nr5).unwrap();
+    assert_eq!(
+        nr5.sources.get(&old.message_id),
+        Some(&(
+            ConversationRole::Assistant,
+            sha256_hex(old.content.as_bytes())
+        ))
+    );
+    assert_eq!(nr5.source_catalog().len(), MAX_CHANGE_REFERENCES);
+    session.turns[0].messages[0].content.push_str("外部改变");
+    let fresh = ChangeEvidence::from_conversation_for(
+        &session,
+        &session.turns.last().unwrap().turn_id,
+        ToolProtocolProfile::Nr5,
+    )
+    .unwrap();
+    assert_ne!(
+        nr5.sources.get(&old.message_id),
+        fresh.sources.get(&old.message_id)
+    );
+    for _ in 0..40 {
+        let mut turn = session.turns[0].clone();
+        turn.turn_id = id();
+        for message in &mut turn.messages {
+            message.message_id = id();
+        }
+        session.turns.push(turn);
+    }
+    let bounded = ChangeEvidence::from_conversation_for(
+        &session,
+        &session.turns.last().unwrap().turn_id,
+        ToolProtocolProfile::Nr5,
+    )
+    .unwrap();
+    assert_eq!(
+        bounded.sources.len(),
+        crate::provider_core::MAX_MESSAGE_COUNT
+    );
+    assert!(!bounded.sources.contains_key(&old.message_id));
+}
+
+#[test]
 fn five_types_create_and_upsert_are_validated_without_io() {
     propose_change_definition().validate().unwrap();
     for kind in [

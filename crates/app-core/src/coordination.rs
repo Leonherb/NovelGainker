@@ -1,5 +1,8 @@
 use crate::AppError;
 
+mod project_window;
+pub use project_window::{activate_project_window, ProjectWindowRegistration};
+
 #[derive(Debug)]
 pub struct ProjectWriteLease {
     coordination_key: String,

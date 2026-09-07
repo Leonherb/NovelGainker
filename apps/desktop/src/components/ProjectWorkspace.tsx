@@ -644,7 +644,13 @@ export function ProjectWorkspace({
       setCreatePreview(null);
       onAppStateChanged();
     } catch (confirmError: unknown) {
-      setError(presentProjectError(confirmError));
+      if (normalizeAppError(confirmError).code === "project.window_activated") {
+        setCandidate(null);
+        setCreatePreview(null);
+        setNotice("已切换到此工程的已有窗口，可在那里继续编辑和对话。");
+      } else {
+        setError(presentProjectError(confirmError));
+      }
     } finally {
       setBusy(null);
     }
@@ -666,7 +672,11 @@ export function ProjectWorkspace({
       }
       onAppStateChanged();
     } catch (openError: unknown) {
-      setError(presentProjectError(openError));
+      if (normalizeAppError(openError).code === "project.window_activated") {
+        setNotice("已切换到此工程的已有窗口，可在那里继续编辑和对话。");
+      } else {
+        setError(presentProjectError(openError));
+      }
       setCreatePreview(null);
       onAppStateChanged();
     } finally {

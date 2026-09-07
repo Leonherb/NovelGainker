@@ -209,6 +209,11 @@ describe("NR-G1-R01 Conversation reconciliation", () => {
       sessionId: CONVERSATION_SESSION_ID,
       turnId: TURN_ID,
       status: "running",
+      toolName: "novelist.read_context",
+      toolVersion: 2,
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      errorCode: null,
       displayLabel: "处理相关内容",
       taskRevision: 2,
     };

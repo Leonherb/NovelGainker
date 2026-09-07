@@ -762,6 +762,18 @@ impl ChangeEvidence {
         session: &ConversationSession,
         turn_id: &str,
     ) -> Result<Self, ChangeError> {
+        Self::from_conversation_for(
+            session,
+            turn_id,
+            crate::protocol_profile::ToolProtocolProfile::Nr4,
+        )
+    }
+
+    pub fn from_conversation_for(
+        session: &ConversationSession,
+        turn_id: &str,
+        profile: crate::protocol_profile::ToolProtocolProfile,
+    ) -> Result<Self, ChangeError> {
         if !valid_id(&session.project_id) || !valid_id(&session.session_id) || !valid_id(turn_id) {
             return Err(ChangeError::SourceInvalid);
         }
@@ -773,10 +785,16 @@ impl ChangeEvidence {
         let current = &session.turns[turn_index];
         let mut sources = BTreeMap::new();
         let mut source_catalog = Vec::new();
-        // References are a compact recent projection, not a copy of all History.
-        for turn in session.turns[..=turn_index].iter().rev().take(8) {
+        // A change still accepts at most eight references. NR-5 may resolve
+        // older messages actually supplied as bounded history references.
+        let source_limit = if profile == crate::protocol_profile::ToolProtocolProfile::Nr5 {
+            crate::provider_core::MAX_MESSAGE_COUNT
+        } else {
+            MAX_CHANGE_REFERENCES
+        };
+        for turn in session.turns[..=turn_index].iter().rev().take(source_limit) {
             for message in turn.messages.iter().rev() {
-                if sources.len() >= MAX_CHANGE_REFERENCES {
+                if sources.len() >= source_limit {
                     break;
                 }
                 if !valid_id(&message.message_id)
@@ -789,14 +807,16 @@ impl ChangeEvidence {
                 {
                     return Err(ChangeError::SourceInvalid);
                 }
-                source_catalog.push(json!({
+                if source_catalog.len() < MAX_CHANGE_REFERENCES {
+                    source_catalog.push(json!({
                     "messageId": message.message_id,
                     "contentHash": sha256_hex(message.content.as_bytes()),
                     "role": message.role,
                     "currentTurn": turn.turn_id == turn_id,
                     "excerpt": message.content.chars().take(160).collect::<String>(),
                     "excerptTruncated": message.content.chars().count() > 160
-                }));
+                    }));
+                }
             }
         }
         let current_user_messages = current

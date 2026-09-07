@@ -362,6 +362,17 @@ export const ZH_CN = {
       message: "另一个 NovelGainker 实例持有此项目的写锁，本窗口不能写入。",
       recovery: "请在 Writer 实例中编辑，或关闭 Writer 后重新打开项目；当前版本不转移锁。",
     },
+    projectWindowActivated: {
+      title: "已切换到工程窗口",
+      message: "此工程已在另一个窗口打开，已切换到该窗口。",
+      recovery: "可以在那里继续编辑和对话。",
+    },
+    projectAlreadyOpen: {
+      title: "此工程已经打开",
+      message: "此工程正在另一个窗口中使用，本次没有新建只读会话。",
+      recovery:
+        "请切到已有窗口继续操作；若已有窗口是旧测试版，请先在那里关闭工程，再点击本窗口的确认打开。",
+    },
     projectRecoveryRequired: {
       title: "项目需要人工恢复",
       message: "未完成的保存事务无法被安全地自动提交或回滚。",
