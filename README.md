@@ -1,28 +1,24 @@
 # NovelGainker
 
-Windows-first、Local-first、可切换 AI Provider 的简体中文小说创作桌面应用。
+Windows、本地工程、可切换AI Provider的简体中文小说创作桌面应用。
 
-当前实现进入 NR-4：三栏左侧管理工程、文件与 Provider，中间承载完整自然对话和 Host 保存结果，右侧编辑真实 Markdown。应用自包含 Novelist 九能力、37 资源；AI 可按需读取 Canon，并受约束地维护人物、世界/设定、素材、剧情与大纲，支持 Diff、本地确认和可恢复 Undo。
+当前源码支持自然对话、内置小说方法、受约束的资料/单章写入、实际保存回执、Diff/Undo、多会话及本地EPUB。它采用单轮有界Agent执行；分阶段自主创作和有限自动恢复是2026-09-09已完成策划整理的新目标，不代表已实现。
 
-NR-401～406 已分别通过完整质量门，[NR-G5 已获产品批准](docs/reviews/novelist-agent-runtime-nr-g5-product-approval.zh-CN.md)。[NR-5～NR-6 联合 Story](docs/stories/novelist-agent-runtime-nr5-nr6-story-packet-draft-1.zh-CN.md) 已形成并自评，尚未实施；后续仅12项Story，止于NR-G7。云同步不是用户需求，已从整个计划移除。正式章节独立来源延至 NR-5。本次最小只读 Live Smoke 已明确放弃，真实 Provider 工具兼容性和语义质量未正式验证，NR-6 完整验证保留；不把模型的“已完成”当作实际保存证据。
+## 产品和方案
+
+- [目标产品策划案（17项决定已确认）](docs/product-spec.zh-CN.md)
+- [当前产品与实现状态](docs/product-current-state-report.zh-CN.md)
+- [目标技术方案（方向已确认，开始分片实现）](docs/technical-design.zh-CN.md)
+- [从零测试重置与首个实现切片](docs/reviews/implementation-slice-a-2026-09-10.zh-CN.md)
+- [当前架构](docs/architecture.zh-CN.md)
+- [全工程梳理与决策记录](docs/reviews/project-reframe-2026-09-09.zh-CN.md)
+- [技术专项问题与确认记录](docs/reviews/technical-design-alignment-2026-09-09.zh-CN.md)
+- [15项技术缺口处理方案（全部已确认，待实现验证）](docs/reviews/technical-gap-closure-proposal-2026-09-10.zh-CN.md)
+- [交付与验收状态](docs/sprint-plan.zh-CN.md)
 
 ## 开发入口
 
-- [当前产品报告](./docs/product-current-state-report.zh-CN.md)
-- [NR-4 实施与验证记录](./docs/reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md)
-
-- [当前架构](./docs/architecture.zh-CN.md)
-- [开发与质量门](./docs/development.md)
-- [当前交付状态](./docs/sprint-plan.zh-CN.md)
-- [NR-0 Clean Slate Story Packet](./docs/stories/novelist-agent-runtime-nr0-clean-slate-story-packet.zh-CN.md)
-- [NR-G1 Remediation Final](./docs/stories/novelist-agent-runtime-nr-g1-remediation-story-packet-draft-2-final.zh-CN.md)
-- [NR-G1 技术重新提交](./docs/reviews/novelist-agent-runtime-nr-g1-technical-submission.zh-CN.md)
-- [NR-1 Story Packet Draft 2 Final](./docs/stories/novelist-agent-runtime-nr1-history-memory-story-packet-draft-2-final.zh-CN.md)
-- [NR-G2 技术提交](./docs/reviews/novelist-agent-runtime-nr-g2-technical-submission.zh-CN.md)
-- [NR-2 Story Packet Draft 2](./docs/stories/novelist-agent-runtime-nr2-host-agent-loop-story-packet-draft-2.zh-CN.md)
-- [NR-G3 Remediation Draft 2](./docs/stories/novelist-agent-runtime-nrg3-remediation-story-packet-draft-2.zh-CN.md)
-- [NR-G3 技术提交与批准记录](./docs/reviews/novelist-agent-runtime-nr-g3-technical-submission.zh-CN.md)
-- [NR-3 Story Packet Draft 2 Final](./docs/stories/novelist-agent-runtime-nr3-capability-canon-read-story-packet-draft-2-final.zh-CN.md)
+见[开发与质量门](docs/development.md)。安装依赖后，Rust验证使用`--locked --offline`。
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -31,3 +27,5 @@ pnpm test:frontend
 pnpm quality
 pnpm dev
 ```
+
+自动化验证使用隔离合成工程和loopback Provider。真实用户试用有独立验收要求，见[测试方案](docs/testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md)。模型说“已完成”不代替实际文件提交证据。产品不包含工程云同步。

@@ -124,6 +124,11 @@ mod tool_feedback {
                             }
                             1 => {
                                 let result = nr403::last_result(&body, provider);
+                                let templates = result["output"]["requiredTemplates"].as_array().unwrap();
+                                assert_eq!(templates.len(), 1);
+                                assert_eq!(templates[0]["resourceId"], "fixtures/character.template.md");
+                                assert_eq!(templates[0]["truncated"], false);
+                                assert!(templates[0]["content"].as_str().unwrap().contains("schemaVersion: 2"));
                                 valid = nr504::change_arguments(
                                     false,
                                     &source,
@@ -142,7 +147,13 @@ mod tool_feedback {
                                 assert_eq!(result["errorCode"], "agent.tool_arguments_invalid");
                                 assert_eq!(
                                     result["argumentIssues"],
-                                    json!([{"path":"$.chapterIntent","issue":"missing_field"}])
+                                    json!([{
+                                        "path":"$.chapterIntent", "issue":"missing_field",
+                                        "expected": {
+                                            "type":["string","null"],
+                                            "enum":["discussion","trial_draft","write_and_save","accept_candidate","ambiguous",null]
+                                        }
+                                    }])
                                 );
                                 assert!(result["guidance"]
                                     .as_str()

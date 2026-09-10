@@ -33,7 +33,9 @@ const durationConstant = (source, name, unit) => {
   return Number(match[1].replaceAll("_", "").trim());
 };
 const stripRustTests = (source) =>
-  source.replace(/\n#\[cfg\(test\)\]\n(?:pub\(crate\) )?mod tests \{[\s\S]*$/u, "\n");
+  source
+    .replaceAll("\r\n", "\n")
+    .replace(/\n#\[cfg\(test\)\]\n(?:pub\(crate\) )?mod tests \{[\s\S]*$/u, "\n");
 
 const providerSource = read("crates/app-core/src/provider_core.rs");
 const runtimeSource = read("crates/app-core/src/conversation_runtime.rs");
@@ -42,6 +44,7 @@ const taskSource = read("crates/app-core/src/task_store.rs");
 const commandSource = read("apps/desktop/src-tauri/src/commands_current.rs");
 const clientSource = read("apps/desktop/src/lib/tauri/conversation.ts");
 const viewSource = read("apps/desktop/src/components/ConversationView.tsx");
+const activitySource = read("apps/desktop/src/components/ToolActivityList.tsx");
 
 const profile = {
   toolDefinitions: numericConstant(toolSource, "MAX_TOOL_DEFINITIONS"),
@@ -90,8 +93,12 @@ for (const required of runtimeViewRequired) {
     throw new Error(`NR-206 Runtime View/Event boundary is missing: ${required}`);
   }
 }
-for (const label of ["正在处理……", "已完成相关操作。", "相关操作未完成。"]) {
-  if (!viewSource.includes(label)) {
+// The current UI renders per-call records instead of the retired aggregate summary.
+if (!viewSource.includes("<ToolActivityList") || !activitySource.includes("STATUS[task.status]")) {
+  throw new Error("NR-206 controlled Task Activity rendering is missing");
+}
+for (const label of ["等待执行", "正在执行", "执行完成", "执行失败", "已中止"]) {
+  if (!activitySource.includes(label)) {
     throw new Error(`NR-206 controlled inline task label is missing: ${label}`);
   }
 }
@@ -183,7 +190,10 @@ const requiredTests = [
     read("apps/desktop/src/components/ConversationView.reconciliation.test.tsx"),
     "merges Task snapshots and events only by a greater taskRevision",
   ],
-  [read("apps/desktop/src/components/ConversationView.test.tsx"), "不会直接显示的技术标签"],
+  [
+    read("apps/desktop/src/components/ConversationView.test.tsx"),
+    "restores every Host tool record after reopening without generating an API reply",
+  ],
 ];
 for (const [source, testName] of requiredTests) {
   if (!source.includes(testName)) {

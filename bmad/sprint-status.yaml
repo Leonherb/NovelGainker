@@ -2,7 +2,7 @@ project:
   name: "NovelGainker"
   level: 4
 
-baseline_note: "当前产品Gate为current_gate：NR-G5已批准，后续12项本地Story已形成并自评；用户要求云同步从整个计划删除，见successor_packet。下列sprint/stories/metrics/gate及nr4_packet是历史实施/技术提交兼容快照，其中nrG5Approved=false不代表现行产品裁决。"
+baseline_note: "现行进度见story_progress：NR-501～506和NR-601～603共9/12已记录完成，NR-604～606未完成。current_gate保留NR-G5产品批准，nr_g6_technical_submission记录技术通过和已授权连续进入NR-6；历史phase_4/metrics/gate/nr3_packet/nr4_packet保持原快照。2026-09-09新策划17项决定及技术方案已整理，尚未实施阶段自主及有限自动恢复。"
 
 sprint:
   number: "NR-3"
@@ -286,6 +286,6 @@ nr603_completion:
 next_action:
   type: "confirm_trial_batch"
   id: "NR-604"
-  instruction: "NR-501至506及NR-601至603均已完整质量通过。现停在NR-604入口：负责人确认实际试用批次、Provider分工及测试环境后，按现有连续授权完成工具详情、测试包及安装升级准备，再由自愿参与者实际测试。无需重新批准代码；不自动招募、分发或Live，不将NR-604/605/606预填完成，无云同步，最终NR-G7仍由用户决定。"
+  instruction: "NR-501至506及NR-601至603已有完整质量通过记录；NR-604正式试用批次仍待确认。当前基础工具详情已实施，其余证据、测试包和安装升级准备待补齐，已授权本地准备不需要重新批准代码。正式批次、Provider分工和测试环境落实后由自愿参与者实际测试；不自动招募、分发或Live，不预填NR-604/605/606完成，无云同步，最终NR-G7由用户决定。2026-09-09策划与技术方案梳理已完成，未实施新增架构。"
 
 last_updated: "2026-09-05"

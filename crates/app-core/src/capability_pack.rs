@@ -128,6 +128,7 @@ pub struct Capability {
     pub description: String,
     pub usage: String,
     pub instruction_resource: String,
+    pub template_resources: Vec<String>,
     pub optional_resources: Vec<String>,
     pub read_scopes: BTreeSet<String>,
 }
@@ -479,6 +480,7 @@ fn validate_documents(
                 description: document.description,
                 usage: document.usage,
                 instruction_resource: document.instruction_resource,
+                template_resources: document.template_resources,
                 optional_resources,
                 read_scopes,
             },

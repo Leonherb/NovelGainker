@@ -1,80 +1,68 @@
-# NovelGainker development guide
+# NovelGainker 开发与验证
 
-## Prerequisites
+更新：2026-09-09。当前实现见[架构](architecture.zh-CN.md)，目标行为见[产品策划](product-spec.zh-CN.md)。本文的命令来自当前 `package.json` 和 `scripts/quality.mjs`，历史测试通过不代替改动后的实际验证。
 
-- Windows 11
-- Node.js 24+
-- pnpm 11+
-- stable Rust toolchain with the MSVC target
-- Tauri 2 system prerequisites
+## 环境与常用命令
 
-Install JavaScript dependencies once with `pnpm install --frozen-lockfile`. Cargo verification then runs with `--locked --offline`.
-
-## Daily commands
+开发环境为Windows 11、Node.js 24+、pnpm 11+、Rust MSVC及Tauri 2系统依赖。仓库packageManager固定pnpm版本；按锁文件安装依赖。Rust验证使用 `--locked --offline`。
 
 ```powershell
+pnpm install --frozen-lockfile
 pnpm dev
 pnpm typecheck
 pnpm lint
 pnpm test:frontend
 cargo test --workspace --locked --offline
-pnpm e2e:nr106
-pnpm e2e:nr206
-pnpm e2e:nr406
+pnpm e2e:sprint1
 pnpm quality
 ```
 
-`pnpm quality` is the authoritative local gate. It runs formatting, lint, TypeScript, React tests, recursive release/IPC boundaries, NR-001 through NR-006 evidence, NR-106/206/306 historical contract regressions, Pack integrity, NR-406 validation, Rust format/Clippy/tests, the offline editor round trip, debug and release Tauri builds, Windows desktop smoke, and the Canon/recovery safety kernel.
+`pnpm build:test` 生成无安装器Release构建，`pnpm build:test:debug` 为Debug。当前Tauri关闭bundle；构建EXE不能称为已验证的干净安装或升级包。首次安装依赖与离线验证是不同步骤，未授权的真实Provider调用不能作为构建排错方式。
 
-## Runtime and IPC surface
+## 检查与证据
 
-Production contains 28 Tauri commands. Conversation owns exactly:
+完整质量门为 `pnpm quality`。当前脚本含34步：前端格式/lint/类型/测试、生产边界、NR-0～4历史合同回归、内置Pack一致性、NR-501～506与NR-601～603定向链路、Rust格式/Clippy/测试、离线编辑器往返、Debug/Release构建和桌面smoke、Canon恢复内核。
 
-- `conversation_session_load`
-- `conversation_turn_start`
-- `conversation_turn_cancel`
+按改动选择定向验证；声明某实现Story或Gate技术完成前，必须通过完整质量门。文档整理只验证事实、引用、状态和差异，不因此生成新的实现完成或质量通过声明。
 
-The stream event is `conversation-turn-event`. When changing IPC, update the Rust manifest, Tauri handler registration, generated permissions, main-window capability, all production TypeScript clients, and boundary tests together.
+| 入口 | 证据目的 |
+| --- | --- |
+| `e2e:nr001`～`e2e:nr406`及`pack:nr301:check` | 历史合同、内置方法及回归；不能改写冻结Gate的原始声明 |
+| `e2e:nr501`～`e2e:nr505` | 章节合同/提交/连续性、非线性循环预算、本地出版 |
+| `e2e:nr506` | test-only Tauri MockRuntime下实际桌面命令与worker链；不等于原生GUI或真实Provider |
+| `e2e:nr601`～`e2e:nr603` | 会话隔离、管理、原预算内显式重试与attempt对账 |
+| `e2e:sprint1` / `e2e:canon-kernel` | 离线编辑往返及文件事务恢复边界 |
+| `smoke:desktop:debug` / `smoke:desktop` | 当前开发机上的桌面启动检查 |
 
-NR-4 adds four closed commands: `canon_change_list`, `canon_change_detail`, `canon_change_decide`, `canon_editor_state`. The decision request contains projectSessionId/changeId/revision and confirm/discard/undo/retry_recovery only. Editor requests contain projectSessionId/opaque fileId/revision/dirty; project_read_file returns fileId/editorRevision after Host edit reservation. These APIs accept no new arbitrary path or replacement content.
+证据位于 `target/qa/`。完整质量脚本当前写入 `nr-603/regression-quality.json`；既有Story完成时的 `quality.json` 及Gate manifest为各自时点的证据。原始技术提交、当时的human-approved字段和Hash保持冻结，后续回归独立记录当前源码、IPC和Pack。某目录存在不代表证据与当前源码匹配。
 
-The Host stores visible History in `.novelgainker/conversation/session.json`, discardable Memory in `.novelgainker/memory/state.json`, bounded Task status in `.novelgainker/tasks/session.json`, and immutable snapshots/receipts in `.novelgainker/changes/{changeId}.json`. Write-enabled sessions register exactly read_context and propose_change. The NR-4 loop is in `conversation_change_runtime.rs`; delivered read evidence in `canon_change_read.rs`; transactions/Undo in `canon_change_store.rs` and its child modules. Only Host Committed receipts mean saved.
+生产构建复验要记录源码提交及工作区改动、构建时间、EXE校验值和测试所用确切包。仅凭文件名或上次会话中的“已修复”不能证明当前EXE包含补丁。正式试用、安装/升级和最终包影响复验参见[测试方案](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md)。
 
-Project Metadata is `schemaVersion = 2`. Schema v1 is a one-time disposable-state cutover, not a migration API. Do not add a compatibility reader, converter, alias, Workflow-version replacement field, or feature flag.
+## 运行和接口维护
 
-## Evidence
+生产共38个受限Tauri命令。原Conversation load/start/cancel保持职责，另有会话管理、显式重试等封闭入口；流式事件为 `conversation-turn-event`。修改IPC必须同步Manifest、Handler、生成Permission、Capability和全部生产TS客户端及边界测试，不能只改一端。
 
-Generated evidence is written below `target/qa/`:
+运行入口在 `apps/desktop/src-tauri/src/commands_current.rs`，模型循环在 `crates/app-core/src/conversation_runtime.rs` 和 `conversation_change_runtime.rs`；工具注册在 `tool_runtime.rs`，来源校验、事务和回执在 `canon_change*.rs` 与其子模块。当前工具为read_context/propose_change/publish，当前预算以[架构](architecture.zh-CN.md)及对应源码为准，不套用NR-4旧限额。
 
-- `nr-001/`: retirement and Canon baseline
-- `nr-002/`: Project Metadata v1→v2 clean-slate tests and source hash
-- `nr-003/`: Conversation Store persistence
-- `nr-004/`: dual-Provider Loopback and NR-0 call counts
-- `nr-005/`: natural conversation, Store reconciliation, and close lifecycle
-- `nr-006/`: release scan, five-layer IPC closure, and historical NR-G1 manifest
-- `nr-106/`: candidate profiles, frozen NR-1 budgets, scale test runs, source hashes, and NR-G2 manifest
-- `nr-206/`: Agent Loop profile, bounded Tool/Task regressions, release scan, source hashes, and NR-G3 manifest
-- `nr-306/`: embedded Pack and historical NR-3 read-only contract regression
-- `nr-406/`: current five-directory transactions, actual dual Provider 4+1 chains, validation.json, full quality.json and NR-G5 technical manifest
+默认History/Memory/Task仍保留 `conversation/session.json`、`memory/state.json`、`tasks/session.json`，新会话分别位于对应目录下 `sessions/{UUID}.json`。不得把默认旧会话挪走、复制成两份或误认为所有会话都在新目录。同工程共享Canon、一个活动运行；结果归属使用worker捕获的会话和attempt。
 
-NR-G1 through NR-G5 technical machine claims remain frozen. Current later-stage checks write separate regression manifests, recording the current IPC/Pack separately from historical claims. NR-406 validation is not product approval: after a full successful `pnpm quality`, `node scripts/nr406-nrg5-e2e.mjs --submit` requires matching fresh evidence before producing `nr-g5-manifest.json`. Its false approval is the submission-time snapshot; the user's subsequent NR-G5 approval is recorded in BMAD `current_gate` and the product approval report. Old `gate`/`nr4_packet` blocks are explicitly scoped compatibility snapshots; NR-501 must separate the old checkers' historical baseline from current approval.
+元数据当前为严格schemaVersion 2。旧v1一次性重置仅清理经验证的内部派生状态，保留稿件、资产、设置和凭据；它不是通用升级方案。不要引入v1兼容读、转换器、别名、替代Workflow版本或功能开关。将来新增阶段状态必须另行规定版本与恢复，不能借用旧重置流程清空用户内容。
 
-## Test boundaries
+## 测试边界
 
-- Never run automated tests against a real manuscript or credential.
-- Provider tests use deterministic `127.0.0.1` Loopback servers; `pnpm e2e:nr106` removes Provider/secret environment variables and enables Cargo Offline.
-- Do not run real Provider Live Smoke without separate explicit authorization.
-- Manuscript Markdown and assets remain outside Memory and project-state reset targets.
-- `.novelgainker/**` stays outside manuscript indexing and publication inputs.
-- Conversation Turn code may call only the zero-retry `complete_once_cancellable` and `stream_once_cancellable` paths. Retrying Provider methods remain limited to non-Conversation connection checks.
-- NR-4 allows at most 4 Agent + 1 Compactor attempts and 17,408 requested output tokens; two reads and one mutation, four targets, 8 KiB total candidate, 160 KiB cumulative Continuation and 256 KiB actual native body. No automatic retry. Historical read-only profiles remain tested separately. Provider Usage is observation only; response bytes retain the independent 8 MiB ceiling.
-- A new production TS/TSX or Rust file is automatically included in the release scan; tests and historical Story documents are intentionally not counted as production references.
-- NR-G5 is approved. The remaining plan contains 12 NR-5–6 Stories, ending at NR-G7, with no cloud sync. Production is still NR-4. R04 product behaviors are accepted; R05 uses multi-user application testing, not automated Live batches or sole-owner self-testing. See the [multi-user test plan](testing/novelist-agent-runtime-nr6-multi-user-test-plan.zh-CN.md). R01–R03 and remaining engineering/batch arrangements are pending. No assistant Live credential use, recruitment or distribution is authorized. Participants will operate synthetic projects themselves and voluntarily share redacted evidence; never collect keys, full hidden state or raw protocol. Scripted providers prove Host/protocol behavior, not model intent or semantic quality.
+- 自动化只用验证过的隔离合成工程及127.0.0.1 loopback合成密钥，不碰真实稿件、凭据或远程Provider。质量脚本清理Provider/secret环境变量。
+- 密钥只在Rust CredentialVault中使用，不通过IPC读回、脱敏回显后缀/指纹或写入日志、项目及测试证据。
+- 稿件Markdown与受控资产为唯一Canon，内部History/Memory/Task/Change不进入稿件索引或出版。
+- 当前Conversation调用零自动重试的单次Provider路径；显式重试由 `conversation_retry.rs` 约束，不是连接测试的重试函数。新目标Q9批准有限自动恢复，实施时须更新运行/预算/幂等合同及测试，不能只解除现有检查。
+- 真实用户已经反馈过故障，但正式多用户C/S/J/L及安装/升级/最终版矩阵仍需实际证据。参与者自行配置Key并自愿提供脱敏反馈，助手不自动招募、分发或执行Live批次。
+- 脚本不能证明真实模型正确理解“讨论”“接受建议”“改写范围”等语义；语义成功率须来自定义清楚的真实任务与评分。
 
-## Recovery and local operation
+## 恢复与本地操作
 
-Pending changes are not saved and do not add a close blocker. A stale revision/source/dirty editor requires a new proposal, not force overwrite. Undo requires every file to match its recorded afterHash; missing snapshots or full quotas cannot be bypassed by deleting Canon or resetting app state.
+只有持久Committed表示文件已保存。待确认不是已保存；任务成功和模型文字不是回执。过期版本、外部修改、dirty editor或来源不全要求重新读取准备，不能force-overwrite。
 
-If recovery is required, preserve the current files and `.novelgainker/changes/`. Compare the stored Diff, resolve external edits explicitly, then use local safe retry or reopen; no Provider is called. Reopen after successful repair refreshes project write capabilities. Do not clear unresolved recovery data to make the warning disappear. A full store does not automatically evict Undo history; no history-cleanup UI is included in NR-4.
+Undo要求所有目标匹配afterHash，并保留不可变快照和逆事务意图。未决恢复时保留稿件与变更库，核对Diff及外部编辑后安全恢复；不得删除记录、重置项目或清空Canon消除警告。恢复未决阻止新写，不应据此阻断普通聊天；恢复后重开可刷新写权限。存储满额不自动清除历史或撤销材料。
 
-Current architecture is [architecture.zh-CN.md](./architecture.zh-CN.md); approved implementation scope is [NR-4-D1](./stories/novelist-agent-runtime-nr4-canon-mutation-story-packet-draft-1.zh-CN.md); current verification is [implementation log](./reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md).
+仅手工未保存Markdown可阻断关闭并给保存/放弃/取消选项。选择前不取消AI；确认关闭后立即退出，不等待网络。当前流式片段未逐段持久化，不承诺异常退出能恢复全部已显示文字。
+
+当前授权及未完成项见[交付状态](sprint-plan.zh-CN.md)。历史Gate保持历史意义，最终NR-G7仍由用户决定；本轮策划访谈不构成新增架构的实施或验收完成。

@@ -1,3 +1,5 @@
+mod templates;
+
 use crate::capability_pack::{ValidatedCapabilityPack, MAX_CAPABILITY_INSTRUCTION_BYTES};
 use crate::project::ProjectHandle;
 use crate::protocol_profile::ToolProtocolProfile;
@@ -864,25 +866,30 @@ fn build_bundle_v2(
         .iter()
         .map(canon_result_reservation)
         .collect::<Vec<_>>();
+    let (required_templates, template_bytes) = templates::required_templates(pack, &request)?;
+    let mut initial = json!({
+        "schemaVersion": 1,
+        "capability": {
+            "sourceType": "capability_method",
+            "id": request.capability_id,
+            "instructionResourceId": request.instruction_resource,
+            "sourceSha256": pack.resource_sha256(request.instruction_resource),
+            "instruction": ""
+        },
+        "capabilityResources": capability_resources,
+        "canon": canon,
+        "limits": {
+            "capabilityResources": MAX_CAPABILITY_RESOURCES,
+            "canonOperations": MAX_CANON_OPERATIONS,
+            "uniqueCanonFiles": MAX_CANON_UNIQUE_FILES,
+            "toolResultBytes": request.profile.result_bytes()
+        }
+    });
+    if request.profile == ToolProtocolProfile::Nr5 {
+        initial["requiredTemplates"] = required_templates;
+    }
     let mut writer = BundleBudgetWriter::new(
-        json!({
-            "schemaVersion": 1,
-            "capability": {
-                "sourceType": "capability_method",
-                "id": request.capability_id,
-                "instructionResourceId": request.instruction_resource,
-                "sourceSha256": pack.resource_sha256(request.instruction_resource),
-                "instruction": ""
-            },
-            "capabilityResources": capability_resources,
-            "canon": canon,
-            "limits": {
-                "capabilityResources": MAX_CAPABILITY_RESOURCES,
-                "canonOperations": MAX_CANON_OPERATIONS,
-                "uniqueCanonFiles": MAX_CANON_UNIQUE_FILES,
-                "toolResultBytes": request.profile.result_bytes()
-            }
-        }),
+        initial,
         request.profile.result_bytes().saturating_sub(
             if request.profile == ToolProtocolProfile::Nr5 {
                 4096
@@ -900,7 +907,7 @@ fn build_bundle_v2(
         },
     )?;
 
-    let mut resource_budget = MAX_CAPABILITY_RESOURCE_CONTENT_BYTES;
+    let mut resource_budget = MAX_CAPABILITY_RESOURCE_CONTENT_BYTES - template_bytes;
     for (index, resource) in request.resources.iter().enumerate() {
         if cancellation.is_cancelled() {
             return Err(BuildError::Cancelled);
@@ -1007,6 +1014,7 @@ fn validate_final_bundle(
         return Err(BuildError::Io);
     }
 
+    templates::validate_required_templates(bundle, pack, request)?;
     let resources = bundle["capabilityResources"]
         .as_array()
         .ok_or(BuildError::Io)?;
@@ -2027,13 +2035,13 @@ mod tests {
     use std::path::PathBuf;
     use uuid::Uuid;
 
-    struct Fixture {
+    pub(super) struct Fixture {
         root: PathBuf,
-        handle: ProjectHandle,
+        pub(super) handle: ProjectHandle,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let root = std::env::temp_dir().join(format!("novelgainker-nr303-{}", Uuid::new_v4()));
             fs::create_dir_all(root.join("characters")).unwrap();
             fs::create_dir_all(root.join("chapters")).unwrap();

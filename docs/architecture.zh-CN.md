@@ -1,82 +1,92 @@
-# NovelGainker 当前架构（NR-4）
+# NovelGainker 当前实现架构
 
-## 产品与执行边界
+核验：2026-09-09，源码基线 `34f4e39`。本文描述当前实现；分阶段自主、暂定事实验收和有限自动恢复属于[目标策划](product-spec.zh-CN.md)，尚未实现。历史合同保留原时点，不能套用其旧参数描述当前运行。
 
-Windows-first、local-first 的 Tauri 2 中文小说写作应用。三栏保持工程/文件/Provider、自然对话、真实 Markdown 编辑器。新工程无需预先有人物或章节；AI 自主选择方法与工具，Host 不按关键词路由。
+## 结构与主链路
 
-NR-401～406 已通过各自完整质量门，NR-G5 已获产品批准。后续仅NR-5～NR-6共12项Story，止于NR-G7；云同步非用户需求，已从整个计划删除。具体合同决定待冻结；下文仍描述实际 NR-4 代码，而非后续设计已实施。真实 Provider Live Smoke 未执行，本次最小只读检查明确放弃；NR-6 完整语义/兼容性验证保留。
-
-## 运行结构
+Windows、本地工程、简体中文，React三栏连接Tauri 2 Rust Host。左栏为项目文件树、会话和Provider，中间为自然对话及内联执行结果，右侧为真实Markdown编辑器。两侧宽度通过拖动调整。没有独立Task Center或用户选择Skill的工作流。
 
 ```text
-React 三栏
-  ├─ Conversation：自然回复 + Host 保存结果 / 局部 Diff / 确认 / Undo
-  └─ Markdown editor：Host 编辑保护回执之后才可输入
-          ↓ 28 typed IPC；Conversation 仍为 3 条 + 原 Event
-Rust Host
-  ├─ Conversation Store → Memory / 最多 1 次 Compactor
-  ├─ 内置 Novelist 1.1.0：9 能力 / 37 资源
-  ├─ 最多 4 次 Agent：最多 2 读 + 1 变更 → 最终无工具回复
-  ├─ read_context：实际方法/原文 → 完整回执
-  ├─ propose_change：来源/读取校验 → 项目事务协调 → Canon Kernel
-  ├─ Change Store：不可变快照 / 持久提交 / CAS / Undo / recovery
-  └─ Provider-native adapters + Windows CredentialVault
+React 三栏界面
+    ↓ 38个受限IPC；流式事件 + Store对账
+Tauri commands / 项目与会话协调
+    ├─ Conversation：先存用户消息、Running与attempt，再启动worker
+    ├─ Context：当前会话历史、派生摘要、内置方法、来源与工具事实
+    ├─ Agent：Provider回复 → Host工具 → 原生协议续接 → 有界结束
+    ├─ Canon：来源/完整读取/Hash → 编辑保护 → 事务 → Committed
+    ├─ Publication：当前定稿快照 → 预检/本地EPUB → 产物回执
+    └─ CredentialVault：Windows Credential Manager，Rust内使用
 ```
 
-写权限会话注册 `novelist.read_context` 与 `novelist.propose_change`，wire 名分别为 `novelist_read_context`、`novelist_propose_change`。无写 Lease 会话保留只读路径。能力包无效时原子降级为无工具聊天，不加载用户 Skill、外部缓存、Python 或任意 Shell。
+主入口为 `apps/desktop/src-tauri/src/commands_current.rs`；运行链在 `crates/app-core/src/conversation_runtime.rs`、`conversation_change_runtime.rs`。同物理工程同时一个运行，worker捕获发起会话身份；切换界面不改变结果归属。每个会话拥有独立历史、派生记忆与Task，但共享当前Canon。
 
-## 数据事实源
+AI按语义选择工具和方法。内置Novelist应用投影1.4.0，9能力/37资源；不动态加载外部插件缓存、用户SKILL、Python或任意程序。能力包不可用时降级为无工具聊天。方法目录不代表所有方法都有执行器。
 
-| 数据 | 位置 | 边界 |
-| --- | --- | --- |
-| Canon | 工程 Markdown 与 assets | 作者内容；不因状态清理删除 |
-| 可见 History | `.novelgainker/conversation/session.json` | 完整自然消息，不保存工具协议 |
-| Memory | `.novelgainker/memory/state.json` | 可丢弃五栏目摘要，仅从可见 History 派生 |
-| Task | `.novelgainker/tasks/session.json` | 有界状态、Hash、字节数，不存原始参数/结果 |
-| Change | `.novelgainker/changes/{changeId}.json` | 规范化候选、不可变 before/after、来源引用、回执、Undo 意图 |
+## 工具与有界执行
 
-项目元数据仍为严格 schemaVersion 2。`.novelgainker/**` 不进入小说索引/出版。原生 Continuation 仅存当前 Turn 内存，不进入上述 Store、IPC 或日志。
+当前写权限工程提供三个具体工具，wire名称将点改为下划线：
 
-## 五类维护与来源
+| 工具                      | 实际执行范围                                                           |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `novelist.read_context`   | 方法、请求的资源、项目资料/章节等受控读取，签发完整读取与来源回执      |
+| `novelist.propose_change` | 人物、设定、素材、剧情、大纲，以及每轮至多一个章节；严格来源和版本约束 |
+| `novelist.publish`        | 本地EPUB预检或构建；build自带预检，不执行平台发布或图片生成            |
 
-| 类型 | 目录 | 能力方法 |
-| --- | --- | --- |
-| character | characters | create-character |
-| world（frontmatter kind=setting） | world | create-setting |
-| material | materials | create-material |
-| plot | plot | create-plot |
-| outline | outlines | novel-story-telling |
+五类资料对应 `characters/world/materials/plot/outlines`。新建由Host分配标识和路径；更新必须完整读取原文、保留身份并匹配Hash。搜索摘要和截断方法不能充当完整读取。章节另有32 KiB与元数据合同。当前NR-5方法读取自动提供指令及Manifest声明的完整必需模板（requiredTemplates），模板与可选参考共用6 KiB正文预算，完整结果继续受64 KiB和回执预留约束。参数诊断最多4项，仅返回Host字段路径、类型和有界枚举；候选提示明确版本、kind及换行要求。具体范围见[实现切片A记录](reviews/implementation-slice-a-2026-09-10.zh-CN.md)。
 
-新建由 Host 分配 UUID 和文件名，候选使用 `id: new`。更新须完整读取目标、Hash 匹配、保留身份；搜索摘要/截断方法不产生写入证据。分段读取必须连续且完整。当前 AI 写入面限小型规范 UTF-8 文档；不能证明规范化文本与磁盘字节相同时拒绝更新，不擅自转换编码。
+| 当前NR-5运行边界                      | 上限                                                       |
+| ------------------------------------- | ---------------------------------------------------------- |
+| Agent / Compactor请求                 | 8 / 1；最后一次Agent无工具                                 |
+| 读 / 变更 / 出版工具                  | 4 / 2 / 1；串行，总计最多7次                               |
+| 累计请求输出                          | 33792 tokens                                               |
+| 五类资料一次候选                      | 至多4目标、正文合计8 KiB                                   |
+| 章节                                  | 每轮至多1章，完整文件32 KiB                                |
+| 工具参数 / 结果                       | 各64 KiB                                                   |
+| 累计原生Continuation / 单次实际请求体 | 512 KiB / 768 KiB                                          |
+| 变更库                                | 256 MiB、2048记录、单记录512 KiB；保留待确认及事务预留限制 |
 
-Host 从持久 Conversation 绑定消息 ID、角色和 Hash：用户决定至少引用当前用户消息；接受建议同时引用原建议；AI 建议只留对话；正式章节独立来源延至 NR-5。用户明确引用章节的资料任务仍可执行，但章节本身不能通过 NR-4 写工具修改。
+每次请求检查完整序列化体，文件副作用前预留结果空间。单独preflight也占一次出版额度，当前同轮不能先独立预检再调用build。NR-3/4旧预算只用于对应历史合同回归，不作为当前写权限工程上限。
 
-来源真实性不等于语义授权真实性。模型判断是否接受建议、是否只读、是否有语义矛盾；Host 不伪称 Hash 能证明意图。结构性丢失、风险或编辑占用升级为待确认；范围不明拒绝并重新准备，无 force-overwrite。
+这仍是单轮有界Agent；不存在跨轮StageRun或自动串行完成整部书的调度器。当前对话网络请求零自动重试。符合条件的最新首轮零输出、零工具失败可由用户显式重试一次，沿用原轮预算；具体资格在 `conversation_retry.rs`。有限自动恢复是新目标，需要另建运行合同。
 
-## 事务、读隔离与 Undo
+## 文件与事实来源
 
-同工程共享短事务 Mutex，持有跨进程 Writer Lease；等待 Provider 时不持事务锁。手动保存与 AI 保存共用协调。先持久化快照和 Applying，逐文件走安全原子写入，再校验整批并保存 Committed 标记。
+| 数据                 | 位置与权威                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| Canon                | 工程Markdown和受控资产；唯一稿件来源                                                |
+| 默认会话History      | `.novelgainker/conversation/session.json`                                           |
+| 默认会话Memory       | `.novelgainker/memory/state.json`；从可见历史派生，可丢弃，不等于全书记忆           |
+| 默认会话Task         | `.novelgainker/tasks/session.json`；受控状态、Hash、字节数，不保存原始工具参数/结果 |
+| 新会话               | 上述conversation/memory/tasks各自的 `sessions/{UUID}.json`；默认旧路径保留          |
+| 会话目录             | conversation内的有界目录；32非归档、256总条目                                       |
+| Change / Publication | `.novelgainker/changes/`及出版记录；不可变快照、来源和持久结果，独立于聊天终态      |
 
-提交标记前失败只在目标仍等于本次 afterHash 时逆序恢复；外部改动不覆盖，保留 recovery_required 并阻止新写。提交后 Provider/Task 失败不否认已保存。重开先恢复变更，再按回执对账 Task，不重放 Provider。Task succeeded 不是已保存证据。
+项目元数据为严格schemaVersion 2。内部状态不进入稿件索引/出版。隐藏提示、Provider原生Continuation、密钥及绝对路径不进入项目状态、IPC或日志；Continuation只在当轮内存。完整聊天落盘不表示模型能同时读到全部历史。
 
-应用内列表/搜索使用一致读；编辑器单文件读与写事务互斥。工具只读在恢复未决时明确标注 snapshotConsistency=recovery_required，且不签发写回执。多文件只保证应用协调与可恢复部分失败，不承诺对任意外部编辑器原子可见。
+History单会话16 MiB/10000消息，Task 4 MiB/10000条，Memory 32 KiB；项目聚合上限分别512 MiB/128 MiB/8 MiB，目录另有限额。运行前预留容量，满额不自动删除历史或Canon。详细容量合同见[NR-601](reviews/novelist-agent-runtime-nr601-engineering-contract.zh-CN.md)。
 
-Undo 是显式本地逆事务：全目标 afterHash/CAS/dirty 预检后写入 undoRevision 和 Applying；创建移除本次未修改文件，更新恢复 before-image；全部完成后标 Undone。逆事务未提交中断时恢复到撤销前 Committed，不能误报从未保存。原始快照不翻转。外部修改时保留证据；“重试安全恢复”仍只接受已知版本，恢复后重开工程刷新写权限状态。
+聊天分支只复制所选终态轮次之前的可见聊天，不复制执行/变更回执、不重放工具、不回滚稿件。归档仍占存储，可恢复清空通过归档旧会话并创建新会话实现。导出仅包含允许的可见数据，经本地保存对话框获得具体目标授权，不覆盖旧文件。[NR-602合同](reviews/novelist-agent-runtime-nr602-engineering-contract.zh-CN.md)保留完整约束。
 
-## UI 与 IPC
+## 提交、编辑、恢复与定稿
 
-新增 `canon_change_list`、`canon_change_detail`、`canon_change_decide`、`canon_editor_state`，生产 IPC 共 28 条。decide 仅接受工程 Session、changeId、revision 和封闭动作 confirm/discard/undo/retry_recovery；编辑登记仅接受 opaque fileId、revision 和布尔值，不新增任意路径/正文写入口。Manifest、Handler、Permission、Capability、TS Client 五层精确一致。
+Host绑定持久消息引用、方法/原文读取回执和Hash；这些能证明来源真实性，不能证明模型正确理解了作者意图。建议本身不是正式写入授权。当前章节及资料维护采用实际来源与当前章节依赖，过期依赖不能悄悄当成有效事实。
 
-编辑器读取时先在 Host 保留编辑占用；干净失焦释放，重新聚焦须收到登记回执才能输入，脏草稿始终保留保护。干净但正在聚焦编辑也保守占用，AI 可能转待确认。过期候选不能仅靠点确认覆盖，应重新读取准备。
+同工程短事务协调加跨进程Writer Lease，网络请求不持事务锁。变更先持久化不可变before/after快照和Applying，再安全替换并核验全部目标，最后记录Committed。只有Committed表示文件保存；后续模型回复、Task落盘或UI读取失败不能否认已有提交。
 
-Host 回执显示“已保存 / 待你确认尚未保存 / 无变化 / 待恢复 / 已撤销”。Diff 来自保存的原文与候选，不来自模型自述。决定成功或失败后都重新加载事实；局部结果读取失败不禁用聊天。保存刷新文件树，未保存编辑不被刷新覆盖。
+提交前失败只在目标仍匹配本次写后Hash时安全恢复；未知外部改动保留 `recovery_required`，阻止新写，不据此禁用聊天。重开核对事务与Task，不自动重放Provider。Undo同样是带意图和回执的逆事务，必须全目标匹配afterHash；不能删除恢复证据或强制覆盖解决冲突。多文件操作不承诺对外部编辑器原子可见。
 
-Event 是低延迟路径，Store 是终态真相；原有非重叠对账与监听就绪要求保留。所有非空 AI 文本保留；只有真正未完成的 Provider 终态附加未完成提示。待确认 AI 草稿不增加关窗阻断；仅手工未保存 Markdown 可触发保存/放弃/取消，正式关闭立即退出，不等待 AI。
+编辑器输入前取得Host编辑保护，脏稿始终受保护。保存与AI写入共享协调；刷新文件树不能覆盖未保存编辑。确认/撤销IPC只接受opaque标识、revision和封闭动作，不接受任意执行路径或替换字节。
 
-## 冻结预算
+章节定稿绑定具体版本，修改或Undo使旧定稿依据失效。EPUB消费当前有效定稿、项目出版信息和受控已有资产，预检通过不等于已生成。当前仅有受限Markdown及PNG/JPEG支持；本地结构校验不代表第三方EPUB认证。
 
-NR-4 最多两读一变更、4 Agent + 1 Compactor、累计 17,408 请求输出 tokens。单候选正文合计 8 KiB、最多 4 目标；Tool Result 24 KiB；累计 Continuation 160 KiB；循环预留 192 KiB；实际 Provider Body 256 KiB。每次发送检查完整序列化体，写入前另预留最终结果封装空间。零自动重试、零并行工具。
+## 对话与界面事实
 
-变更库 64 MiB / 100 条 / 10 待确认；实际容量包含临时文件，预留事务及 Undo 状态空间。配额耗尽不自动清除历史，不删除 Canon；丢失快照不能重建历史 Undo。
+发送前持久化用户消息和Running。Event提供低延迟显示，Store提供终态真相；监听就绪与非重叠对账保证结果归属，对账不调用Provider。非空异常回复保留并标记未完成；零输出才显示“本次回复未生成”。流式文字未逐段持久化，异常退出可能失去尚未落盘片段。
 
-历史 NR-3 只读回退仍保留 2 Agent、1 Tool、96 KiB 的合同回归；不是 NR-4 写权限会话的预算。最终验证与已知限制见 [交付状态](sprint-plan.zh-CN.md) 和 [实施记录](reviews/novelist-agent-runtime-nr4-implementation-log.zh-CN.md)。
+工具详情已有内联折叠UI，展示工具、状态、时间、记录编号和受控错误；完整结果回放仍未提供。文件保存、聊天生成、章节定稿和EPUB生成是不同状态，不能用一个“已完成”取代。
+
+仅手工未保存Markdown可触发保存/放弃/取消的关窗选择，选择前不取消AI。确认关闭立即取消当前轮并退出，不等待Provider或清理完成；待确认AI候选不增加关窗阻断。重开不自动产生模型费用，也尚不能恢复跨轮阶段任务。
+
+## 验证边界
+
+现行生产IPC共38条，Manifest、Handler、生成Permission、Capability与生产TS客户端必须精确同步。当前源码及已记录证据的边界见[产品现状](product-current-state-report.zh-CN.md)、[交付状态](sprint-plan.zh-CN.md)。脚本化Provider证明Host及协议行为，不证明真实模型语义、小说质量或完整多用户验收。本次文档核验没有运行新的测试。

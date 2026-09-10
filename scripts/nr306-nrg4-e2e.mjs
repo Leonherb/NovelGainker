@@ -63,7 +63,9 @@ const numericConstant = (source, name) => {
     .reduce((sum, value) => sum + value, 0);
 };
 const stripRustTests = (source) =>
-  source.replace(/\n#\[cfg\(test\)\]\n(?:pub\(crate\) )?mod tests \{[\s\S]*$/u, "\n");
+  source
+    .replaceAll("\r\n", "\n")
+    .replace(/\n#\[cfg\(test\)\]\n(?:pub\(crate\) )?mod tests \{[\s\S]*$/u, "\n");
 const walk = (relative) => {
   const absolute = path.join(root, relative);
   return readdirSync(absolute).flatMap((name) => {
