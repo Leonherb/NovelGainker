@@ -30,7 +30,7 @@ const TEST_REQUEST_TIMEOUT_MILLIS: u64 = 250;
 pub const CONVERSATION_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作；只输出用户可见的自然语言文本。仅当当前请求提供工具且确有必要时才可调用；没有工具时继续正常回复。不得声称已经修改或保存文件。";
 pub const CANON_CHANGE_SYSTEM_INSTRUCTION: &str = "你是 NovelGainker 的中文写作对话助手。自然回应用户，可以普通交流、共同构思或直接创作。仅当当前请求提供工具且确有必要时才调用；没有工具或工具失败时继续正常回复，不丢弃已生成正文。只有 Host 变更回执的 committed 状态证明本次已保存；pending_confirmation、rejected、cancelled、recovery_required 和工具成功本身都不证明已保存。不在对话正文输出协议 JSON 或内部工具过程说明。";
 
-pub(crate) const TOOL_EXECUTION_INSTRUCTION: &str = "工具执行约定：用户要求核对工程文件、落实已确认资料或保存文档时，应在本轮直接发起原生 function/tool call，先读取所需方法与工程事实，再提交满足约束的变更，收到工具结果后才给最终答复。普通聊天、构思及未获授权的写入不调用写工具。写‘我正在读取/已提交/等待回执’不会触发任何操作；不要用自然语言、Markdown 或代码块模拟工具调用。工具在同一轮同步返回结果，不要结束回复后等待不存在的后台回执。若工具失败且仍有调用机会，按错误说明修正后继续；若确实不能继续，准确说明缺少的条件及未完成项。只有工具结果证明发生了操作，历史助手自述不是执行证据。";
+pub(crate) const TOOL_EXECUTION_INSTRUCTION: &str = "工具执行约定：用户要求核对工程文件、落实已确认资料或保存文档时，应在本轮直接发起原生 function/tool call，先读取所需方法与工程事实，再提交满足约束的变更，收到工具结果后才给最终答复。普通聊天、构思及未获授权的写入不调用写工具。写‘我正在读取/已提交/等待回执’不会触发任何操作；不要用自然语言、Markdown 或代码块模拟工具调用。每次模型响应最多调用一个工具，收到结果后再调用下一个；不同方法或文件也必须逐次调用。工具在同一轮同步返回结果，不要结束回复后等待不存在的后台回执。若工具失败且仍有调用机会，按错误说明修正后继续；若确实不能继续，准确说明缺少的条件及未完成项。只有工具结果证明发生了操作，历史助手自述不是执行证据。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -250,9 +250,6 @@ impl NormalizedRequest {
         mut self,
         definitions: Vec<ToolDefinition>,
     ) -> Result<Self, ProviderError> {
-        if definitions.is_empty() {
-            return Ok(self);
-        }
         validate_definitions(&definitions).map_err(|_| ProviderError::invalid_request())?;
         if definitions
             .iter()
@@ -719,6 +716,18 @@ impl ProviderError {
         Self::new(ProviderErrorKind::Protocol, "provider.protocol", false)
     }
 
+    pub(crate) const fn multiple_tool_calls(profile: ToolProtocolProfile) -> Self {
+        if matches!(profile, ToolProtocolProfile::Nr5) {
+            Self::new(
+                ProviderErrorKind::Protocol,
+                "provider.tool_calls_multiple",
+                false,
+            )
+        } else {
+            Self::protocol()
+        }
+    }
+
     pub const fn agent_tool_round_limit() -> Self {
         Self::new(ProviderErrorKind::Protocol, "agent.tool_round_limit", false)
     }
@@ -825,9 +834,15 @@ impl ToolCallAccumulator {
         name: Option<String>,
         arguments_delta: String,
     ) -> Result<(), ProviderError> {
+        if index != 0 {
+            return Err(ProviderError::multiple_tool_calls(self.profile));
+        }
+        // Empty identity fields on argument-only deltas do not replace the header.
+        // Final envelope validation still requires a real ID and registered tool name.
+        let call_id = call_id.filter(|value| !value.is_empty());
+        let name = name.filter(|value| !value.is_empty());
         if self.envelope.is_some()
             || self.index.is_some_and(|current| current != index)
-            || index != 0
             || call_id
                 .as_ref()
                 .is_some_and(|next| self.call_id.as_ref().is_some_and(|current| current != next))
@@ -1212,31 +1227,32 @@ impl ProviderAdapter for DeepseekAdapter {
                 .pointer("/delta/tool_calls")
                 .and_then(Value::as_array)
             {
-                if tool_calls.len() != 1 {
-                    return Err(ProviderError::protocol());
+                if tool_calls.len() > 1 {
+                    return Err(ProviderError::multiple_tool_calls(self.profile));
                 }
-                let tool_call = &tool_calls[0];
-                let index = tool_call
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| u32::try_from(value).ok())
-                    .ok_or_else(ProviderError::protocol)?;
-                events.push(AdapterStreamEvent::ToolCallDelta {
-                    index,
-                    call_id: tool_call
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    name: tool_call
-                        .pointer("/function/name")
-                        .and_then(Value::as_str)
-                        .map(|name| internal_tool_name(name).to_owned()),
-                    arguments_delta: tool_call
-                        .pointer("/function/arguments")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                });
+                for tool_call in tool_calls {
+                    let index = tool_call
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or_else(ProviderError::protocol)?;
+                    events.push(AdapterStreamEvent::ToolCallDelta {
+                        index,
+                        call_id: tool_call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        name: tool_call
+                            .pointer("/function/name")
+                            .and_then(Value::as_str)
+                            .map(|name| internal_tool_name(name).to_owned()),
+                        arguments_delta: tool_call
+                            .pointer("/function/arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    });
+                }
             }
             if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
                 events.push(AdapterStreamEvent::Finished(map_finish_reason(reason)));
@@ -1597,10 +1613,12 @@ fn parse_deepseek_tool_call_for(
     let Some(calls) = value.and_then(Value::as_array) else {
         return Ok(None);
     };
-    if calls.len() != 1 {
-        return Err(ProviderError::protocol());
+    if calls.len() > 1 {
+        return Err(ProviderError::multiple_tool_calls(profile));
     }
-    let call = &calls[0];
+    let Some(call) = calls.first() else {
+        return Ok(None);
+    };
     if call.get("type").and_then(Value::as_str) != Some("function") {
         return Err(ProviderError::protocol());
     }
@@ -3585,6 +3603,131 @@ mod tests {
             assert_eq!(streamed.name, NOVELIST_READ_CONTEXT_TOOL_NAME);
             assert_eq!(streamed.arguments_json, raw);
         }
+    }
+
+    #[test]
+    fn deepseek_stream_accepts_empty_chunks_and_keeps_original_tool_identity() {
+        let mut accumulator = ToolCallAccumulator::default();
+        for delta in [
+            json!({"tool_calls":[]}),
+            json!({"tool_calls":[{"index":0,"id":"call_fragments","function":{"name":"novelist_read_context","arguments":"{"}}]}),
+            json!({"tool_calls":[{"index":0,"id":"","function":{"name":"","arguments":"}"}}]}),
+            json!({"tool_calls":[]}),
+        ] {
+            let events = DEEPSEEK_ADAPTER
+                .parse_stream_data(
+                    &json!({"choices":[{"delta":delta,"finish_reason":null}]}).to_string(),
+                )
+                .unwrap();
+            for event in events {
+                if let AdapterStreamEvent::ToolCallDelta {
+                    index,
+                    call_id,
+                    name,
+                    arguments_delta,
+                } = event
+                {
+                    accumulator
+                        .push_delta(index, call_id, name, arguments_delta)
+                        .unwrap();
+                }
+            }
+        }
+        let call = accumulator
+            .finish(ProviderId::Deepseek, "")
+            .unwrap()
+            .0
+            .unwrap();
+        assert_eq!(call.call_id, "call_fragments");
+        assert_eq!(call.name, "novelist.read_context");
+        assert_eq!(call.arguments_json, "{}");
+    }
+
+    #[test]
+    fn deepseek_fragment_compatibility_keeps_identity_and_batch_boundaries() {
+        for (id, name) in [
+            ("other", "novelist_read_context"),
+            ("first", "novelist_publish"),
+        ] {
+            let mut state = ToolCallAccumulator::default();
+            state
+                .push_delta(
+                    0,
+                    Some("first".into()),
+                    Some("novelist_read_context".into()),
+                    "{".into(),
+                )
+                .unwrap();
+            assert_eq!(
+                state
+                    .push_delta(0, Some(id.into()), Some(name.into()), "}".into())
+                    .err()
+                    .unwrap()
+                    .code,
+                "provider.protocol"
+            );
+        }
+        for (id, name) in [("", "novelist_read_context"), ("first", "")] {
+            let mut state = ToolCallAccumulator::default();
+            state
+                .push_delta(0, Some(id.into()), Some(name.into()), "{}".into())
+                .unwrap();
+            assert_eq!(
+                state.finish(ProviderId::Deepseek, "").err().unwrap().code,
+                "provider.protocol"
+            );
+        }
+        for profile in [ToolProtocolProfile::Nr4, ToolProtocolProfile::Nr5] {
+            let expected = if profile == ToolProtocolProfile::Nr5 {
+                "provider.tool_calls_multiple"
+            } else {
+                "provider.protocol"
+            };
+            let mut state = ToolCallAccumulator {
+                profile,
+                ..Default::default()
+            };
+            state
+                .push_delta(
+                    0,
+                    Some("first".into()),
+                    Some("novelist_read_context".into()),
+                    "{}".into(),
+                )
+                .unwrap();
+            assert_eq!(
+                state
+                    .push_delta(1, Some("second".into()), None, "{}".into())
+                    .err()
+                    .unwrap()
+                    .code,
+                expected
+            );
+            assert_eq!(
+                parse_deepseek_tool_call_for(Some(&json!([{}, {}])), profile)
+                    .err()
+                    .unwrap()
+                    .code,
+                expected
+            );
+            assert!(parse_deepseek_tool_call_for(Some(&json!([])), profile)
+                .unwrap()
+                .is_none());
+        }
+        let mut completion = json!({"model": DEEPSEEK_PRESET.model, "choices": [{"message":{"content":"已完成", "tool_calls":[]}, "finish_reason":"stop"}]});
+        assert_eq!(
+            DEEPSEEK_ADAPTER.parse_completion(&completion).unwrap().text,
+            "已完成"
+        );
+        completion["choices"][0]["finish_reason"] = json!("tool_calls");
+        assert_eq!(
+            DEEPSEEK_ADAPTER
+                .parse_completion(&completion)
+                .err()
+                .unwrap()
+                .code,
+            "provider.protocol"
+        );
     }
 
     #[test]

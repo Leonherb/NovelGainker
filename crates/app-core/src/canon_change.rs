@@ -1359,5 +1359,9 @@ fn structural_loss(before: &str, after: &str) -> bool {
         || after.len().saturating_mul(2) < before.len()
 }
 
+mod diagnostics;
+mod normalization;
+pub(crate) use normalization::normalize_new_canon_operations;
+
 #[cfg(test)]
 mod tests;

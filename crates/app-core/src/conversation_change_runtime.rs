@@ -119,6 +119,7 @@ where
             .with_tool_definitions(Vec::new())
             .map_err(AppError::from_provider_error)?;
     }
+    let mut tool_protocol_repaired = false;
     for attempt in 0..maximum_attempts {
         if budget.consume_agent(current.max_output_tokens).is_err() {
             return finish_agent_error(
@@ -141,6 +142,31 @@ where
             &mut on_event,
         ) {
             Ok(value) => value,
+            Err(_) if cancellation.is_cancelled() => {
+                return terminalize_cancelled_turn_with_text(
+                    handle,
+                    turn_id,
+                    &visible,
+                    ProviderError::cancelled(),
+                    timestamp_ms,
+                );
+            }
+            Err(error)
+                if nr5
+                    && provider_id == ProviderId::Deepseek
+                    && error.code == "provider.tool_calls_multiple"
+                    && !tool_protocol_repaired
+                    && !current.tool_definitions.is_empty()
+                    && attempt + 2 < maximum_attempts
+                    && !cancellation.is_cancelled() =>
+            {
+                // The parser rejected this entire response before any tool dispatch.
+                // Retain prior native results/commits, and charge the next request to
+                // the same durable Turn ledger and the same eight-request budget.
+                tool_protocol_repaired = true;
+                current.messages[0].content.push_str("\nHost 协议纠正：刚才的模型响应包含多个工具调用，该响应中的工具均未执行。请每次只返回一个原生工具调用，取得结果后再调用下一项；此前已有的工具回执仍然有效，已 committed 的操作不要重复提交。继续当前用户任务，不要要求用户手动重试。\n");
+                continue;
+            }
             Err(error) => {
                 return finish_agent_error(handle, turn_id, &visible, error, timestamp_ms)
             }
@@ -196,6 +222,21 @@ where
                 )
             }
         };
+        if nr5
+            && !current
+                .tool_definitions
+                .iter()
+                .any(|tool| tool.name == definition.name)
+        {
+            // A model can still request a tool removed after earlier failures.
+            // Do not dispatch it or append an over-quota native exchange. Preserve
+            // prior receipts and use the remaining request for a tool-less reply.
+            current = current
+                .with_tool_definitions(Vec::new())
+                .map_err(AppError::from_provider_error)?;
+            current.messages[0].content.push_str("\nHost：刚才请求的工具已不在当前 tools 中，因此该调用未执行。本轮停止工具调用，请直接用自然语言说明此前回执证明的已保存、未保存内容及具体原因，继续回应用户；不要再调用工具，不要声称没有文件保存权限。\n");
+            continue;
+        }
         let mutation = definition.name == PROPOSE_CHANGE_TOOL_NAME;
         let publication = definition.name == "novelist.publish";
         let preflight = if mutation || publication {

@@ -121,7 +121,14 @@ impl ToolResult {
     pub fn validate(&self) -> Result<(), ToolContractError> {
         if !self.argument_issues.is_empty()
             && (self.status != ToolResultStatus::Failed
-                || self.error_code.as_deref() != Some("agent.tool_arguments_invalid")
+                || !matches!(
+                    self.error_code.as_deref(),
+                    Some(
+                        "agent.tool_arguments_invalid"
+                            | "canon.change_candidate_invalid"
+                            | "canon.change_target_invalid"
+                    )
+                )
                 || self.argument_issues.len() > 4
                 || serde_json::to_vec(&self.argument_issues)
                     .map_err(|_| ToolContractError::ResultInvalid)?
@@ -221,6 +228,10 @@ pub struct ToolExecutionContext {
 }
 
 pub trait ToolExecutor: Send + Sync {
+    fn argument_issues(&self, _arguments: &Value, _error: &str) -> Vec<ArgumentIssue> {
+        Vec::new()
+    }
+
     fn validate_arguments(&self, _arguments: &Value) -> Result<(), &'static str> {
         Ok(())
     }

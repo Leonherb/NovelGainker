@@ -50,6 +50,20 @@ impl NovelistProposeChangeExecutorV1 {
 }
 
 impl crate::tool_runtime::ToolExecutor for NovelistProposeChangeExecutorV1 {
+    fn argument_issues(
+        &self,
+        arguments: &Value,
+        error: &str,
+    ) -> Vec<crate::tool_runtime::ArgumentIssue> {
+        if !self.coordinator.nr5 {
+            return Vec::new();
+        }
+        self.evidence
+            .lock()
+            .map(|evidence| evidence.candidate_issues(arguments, error))
+            .unwrap_or_default()
+    }
+
     fn validate_arguments(&self, arguments: &Value) -> Result<(), &'static str> {
         let evidence = self
             .evidence

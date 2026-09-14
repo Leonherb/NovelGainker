@@ -518,7 +518,14 @@ where
                 }
                 Ok(arguments)
             })
-            .and_then(|arguments| executor.validate_arguments(&arguments).map(|_| arguments))
+            .and_then(|arguments| {
+                executor
+                    .validate_arguments(&arguments)
+                    .inspect_err(|code| {
+                        argument_issues = executor.argument_issues(&arguments, code);
+                    })?;
+                Ok(arguments)
+            })
     });
     let result = match arguments {
         Err(error_code) => {
@@ -796,6 +803,7 @@ mod tests {
     include!("conversation_nr503_tests.rs");
     include!("conversation_nr504_tests.rs");
     include!("conversation_tool_feedback_tests.rs");
+    include!("conversation_tool_stream_tests.rs");
     include!("conversation_nr505_tests.rs");
     use super::{
         bind_novelist_runtime, execute_agent_turn, execute_with_profile,

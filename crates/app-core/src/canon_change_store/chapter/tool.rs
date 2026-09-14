@@ -12,7 +12,7 @@ pub(crate) fn definition(profile: ToolProtocolProfile) -> crate::tool_runtime::T
     }
     tool.version = 2;
     tool.display_label = "保存章节或维护资料".to_owned();
-    tool.description = "提交有来源的小说资料或单章变更。先读能力方法；更新须完整原文回执和旧 Hash。章节用 entityKind=chapter、capabilityId=novel-story-telling、chapterIntent=write_and_save；新建 id: new，三个目标字段 null；更新使用完整读取返回的 targetId/readReceiptId/expectedSourceHash，保持章节 ID 与章号。章节 Markdown 不超过 32768 字节，一次仅一章；明确要求定稿才设 finalize=true。五类资料沿用最多四项、8192 字节，chapterIntent/finalize/candidateId 均 null。讨论或试写不调用写工具；候选接受须 Host 已展示凭证。只有 committed 回执表示实际保存，出错不阻止继续聊天。".to_owned();
+    tool.description = "提交有来源的小说资料或单章变更。先读能力方法；更新须完整原文回执和旧 Hash。章节用 entityKind=chapter、capabilityId=novel-story-telling、chapterIntent=write_and_save；新建 id: new，三个目标字段 null；更新使用完整读取返回的 targetId/readReceiptId/expectedSourceHash，保持章节 ID 与章号。章节 Markdown 不超过 32768 字节，一次仅一章；明确要求定稿才设 finalize=true。五类资料沿用最多四项、8192 字节，chapterIntent/finalize/candidateId 均 null。新建资料的 id、kind、schemaVersion、writingLanguage 由 Host 按 entityKind 规范，正文及创意字段须完整；更新须保留原身份。讨论或试写不调用写工具；候选接受须 Host 已展示凭证。只有 committed 回执表示实际保存，出错不阻止继续聊天。".to_owned();
     let properties = &mut tool.input_schema["properties"];
     properties["schemaVersion"]["enum"] = json!([2]);
     properties["operations"]["items"]["properties"]["entityKind"]["enum"] = json!([
@@ -83,7 +83,15 @@ pub(crate) fn decode(
     definition(ToolProtocolProfile::Nr5)
         .validate_arguments(value)
         .map_err(|_| ChangeError::InvalidRequest)?;
+    if serde_json::to_vec(value)
+        .map_err(|_| ChangeError::InvalidRequest)?
+        .len()
+        > crate::chapter_contract::NR5_TOOL_ARGUMENT_BYTES
+    {
+        return Err(ChangeError::BudgetExceeded);
+    }
     let mut legacy = value.clone();
+    normalize_new_canon_operations(&mut legacy);
     let root = legacy.as_object_mut().ok_or(ChangeError::InvalidRequest)?;
     let intent_value = root
         .remove("chapterIntent")

@@ -19,6 +19,16 @@ enum IssueKind {
     InvalidTypeOrValue,
 }
 
+impl ArgumentIssue {
+    pub(crate) fn canon(index: usize, field: &'static str, expected: Value) -> Self {
+        Self {
+            path: format!("$.operations[{index}].{field}"),
+            issue: IssueKind::InvalidTypeOrValue,
+            expected: Some(expected),
+        }
+    }
+}
+
 impl ToolDefinition {
     pub(crate) fn argument_issues(&self, arguments: &Value) -> Vec<ArgumentIssue> {
         let mut issues = Vec::new();
@@ -102,8 +112,8 @@ pub(super) fn failure_guidance(code: Option<&str>) -> Option<&'static str> {
         "canon.change_method_not_read" => "先通过 novelist.read_context 读取对应 capabilityId 的方法，使用本轮返回的 methodReceiptId；不要猜测或复用其他轮次的回执。",
         "canon.change_source_invalid" => "sources 必须引用 Host 消息来源目录中真实的 messageId/contentHash，并与 sourceKind 及用户授权对应；不要自行编造来源。",
         "canon.change_incomplete_read" | "canon.change_source_changed" => "更新前通过 novelist.read_context 完整重读目标，使用该次返回的 targetId/readReceiptId/expectedSourceHash；不要沿用旧版本或不完整读取的回执。",
-        "canon.change_target_invalid" => "核对变更目标：新建三个目标字段必须显式为 null；更新使用 Host 完整读取回执。仅支持 character/world/material/plot/outline/chapter，不支持修改 project.md 或自行提供路径。",
-        "canon.change_candidate_invalid" => "候选 Markdown 不符合方法模板或章节候选约束。先按 read_context.requiredTemplates 中对应模板修正 proposedMarkdown：必须是实际换行的完整 Markdown，不能用代码围栏包裹；填写完整 YAML，人物 schemaVersion: 2，其余资料和章节为 1，writingLanguage: zh-CN；entityKind=world 对应 kind: setting，其余 kind 与 entityKind 一致，新建用 id: new。替换模板占位符并遵守当前工具大小限制。接受章节候选须匹配 Host 已展示的完整版本。未取得 committed 回执不得声称已保存。",
+        "canon.change_target_invalid" => "优先按 argumentIssues 指出的具体字段纠正，不要猜测失败原因。核对变更目标：新建三个目标字段必须显式为 null；更新使用 Host 完整读取回执。仅支持 character/world/material/plot/outline/chapter，不支持修改 project.md 或自行提供路径。",
+        "canon.change_candidate_invalid" => "候选 Markdown 不符合方法模板或章节候选约束。优先按 argumentIssues 中的字段、行号和 recovery 纠正，不要凭通用提示猜测原因。先按 read_context.requiredTemplates 中对应模板修正 proposedMarkdown：必须是实际换行的完整 Markdown，不能用代码围栏包裹；填写完整 YAML，人物 schemaVersion: 2，其余资料和章节为 1，writingLanguage: zh-CN；entityKind=world 对应 kind: setting，其余 kind 与 entityKind 一致，新建用 id: new。替换模板占位符并遵守当前工具大小限制。接受章节候选须匹配 Host 已展示的完整版本。未取得 committed 回执不得声称已保存。",
         "canon.change_budget_exceeded" => "Host 本轮工具调用或安全预留上限已触发，本次请求未执行。不是 API 余额耗尽，也不是应用没有保存能力。仅使用当前仍开放的工具；没有工具时继续文字说明，列明实际 committed 回执和未保存内容，请用户下一轮继续。",
         _ => return None,
     })
