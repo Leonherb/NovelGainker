@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @novelgainker/desktop tauri dev",
-    "format": "prettier --write package.json .prettierrc.json eslint.config.mjs \"scripts/**/*.mjs\" \"apps/desktop/src/**/*.{ts,tsx,css}\" apps/desktop/package.json apps/desktop/tsconfig.json apps/desktop/tsconfig.node.json apps/desktop/vite.config.ts apps/desktop/vitest.config.ts apps/desktop/src-tauri/tauri.conf.json \"apps/desktop/src-tauri/capabilities/*.json\"",
-    "format:check": "prettier --check package.json .prettierrc.json eslint.config.mjs \"scripts/**/*.mjs\" \"apps/desktop/src/**/*.{ts,tsx,css}\" apps/desktop/package.json apps/desktop/tsconfig.json apps/desktop/tsconfig.node.json apps/desktop/vite.config.ts apps/desktop/vitest.config.ts apps/desktop/src-tauri/tauri.conf.json \"apps/desktop/src-tauri/capabilities/*.json\"",
+    "format": "prettier --write package.json .prettierrc.json eslint.config.mjs \"scripts/**/*.mjs\" \"apps/desktop/src/**/*.{ts,tsx,css}\" apps/desktop/package.json apps/desktop/tsconfig.json apps/desktop/tsconfig.node.json apps/desktop/vite.config.ts apps/desktop/vitest.config.ts \"apps/desktop/src-tauri/tauri*.conf.json\" \"apps/desktop/src-tauri/capabilities/*.json\"",
+    "format:check": "prettier --check package.json .prettierrc.json eslint.config.mjs \"scripts/**/*.mjs\" \"apps/desktop/src/**/*.{ts,tsx,css}\" apps/desktop/package.json apps/desktop/tsconfig.json apps/desktop/tsconfig.node.json apps/desktop/vite.config.ts apps/desktop/vitest.config.ts \"apps/desktop/src-tauri/tauri*.conf.json\" \"apps/desktop/src-tauri/capabilities/*.json\"",
     "lint": "eslint eslint.config.mjs scripts apps/desktop/src apps/desktop/*.ts --max-warnings 0",
     "typecheck": "pnpm --filter @novelgainker/desktop exec tsc --noEmit",
     "build:frontend": "pnpm --filter @novelgainker/desktop build",
@@ -46,7 +46,11 @@
     "e2e:nr603": "node scripts/nr603-provider-retry-e2e.mjs",
     "smoke:desktop:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile debug",
     "smoke:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -Profile release -CaptureEvidence -EvidenceGate nr-g1",
-    "quality": "node scripts/quality.mjs"
+    "quality": "node scripts/quality.mjs",
+    "android:doctor": "node scripts/android.mjs doctor",
+    "android:init": "node scripts/android.mjs init",
+    "android:build:debug": "node scripts/android.mjs build-debug",
+    "android:build": "node scripts/android.mjs build-release"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

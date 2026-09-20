@@ -648,12 +648,32 @@ pub async fn project_scan<R: tauri::Runtime>(
     state: tauri::State<'_, ProjectRegistry>,
     mode: ProjectScanMode,
 ) -> Result<Option<ProjectCandidate>, AppError> {
-    let Some(selected) = app.dialog().file().blocking_pick_folder() else {
-        return Ok(None);
+    #[cfg(not(target_os = "android"))]
+    let selected_root = {
+        let Some(selected) = app.dialog().file().blocking_pick_folder() else {
+            return Ok(None);
+        };
+        selected
+            .into_path()
+            .map_err(|_| AppError::project_invalid_root())?
     };
-    let selected_root = selected
-        .into_path()
-        .map_err(|_| AppError::project_invalid_root())?;
+    #[cfg(target_os = "android")]
+    let selected_root = {
+        if mode != ProjectScanMode::Create {
+            return Err(AppError::project_invalid_root()
+                .with_diagnostic("android-project-import-unavailable"));
+        }
+        // Android working projects are host-owned private directories, never SAF URIs.
+        let projects = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| AppError::project_invalid_root())?
+            .join("projects");
+        std::fs::create_dir_all(&projects).map_err(|_| AppError::project_io())?;
+        let root = projects.join(Uuid::new_v4().to_string());
+        std::fs::create_dir(&root).map_err(|_| AppError::project_io())?;
+        root
+    };
     let inspection = inspect_project_root(&selected_root, mode)?;
     let candidate_id = Uuid::new_v4().to_string();
     let preview = inspection.preview().clone();

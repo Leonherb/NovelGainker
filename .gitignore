@@ -3,7 +3,8 @@ dist/
 target/
 coverage/
 *.tsbuildinfo
-apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen/*
+!apps/desktop/src-tauri/gen/android/
 .env
 .env.*
 !.env.example

@@ -1,9 +1,13 @@
-use crate::{AppError, APP_ERROR_PROVIDER_VAULT_UNAVAILABLE_CODE};
+use crate::AppError;
+#[cfg(windows)]
+use crate::APP_ERROR_PROVIDER_VAULT_UNAVAILABLE_CODE;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{compiler_fence, Ordering};
 
 pub const MAX_CREDENTIAL_BLOB_BYTES: usize = 2_560;
+#[cfg(windows)]
 const DEEPSEEK_TARGET: &str = "NovelGainker/provider/deepseek/v1";
+#[cfg(windows)]
 const OPENAI_TARGET: &str = "NovelGainker/provider/openai/v1";
 const DEEPSEEK_REFERENCE: &str = "wincred:NovelGainker/provider/deepseek/v1";
 const OPENAI_REFERENCE: &str = "wincred:NovelGainker/provider/openai/v1";
@@ -25,6 +29,7 @@ impl ProviderId {
         }
     }
 
+    #[cfg(windows)]
     const fn index(self) -> usize {
         match self {
             Self::Deepseek => 0,

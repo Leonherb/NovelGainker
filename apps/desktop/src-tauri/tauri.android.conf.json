@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.novelgainker.mobile",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NovelGainker"
+      }
+    ]
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 34,
+      "versionCode": 1,
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}
